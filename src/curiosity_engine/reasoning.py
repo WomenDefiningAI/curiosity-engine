@@ -423,13 +423,15 @@ class ReasoningEngine:
             response_model=response_model,
         )
         revision_rounds = 0
+        validation_repair_rounds = 0
         while True:
             try:
                 parsed = self._validate_candidate(candidate, response_model)
                 break
             except ReasoningRejected as exc:
-                if revision_rounds >= policy.max_revision_rounds:
+                if validation_repair_rounds >= policy.max_revision_rounds:
                     raise
+                validation_repair_rounds += 1
                 revision_rounds += 1
                 candidate = self.backend.complete(
                     role=policy.generator_role,
@@ -443,6 +445,7 @@ class ReasoningEngine:
                     response_model=response_model,
                 )
         critiques: list[CriticResult] = []
+        semantic_revision_rounds = 0
         while True:
             critiques = [
                 CriticResult.model_validate(
@@ -459,19 +462,20 @@ class ReasoningEngine:
                 break
             if (
                 any(review.verdict == CriticVerdict.REJECT for review in critiques)
-                and revision_rounds >= policy.max_revision_rounds
+                and semantic_revision_rounds >= policy.max_revision_rounds
             ):
                 raise ReasoningRejected(
                     "candidate rejected by critic",
                     candidate=parsed.model_dump(mode="json"),
                     critiques=[x.model_dump(mode="json") for x in critiques],
                 )
-            if revision_rounds >= policy.max_revision_rounds:
+            if semantic_revision_rounds >= policy.max_revision_rounds:
                 raise ReasoningRejected(
                     "candidate did not pass critics within revision budget",
                     candidate=parsed.model_dump(mode="json"),
                     critiques=[x.model_dump(mode="json") for x in critiques],
                 )
+            semantic_revision_rounds += 1
             revision_rounds += 1
             candidate = self.backend.complete(
                 role=policy.generator_role,
@@ -523,9 +527,16 @@ class ReasoningEngine:
 
     def _critic_system(self, role: str) -> str:
         rubrics = {
-            "critic_factual": "Find unsupported, overstated, misleading, or uncertain factual claims.",
-            "critic_pedagogy": "Attack spoon-feeding, premature theory, shallow theming, and weak productive struggle.",
-            "critic_context": "Find missed relevant context, irrelevant retrieved context, or unsupported child-model assumptions.",
+            "critic_factual": "Find materially unsupported, overstated, misleading, or uncertain factual claims.",
+            "critic_pedagogy": (
+                "Attack spoon-feeding, premature theory, shallow theming, and weak productive struggle. "
+                "A concise direct answer to a child's direct factual question is appropriate; require the show and ask "
+                "to reopen curiosity instead of rejecting the answer merely because it answers."
+            ),
+            "critic_context": (
+                "Find materially missed relevant context, harmful use of irrelevant retrieved context, or unsupported "
+                "child-model assumptions. Private context may be correctly omitted when it is not relevant."
+            ),
             "critic_parent_effort": "Attack anything a busy parent is unlikely to do at the stated moment.",
             "critic_epistemic": "Reject durable child-state claims that lack multiple attributable pieces of evidence.",
             "critic_visual": "Find plans likely to create misleading, illegible, or malformed child-facing visuals.",

@@ -18,14 +18,20 @@ Your computer must be awake and `curiosity slack run` must be running for the bo
 2. Tell your coding agent: “Read `AGENTS.md` and `docs/AGENT_ONBOARDING.md`, then walk me through setup one checkpoint at a time.”
 3. Follow the agent through the local privacy check and family setup.
 4. Use `docs/SLACK_SETUP.md` to create a free family Slack workspace and the private bot connection.
-5. Pair your Slack DM and try one question.
+5. Pair the Slack conversation and send `connection`; this fixed reply proves Slack without using AI.
+6. Use `docs/BRAIN_SETUP.md` to choose reasoning, vision/OCR, and image-generation routes, then run the synthetic probe.
+7. Accept or customize the family lens and resource boundary.
+8. Ask one real question and review factuality, grade fit, curiosity value, and parent effort.
 
-The engine starts in deterministic mode, so setup and transport wiring can be tested without an AI key. Slack labels those replies as offline demos. Tailored answers require a hosted model and should be enabled only after you understand which bounded context it will receive.
+The transport test requires no AI key and never reads child context. Tailored answers require a bring-your-own API brain and should be enabled only after you understand which bounded context each selected provider will receive. `curiosity doctor` reports the next checkpoint.
+
+If a coding agent recommends an OCR tool, worksheet generator, educational library, or game engine, ask it to show the project's status with `curiosity ecosystem show --id PROJECT`. The reviewed catalog defaults to reference-only; it does not let an agent install a public repository merely because it looks useful or popular.
 
 ## Everyday Slack commands
 
 ```text
 children
+connection
 ask kid-a: Why does ice float?
 inbox
 assign inbox_... kid-a

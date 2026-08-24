@@ -10,6 +10,7 @@ from ..interaction import (
     TransportConflict,
     active_binding,
     begin_receipt,
+    claim_delivery,
     consume_pairing_code,
     create_unassigned_capture,
     enqueue_delivery,
@@ -18,6 +19,7 @@ from ..interaction import (
     list_inbox,
     mark_delivery,
     ready_deliveries,
+    record_onboarding_checkpoint,
     resolve_inbox,
 )
 from ..service import CuriosityService
@@ -77,6 +79,7 @@ class CuriosityServiceLike(Protocol):
         topics: list[str] | None = None,
         include_private_excerpts: bool = False,
         event_id: str | None = None,
+        context_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     def feedback(self, payload: dict[str, Any]) -> int: ...
@@ -87,9 +90,27 @@ def _engine_event_id(message: InboundMessage, suffix: str = "") -> str:
     return f"evt_slack_{sha256(material.encode()).hexdigest()[:24]}"
 
 
+def _episode_metadata(message: InboundMessage) -> dict[str, Any]:
+    conversation = sha256(f"{message.team_id}:{message.channel_id}".encode()).hexdigest()[:20]
+    thread = (
+        sha256(f"{message.team_id}:{message.channel_id}:{message.thread_id}".encode()).hexdigest()[:20]
+        if message.thread_id
+        else ""
+    )
+    return {
+        "learning_scope": "family_signal",
+        "subject_role": "child",
+        "reporter_role": "parent",
+        "initiative": "unknown",
+        "conversation_ref": conversation,
+        "thread_ref": thread,
+    }
+
+
 def _help_text() -> str:
     return (
         "I help parents catch questions and turn them into small, hands-on learning threads.\n\n"
+        "• `connection` — prove Slack transport works without contacting a model\n"
         "• `children` — show child IDs\n"
         "• `ask CHILD_ID: Why does ice float?` — get a response now\n"
         "• Send any other note — save it unassigned so I never guess which child it belongs to\n"
@@ -124,14 +145,28 @@ def _format_thread(result: dict[str, Any]) -> str:
     public_sources = [str(item) for item in output.get("resource_refs") or [] if str(item).startswith(("https://", "http://"))]
     if public_sources:
         parts.append("*Sources*\n" + "\n".join(f"• <{url}>" for url in public_sources[:3]))
-    if reasoning.get("private_resource_matches", 0):
-        parts.append("_Relevant context from your private family library was available for this response._")
     if reasoning.get("backend") == "deterministic":
         parts.insert(
             0,
             "_Offline demo response — connect a reasoning provider for tailored answers to arbitrary questions._",
         )
     return "\n\n".join(parts)[:4_000]
+
+
+def _response_did_not_pass() -> str:
+    return (
+        "I made a draft, but it did not pass the family-ready quality checks, so I did not show it. "
+        "Please try the question once more."
+    )
+
+
+def _parent_safe_error(exc: Exception) -> str:
+    detail = str(exc).casefold()
+    if "unassigned note" in detail or "inbox" in detail:
+        return "I couldn't find that saved note for this parent. Run `inbox` and try the displayed ID."
+    if "child" in detail and ("not found" in detail or "unknown" in detail):
+        return "I couldn't find that child ID. Run `children` and try one of the displayed IDs."
+    return "I couldn't complete that request. Check the command and IDs, then try again."
 
 
 class SlackTransport:
@@ -145,7 +180,14 @@ class SlackTransport:
         service: CuriosityServiceLike | None = None,
     ):
         self.db_path = Path(db_path).resolve()
-        self.service = service or CuriosityService(self.db_path, output_dir)
+        self.output_dir = Path(output_dir).resolve()
+        self._service = service
+
+    @property
+    def service(self) -> CuriosityServiceLike:
+        if self._service is None:
+            self._service = CuriosityService(self.db_path, self.output_dir)
+        return self._service
 
     def _queue(
         self,
@@ -202,14 +244,27 @@ class SlackTransport:
             )
 
         binding_id = str(binding["id"])
-        resource_mode = household_resource_context_mode(self.db_path)
-        include_private_excerpts = resource_mode == "selected_excerpts"
         text = message.text.strip()
         normalized = text.casefold()
         try:
             if pair:
                 reply = "This conversation is already paired. Use `help` to see what I can do."
                 purpose = "already-paired"
+                result_status = "completed"
+                event_id = None
+                inbox_id = None
+            elif normalized in {"connection", "connection test", "ping"}:
+                record_onboarding_checkpoint(
+                    self.db_path,
+                    "transport_verified",
+                    status="pending",
+                    evidence={"transport": "slack", "protocol": 1},
+                )
+                reply = (
+                    "Slack connection works. This fixed response did not contact an AI model, load a child "
+                    "profile, or read family resources. Delivery confirmation is being recorded locally."
+                )
+                purpose = "connection"
                 result_status = "completed"
                 event_id = None
                 inbox_id = None
@@ -244,6 +299,8 @@ class SlackTransport:
                 event_id = None
                 inbox_id = None
             elif normalized == "privacy":
+                resource_mode = household_resource_context_mode(self.db_path)
+                include_private_excerpts = resource_mode == "selected_excerpts"
                 resource_disclosure = (
                     "Your household has opted in to selected excerpts: small relevant passages may enter the "
                     "bounded hosted-model request, but source passages are not posted verbatim to Slack."
@@ -278,20 +335,30 @@ class SlackTransport:
                 event_id = None
                 inbox_id = None
             elif match := ASK_RE.fullmatch(text):
+                resource_mode = household_resource_context_mode(self.db_path)
+                include_private_excerpts = resource_mode == "selected_excerpts"
                 child_id, question = match.groups()
                 event_id = _engine_event_id(message, child_id)
                 response = self.service.ask(
                     child_id=child_id,
                     text=question.strip(),
-                    source="slack",
+                    source="slack_parent_report",
                     include_private_excerpts=include_private_excerpts,
                     event_id=event_id,
+                    context_metadata=_episode_metadata(message),
                 )
-                reply = _format_thread(response)
-                purpose = "answer"
-                result_status = "completed"
+                if response.get("status") == "completed":
+                    reply = _format_thread(response)
+                    purpose = "answer"
+                    result_status = "completed"
+                else:
+                    reply = _response_did_not_pass()
+                    purpose = "answer_rejected"
+                    result_status = "rejected"
                 inbox_id = None
             elif match := ASSIGN_RE.fullmatch(text):
+                resource_mode = household_resource_context_mode(self.db_path)
+                include_private_excerpts = resource_mode == "selected_excerpts"
                 inbox_id, child_id = match.groups()
                 row = next(
                     (item for item in list_inbox(self.db_path) if item["id"] == inbox_id),
@@ -303,14 +370,20 @@ class SlackTransport:
                 response = self.service.ask(
                     child_id=child_id,
                     text=str(row["text"]),
-                    source="slack_inbox",
+                    source="slack_parent_report",
                     include_private_excerpts=include_private_excerpts,
                     event_id=event_id,
+                    context_metadata=_episode_metadata(message),
                 )
-                resolve_inbox(self.db_path, inbox_id, child_id=child_id)
-                reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
-                purpose = "assign"
-                result_status = "completed"
+                if response.get("status") == "completed":
+                    resolve_inbox(self.db_path, inbox_id, child_id=child_id)
+                    reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
+                    purpose = "assign"
+                    result_status = "completed"
+                else:
+                    reply = _response_did_not_pass() + f" The note `{inbox_id}` remains unassigned."
+                    purpose = "assign_rejected"
+                    result_status = "rejected"
             elif match := DISMISS_RE.fullmatch(text):
                 inbox_id = match.group(1)
                 row = next(
@@ -346,14 +419,19 @@ class SlackTransport:
                 outbound_id=outbound_id,
             )
         except (KeyError, ValueError) as exc:
-            safe_error = str(exc)[:500]
+            safe_error = _parent_safe_error(exc)
             outbound_id = self._queue(
                 message,
                 binding_id,
                 f"I could not do that: {safe_error}\n\nUse `help` for the supported commands.",
                 purpose="rejected",
             )
-            finish_receipt(self.db_path, message, status="rejected", error=safe_error)
+            finish_receipt(
+                self.db_path,
+                message,
+                status="rejected",
+                error=f"{exc.__class__.__name__}: {str(exc)[:500]}",
+            )
             return TransportResult(
                 status="rejected",
                 message=safe_error,
@@ -384,8 +462,9 @@ class SlackTransport:
 def flush_slack_outbox(client: Any, db_path: str | Path) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     for row in ready_deliveries(db_path):
+        if not claim_delivery(db_path, row["id"]):
+            continue
         message = OutboundMessage.model_validate(row["payload"])
-        mark_delivery(db_path, row["id"], status="sending")
         kwargs: dict[str, Any] = {"channel": message.channel_id, "text": message.text}
         if message.thread_id:
             kwargs["thread_ts"] = message.thread_id
@@ -405,6 +484,13 @@ def flush_slack_outbox(client: Any, db_path: str | Path) -> list[dict[str, str]]
             continue
         external_id = str(response.get("ts", ""))
         mark_delivery(db_path, row["id"], status="sent", external_message_id=external_id)
+        if str(row.get("idempotency_key") or "").endswith(":connection"):
+            record_onboarding_checkpoint(
+                db_path,
+                "transport_verified",
+                status="pass",
+                evidence={"transport": "slack", "protocol": 1, "delivery_confirmed": True},
+            )
         results.append({"delivery_id": row["id"], "status": "sent"})
     return results
 

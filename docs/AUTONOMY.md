@@ -6,9 +6,11 @@ The autonomous Director exists because important learning opportunities are inte
 
 SENSE → REFLECT → CONNECT → GENERATE → CRITIQUE → SELECT → DELEGATE → OBSERVE → UPDATE
 
-## Implemented loop
+## Current release gate
 
-The MVP can run one durable weekly reflection per child after the parent explicitly enables it; manual invocation is also available. Reactive Slack question handling remains separate. No background personal-data ingestion is part of v1.
+Context-driven reflection is implemented as a bounded code path but is disabled by the public autonomy policy. A household's prior opt-in does not override that safety gate, and neither scheduled nor manual reflection may call a model while it is disabled. Reactive Slack question handling remains separate. No background personal-data ingestion is part of v1.
+
+The gate can be reconsidered only after episode-independent evidence, answer-repair detection, corrections, and timing pass public synthetic tests plus private family shadow-mode review. Enabling it in a future release must remain an explicit parent choice.
 
 ## Valid output
 
@@ -16,4 +18,4 @@ The MVP can run one durable weekly reflection per child after the parent explici
 
 ## Boundaries
 
-The Director persists at most one very-low/low-effort result, observes a cooldown while an opportunity is active, and may choose `do_nothing`. It recommends only. Purchases, sensitive emotional interventions, production promotions, and paper printing remain outside its authority.
+When the gate is closed, the only valid result is `do_nothing` with the policy reason recorded locally. Future enabled behavior would retain the one-result limit and cooldown. Purchases, sensitive emotional interventions, production promotions, unsolicited Slack delivery, and paper printing remain outside its authority.

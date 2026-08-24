@@ -13,15 +13,21 @@ import pytest
 from pydantic import ValidationError
 
 from curiosity_engine.contracts import ArtifactSpec, PhysicalExtension
-from curiosity_engine.db import connect, utcnow
+from curiosity_engine.db import connect, jdump, utcnow
 from curiosity_engine.director import AutonomousDirector
 from curiosity_engine.graph import add_child
 from curiosity_engine.interaction import (
     TransportConflict,
     active_binding,
+    answer_stack_fingerprint,
+    claim_delivery,
+    configure_family_lens,
     create_pairing_code,
     list_inbox,
     onboarding_status,
+    ready_deliveries,
+    record_onboarding_review,
+    reviewable_slack_events,
     revoke_binding,
     setup_household,
 )
@@ -47,11 +53,18 @@ class FakeService:
         if kwargs["child_id"] != "kid-a":
             raise ValueError("child not found")
         self.calls.append(kwargs)
+        stored_output = {"_reasoning": {"answer_stack_hash": answer_stack_fingerprint(self.db_path)}}
         with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT OR IGNORE INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
                    VALUES(?,'child_question',?,?,?,'{}',?,'completed')""",
                 (kwargs["event_id"], kwargs["child_id"], kwargs["text"], kwargs["source"], utcnow()),
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO responses(
+                   event_id,run_id,workflow,status,output_json,created_at,updated_at
+                   ) VALUES(?,NULL,'pull_thread','completed',?,?,?)""",
+                (kwargs["event_id"], jdump(stored_output), utcnow(), utcnow()),
             )
         return {
             "status": "completed",
@@ -134,6 +147,18 @@ def test_pairing_is_single_use_exact_and_idempotent(tmp_path: Path):
     assert active_binding(db, incoming("lookup-four", "help", channel="D_OTHER")) is None
 
 
+def test_connection_is_fixed_non_model_path_and_records_confirmed_delivery(tmp_path: Path):
+    db, transport, fake, client, _code = paired_transport(tmp_path)
+    result = transport.handle(incoming("EvConnection", "connection"))
+    assert result.status == "completed"
+    assert "did not contact an AI model" in result.message
+    assert fake.calls == []
+    state_before = onboarding_status(db)
+    assert state_before["checkpoints"]["transport_verified"]["status"] == "pending"
+    assert flush_slack_outbox(client, db)[0]["status"] == "sent"
+    state_after = onboarding_status(db)
+    assert state_after["checkpoints"]["transport_verified"]["status"] == "pass"
+
 def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
     db = tmp_path / "private" / "curiosity.db"
     setup = setup_household(db, owner_name="Parent", timezone="Etc/UTC")
@@ -191,7 +216,9 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
 
     immediate = transport.handle(incoming("EvAsk", "ask kid-a: Why are feathers light?"))
     assert immediate.status == "completed"
-    assert fake.calls[-1]["source"] == "slack"
+    assert fake.calls[-1]["source"] == "slack_parent_report"
+    assert fake.calls[-1]["context_metadata"]["learning_scope"] == "family_signal"
+    assert fake.calls[-1]["context_metadata"]["conversation_ref"]
     flush_slack_outbox(client, db)
     assert any("*Tiny explanation*" in message["text"] for message in client.messages)
     assert not any("purchased-resource excerpts" in message["text"] for message in client.messages)
@@ -208,6 +235,52 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
     ]
 
 
+def test_onboarding_review_requires_latest_confirmed_slack_answer(tmp_path: Path):
+    db, transport, _fake, client, _code = paired_transport(tmp_path)
+    answer = transport.handle(incoming("EvReview", "ask kid-a: Why do feathers float?"))
+    assert answer.status == "completed"
+    assert reviewable_slack_events(db) == []
+    assert flush_slack_outbox(client, db)[0]["status"] == "sent"
+    pending = reviewable_slack_events(db)
+    assert len(pending) == 1
+    assert pending[0]["event_id"] == answer.event_id
+    assert pending[0]["workflow"] == "pull_thread"
+    assert pending[0]["reviewed"] == 0
+    assert pending[0]["current_answer_stack"] is True
+    review = record_onboarding_review(
+        db,
+        event_id=str(answer.event_id),
+        factuality="pass",
+        grade_fit="pass",
+        curiosity_value="pass",
+        parent_effort="pass",
+    )
+    assert review["decision"] == "pass"
+    assert onboarding_status(db)["quality_review_accepted"] is True
+    configure_family_lens(
+        db,
+        {
+            "pedagogy": ["show before explaining", "invite a prediction"],
+            "themes": [],
+            "activity_minutes": 8,
+            "parent_effort": "very_low",
+            "reading_load": "emerging",
+            "materials": ["paper"],
+            "content_boundaries": [],
+        },
+    )
+    assert onboarding_status(db)["quality_review_accepted"] is False
+    with pytest.raises(ValueError, match="current answer stack"):
+        record_onboarding_review(
+            db,
+            event_id=str(answer.event_id),
+            factuality="pass",
+            grade_fit="pass",
+            curiosity_value="pass",
+            parent_effort="pass",
+        )
+
+
 def test_slack_uses_household_private_resource_opt_in(tmp_path: Path):
     db, transport, fake, client, _code = paired_transport(tmp_path, resource_context_mode="selected_excerpts")
     result = transport.handle(incoming("EvPrivateAsk", "ask kid-a: Why does the Moon look close?"))
@@ -218,6 +291,48 @@ def test_slack_uses_household_private_resource_opt_in(tmp_path: Path):
     assert privacy.status == "completed"
     flush_slack_outbox(client, db)
     assert any("opted in to selected excerpts" in message["text"] for message in client.messages)
+
+
+def test_slack_hides_rejected_model_candidate_details(tmp_path: Path):
+    db, _transport, _fake, client, _code = paired_transport(tmp_path)
+
+    class RejectingService(FakeService):
+        def ask(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            with connect(self.db_path) as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
+                       VALUES(?,'child_question',?,?,?,'{}',?,'rejected')""",
+                    (kwargs["event_id"], kwargs["child_id"], kwargs["text"], kwargs["source"], utcnow()),
+                )
+            return {
+                "status": "rejected",
+                "output": {"candidate": {"hook": "private draft"}, "critiques": ["validation error"]},
+            }
+
+    transport = SlackTransport(db, tmp_path / "output", service=RejectingService(db))
+    result = transport.handle(incoming("EvRejectedAnswer", "ask kid-a: What is the biggest robot?"))
+    assert result.status == "rejected"
+    assert "family-ready quality checks" in result.message
+    assert "validation error" not in result.message
+    flush_slack_outbox(client, db)
+    assert "private draft" not in client.messages[-1]["text"]
+
+
+def test_slack_never_posts_raw_validation_error_details(tmp_path: Path):
+    db, _transport, _fake, client, _code = paired_transport(tmp_path)
+
+    class InvalidService(FakeService):
+        def ask(self, **_kwargs: Any) -> dict[str, Any]:
+            raise ValueError("schema path hook input_value='private child wording'")
+
+    transport = SlackTransport(db, tmp_path / "output", service=InvalidService(db))
+    result = transport.handle(incoming("EvInvalid", "ask kid-a: A private child question"))
+    assert result.status == "rejected"
+    assert "private child wording" not in result.message
+    assert "schema path" not in result.message
+    flush_slack_outbox(client, db)
+    assert "private child wording" not in client.messages[-1]["text"]
 
 
 def test_outbox_does_not_retry_ambiguous_delivery(tmp_path: Path):
@@ -235,7 +350,25 @@ def test_outbox_does_not_retry_ambiguous_delivery(tmp_path: Path):
         assert conn.execute("SELECT status FROM delivery_outbox WHERE id=?", (result[0]["delivery_id"],)).fetchone()[0] == "unknown"
 
 
-def test_weekly_schedule_requires_parent_opt_in(tmp_path: Path):
+def test_outbox_delivery_claim_is_atomic(tmp_path: Path):
+    db, transport, _fake, _client, _code = paired_transport(tmp_path)
+    handled = transport.handle(incoming("EvAtomic", "help"))
+    assert handled.outbound_id
+    assert claim_delivery(db, handled.outbound_id) is True
+    assert claim_delivery(db, handled.outbound_id) is False
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE delivery_outbox SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+            (handled.outbound_id,),
+        )
+    assert ready_deliveries(db) == []
+    with connect(db) as conn:
+        assert conn.execute(
+            "SELECT status FROM delivery_outbox WHERE id=?", (handled.outbound_id,)
+        ).fetchone()[0] == "unknown"
+
+
+def test_weekly_schedule_stays_disabled_until_episode_policy_is_ready(tmp_path: Path):
     db = tmp_path / "db.sqlite"
     setup_household(db, owner_name="Parent", timezone="Etc/UTC", proactive_enabled=False)
     add_child(db, "kid-a", "Kid A")
@@ -245,7 +378,7 @@ def test_weekly_schedule_requires_parent_opt_in(tmp_path: Path):
         assert conn.execute("SELECT enabled FROM schedules WHERE id='weekly:kid-a'").fetchone()[0] == 0
     setup_household(db, owner_name="Parent", timezone="Etc/UTC", proactive_enabled=True)
     with connect(db) as conn:
-        assert conn.execute("SELECT enabled FROM schedules WHERE id='weekly:kid-a'").fetchone()[0] == 1
+        assert conn.execute("SELECT enabled FROM schedules WHERE id='weekly:kid-a'").fetchone()[0] == 0
 
 
 def test_weekly_suggestion_limit_is_family_wide(tmp_path: Path):

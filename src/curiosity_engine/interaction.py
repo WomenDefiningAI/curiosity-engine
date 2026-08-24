@@ -9,15 +9,47 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .brain_config import brain_config_fingerprint
+from .config import AppConfig
 from .db import connect, init_db, jdump, jload, utcnow
 from .transports.contracts import InboundMessage, OutboundMessage
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 RESOURCE_CONTEXT_MODES = {"metadata_only", "selected_excerpts"}
+CHECKPOINT_STATUSES = {"pending", "pass", "fail"}
 
 
 class TransportConflict(ValueError):
     pass
+
+
+def answer_stack_fingerprint(db_path: str | Path) -> str:
+    """Bind a parent quality review to the model routes and answer-shaping configuration."""
+
+    app = AppConfig.load()
+    digest = sha256()
+    digest.update(brain_config_fingerprint().encode())
+    for relative in (
+        "configs/production.json",
+        "configs/reasoning-policy.json",
+        "configs/context-policy.json",
+        "prompts/generator-v1.md",
+        "prompts/critic-v1.md",
+    ):
+        path = app.root / relative
+        if path.is_file():
+            digest.update(relative.encode())
+            digest.update(path.read_bytes())
+    with connect(db_path) as conn:
+        family_lens = conn.execute(
+            "SELECT profile_json FROM learning_preferences WHERE scope_type='household' AND scope_id='default'"
+        ).fetchone()
+        resource_mode = conn.execute(
+            "SELECT resource_context_mode FROM household_settings WHERE id='default'"
+        ).fetchone()
+    digest.update(str(family_lens["profile_json"] if family_lens else "unconfigured").encode())
+    digest.update(str(resource_mode["resource_context_mode"] if resource_mode else "metadata_only").encode())
+    return digest.hexdigest()[:16]
 
 
 def _validate_clock(value: str | None) -> str | None:
@@ -98,13 +130,22 @@ def setup_household(
                 now,
             ),
         )
-        conn.execute("UPDATE schedules SET enabled=? WHERE schedule_type='weekly_reflection'", (int(proactive_enabled),))
+        context_proactivity_available = bool(
+            AppConfig.load().autonomy.get("context_driven_suggestions_enabled", False)
+        )
+        conn.execute(
+            "UPDATE schedules SET enabled=? WHERE schedule_type='weekly_reflection'",
+            (int(proactive_enabled and context_proactivity_available),),
+        )
     return {
         "status": "configured",
         "owner_id": owner_id,
         "timezone": timezone,
         "quiet_hours": {"start": quiet_start, "end": quiet_end},
         "proactive_enabled": proactive_enabled,
+        "context_driven_suggestions_enabled": bool(
+            proactive_enabled and context_proactivity_available
+        ),
         "resource_context_mode": resource_context_mode,
         "weekly_suggestion_limit": 1,
     }
@@ -176,13 +217,196 @@ def onboarding_status(db_path: str | Path) -> dict[str, Any]:
             )
         ]
         inbox_count = conn.execute("SELECT COUNT(*) FROM capture_inbox WHERE status='unassigned'").fetchone()[0]
+        checkpoints = {
+            row["checkpoint"]: {
+                "status": row["status"],
+                "verified_at": row["verified_at"],
+            }
+            for row in conn.execute(
+                "SELECT checkpoint,status,verified_at FROM onboarding_checkpoints ORDER BY checkpoint"
+            )
+        }
+        family_lens = conn.execute(
+            "SELECT 1 FROM learning_preferences WHERE scope_type='household' AND scope_id='default'"
+        ).fetchone()
+    review_hash = answer_stack_fingerprint(db_path)
+    with connect(db_path) as conn:
+        latest_review = conn.execute(
+            """SELECT decision FROM onboarding_reviews WHERE brain_config_hash=?
+               ORDER BY created_at DESC,id DESC LIMIT 1""",
+            (review_hash,),
+        ).fetchone()
     return {
         "configured": settings is not None and bool(parents),
         "settings": dict(settings) if settings else None,
         "parents": parents,
         "bindings": bindings,
         "unassigned_captures": inbox_count,
+        "checkpoints": checkpoints,
+        "family_lens_configured": bool(family_lens),
+        "quality_review_accepted": bool(latest_review and latest_review["decision"] == "pass"),
     }
+
+
+def record_onboarding_checkpoint(
+    db_path: str | Path,
+    checkpoint: str,
+    *,
+    status: str,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if status not in CHECKPOINT_STATUSES:
+        raise ValueError("invalid onboarding checkpoint status")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", checkpoint):
+        raise ValueError("invalid onboarding checkpoint name")
+    init_db(db_path)
+    now = utcnow()
+    sanitized = evidence or {}
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO onboarding_checkpoints(checkpoint,status,evidence_json,verified_at,updated_at)
+               VALUES(?,?,?,?,?)
+               ON CONFLICT(checkpoint) DO UPDATE SET status=excluded.status,
+                 evidence_json=excluded.evidence_json,verified_at=excluded.verified_at,updated_at=excluded.updated_at""",
+            (checkpoint, status, jdump(sanitized), now if status == "pass" else None, now),
+        )
+    return {"checkpoint": checkpoint, "status": status, "verified_at": now if status == "pass" else None}
+
+
+def onboarding_checkpoint(db_path: str | Path, checkpoint: str) -> dict[str, Any] | None:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT checkpoint,status,evidence_json,verified_at,updated_at FROM onboarding_checkpoints WHERE checkpoint=?",
+            (checkpoint,),
+        ).fetchone()
+    if not row:
+        return None
+    return {**dict(row), "evidence": jload(row["evidence_json"])}
+
+
+def configure_family_lens(db_path: str | Path, profile: dict[str, Any]) -> dict[str, Any]:
+    init_db(db_path)
+    allowed = {
+        "pedagogy",
+        "themes",
+        "activity_minutes",
+        "parent_effort",
+        "reading_load",
+        "materials",
+        "content_boundaries",
+    }
+    unknown = set(profile) - allowed
+    if unknown:
+        raise ValueError("unknown family-lens fields: " + ", ".join(sorted(unknown)))
+    now = utcnow()
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO learning_preferences(scope_type,scope_id,profile_json,source,created_at,updated_at)
+               VALUES('household','default',?,'parent',?,?)
+               ON CONFLICT(scope_type,scope_id) DO UPDATE SET profile_json=excluded.profile_json,
+                 source=excluded.source,updated_at=excluded.updated_at""",
+            (jdump(profile), now, now),
+        )
+    record_onboarding_checkpoint(db_path, "family_lens_ready", status="pass", evidence={"version": 1})
+    return {"status": "configured", "fields": sorted(profile), "private": True}
+
+
+def record_onboarding_review(
+    db_path: str | Path,
+    *,
+    event_id: str,
+    factuality: str,
+    grade_fit: str,
+    curiosity_value: str,
+    parent_effort: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    ratings = (factuality, grade_fit, curiosity_value, parent_effort)
+    if any(value not in {"pass", "retry"} for value in ratings):
+        raise ValueError("review ratings must be pass or retry")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        event = conn.execute(
+            """SELECT e.id,r.workflow,r.output_json FROM events e
+               JOIN responses r ON r.event_id=e.id AND r.status='completed'
+               JOIN transport_receipts t ON t.event_id=e.id AND t.transport='slack' AND t.status='completed'
+               JOIN delivery_outbox d ON d.binding_id=t.binding_id AND d.status='sent'
+                 AND d.idempotency_key LIKE ('slack:' || t.external_event_id || ':%')
+               WHERE e.id=? AND e.type='child_question' AND e.status='completed'
+               ORDER BY d.updated_at DESC LIMIT 1""",
+            (event_id,),
+        ).fetchone()
+    if not event:
+        raise ValueError("review requires a completed real Slack answer with confirmed delivery")
+    decision = "pass" if all(value == "pass" for value in ratings) else "retry"
+    now = utcnow()
+    review_hash = answer_stack_fingerprint(db_path)
+    response = jload(event["output_json"])
+    generated_hash = str((response.get("_reasoning") or {}).get("answer_stack_hash") or "")
+    if generated_hash != review_hash:
+        raise ValueError("review requires an answer generated by the current answer stack")
+    response_hash = sha256(str(event["output_json"]).encode()).hexdigest()
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """INSERT INTO onboarding_reviews(
+               event_id,brain_config_hash,response_hash,workflow,factuality,grade_fit,curiosity_value,
+               parent_effort,note,decision,created_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                event_id,
+                review_hash,
+                response_hash,
+                event["workflow"],
+                factuality,
+                grade_fit,
+                curiosity_value,
+                parent_effort,
+                note,
+                decision,
+                now,
+            ),
+        )
+        review_id = int(cursor.lastrowid)
+    record_onboarding_checkpoint(
+        db_path,
+        "quality_review",
+        status="pass" if decision == "pass" else "fail",
+        evidence={"review_id": review_id, "event_recorded": True, "config_hash": review_hash},
+    )
+    return {"review_id": review_id, "decision": decision, "event_recorded": True, "event_id": event_id}
+
+
+def reviewable_slack_events(db_path: str | Path, *, limit: int = 5) -> list[dict[str, Any]]:
+    """List sanitized IDs for delivered Slack answers without exposing child text or names."""
+
+    if not 1 <= limit <= 20:
+        raise ValueError("reviewable event limit must be 1..20")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """SELECT e.id AS event_id,e.created_at,r.workflow,r.output_json,
+                      EXISTS(SELECT 1 FROM onboarding_reviews q WHERE q.event_id=e.id) AS reviewed
+               FROM events e
+               JOIN responses r ON r.event_id=e.id AND r.status='completed'
+               JOIN transport_receipts t ON t.event_id=e.id AND t.transport='slack' AND t.status='completed'
+               JOIN delivery_outbox d ON d.binding_id=t.binding_id AND d.status='sent'
+                 AND d.idempotency_key LIKE ('slack:' || t.external_event_id || ':%')
+               WHERE e.type='child_question' AND e.status='completed'
+               GROUP BY e.id,e.created_at,r.workflow
+               ORDER BY e.created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    current_hash = answer_stack_fingerprint(db_path)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        output = jload(item.pop("output_json"))
+        item["current_answer_stack"] = (
+            str((output.get("_reasoning") or {}).get("answer_stack_hash") or "") == current_hash
+        )
+        result.append(item)
+    return result
 
 
 def create_pairing_code(db_path: str | Path, parent_id: str, *, ttl_minutes: int = 15) -> dict[str, Any]:
@@ -434,8 +658,15 @@ def enqueue_delivery(
 
 
 def ready_deliveries(db_path: str | Path, *, limit: int = 20) -> list[dict[str, Any]]:
-    now = utcnow()
+    current = datetime.now(UTC)
+    now = current.isoformat()
+    stale = (current - timedelta(minutes=10)).isoformat()
     with connect(db_path) as conn:
+        conn.execute(
+            """UPDATE delivery_outbox SET status='unknown',last_error='connector stopped during send',updated_at=?
+               WHERE status='sending' AND updated_at<?""",
+            (now, stale),
+        )
         rows = conn.execute(
             """SELECT o.*,b.team_id,b.user_id,b.channel_id FROM delivery_outbox o
                JOIN transport_bindings b ON b.id=o.binding_id
@@ -445,6 +676,21 @@ def ready_deliveries(db_path: str | Path, *, limit: int = 20) -> list[dict[str, 
             (now, now, limit),
         ).fetchall()
     return [{**dict(row), "payload": jload(row["payload_json"])} for row in rows]
+
+
+def claim_delivery(db_path: str | Path, delivery_id: str) -> bool:
+    """Atomically claim one queued delivery so two connector processes cannot both send it."""
+
+    now = datetime.now(UTC)
+    with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        updated = conn.execute(
+            """UPDATE delivery_outbox SET status='sending',attempts=attempts+1,updated_at=?
+               WHERE id=? AND status IN ('queued','failed') AND available_at<=?
+                 AND (expires_at IS NULL OR expires_at>?) AND attempts<5""",
+            (now.isoformat(), delivery_id, now.isoformat(), now.isoformat()),
+        )
+    return updated.rowcount == 1
 
 
 def mark_delivery(

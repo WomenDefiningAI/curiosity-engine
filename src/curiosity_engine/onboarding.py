@@ -10,11 +10,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .config import repository_root
+from pydantic import BaseModel, ConfigDict
+
+from .brain_config import brain_config_fingerprint, brain_status
+from .config import AppConfig, ConfigurationError, configuration_root, repository_root
 from .db import SCHEMA_VERSION
-from .interaction import onboarding_status
-from .openai_backend import load_model_settings, model_key_is_configured
+from .interaction import onboarding_checkpoint, onboarding_status, record_onboarding_checkpoint
+from .runtime import configured_backend
 from .transports.slack import load_slack_tokens
+
+
+class BrainProbeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    marker: str
+    count: int
 
 
 def _check(name: str, status: str, detail: str, *, required: bool) -> dict[str, Any]:
@@ -37,24 +47,35 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
     model_ready = False
     response_mode = "offline_demo"
     try:
-        model_settings = load_model_settings()
-        backend = model_settings["CURIOSITY_BACKEND"].casefold()
-        if backend == "openai" and model_key_is_configured(model_settings["OPENAI_API_KEY"]):
-            model_ready = True
-            response_mode = "hosted_model"
+        brain = brain_status()
+        model_ready = bool(brain["configured"])
+        if model_ready:
+            response_mode = "api_brain"
             model_status = "pass"
-            model_detail = "hosted reasoning configured; bounded context is disclosed to the provider"
-        elif backend == "deterministic":
+            model_detail = "API brain stack configured; live verification is reported separately"
+        elif brain["runtime"] == "coding_agent_attended":
+            response_mode = "coding_agent_attended"
+            model_status = "experimental"
+            model_detail = "attended coding-agent operation is not a reliable Slack runtime"
+        elif brain["runtime"] == "deterministic":
             model_status = "demo_mode"
-            model_detail = "offline canned responses only; configure a model for question-specific answers"
+            model_detail = "offline canned responses only; configure the brain stack for tailored answers"
         else:
             model_status = "not_configured"
-            model_detail = "model backend is enabled but its credential is absent or malformed"
+            model_detail = "; ".join(brain["blockers"][:4])
     except PermissionError:
+        brain = {"configured": False, "multimodal_stack_configured": False, "blockers": ["private file permissions"]}
         model_status = "not_configured"
         model_detail = "model credential file permissions are too broad; values were not read or displayed"
     checks.append(_check("reasoning_provider", model_status, model_detail, required=False))
-    config_ok = all((root / "configs" / name).is_file() for name in ("production.json", "reasoning-policy.json"))
+    try:
+        public_config_root = configuration_root()
+    except ConfigurationError:
+        public_config_root = root
+    config_ok = all(
+        (public_config_root / "configs" / name).is_file()
+        for name in ("production.json", "reasoning-policy.json")
+    )
     checks.append(
         _check("public_config", "pass" if config_ok else "fail", "versioned public configuration", required=True)
     )
@@ -69,9 +90,17 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         )
         ignored = proc.returncode == 0
     else:
-        ignored = "private/" in (root / ".gitignore").read_text(encoding="utf-8", errors="replace")
+        ignore_file = root / ".gitignore"
+        ignored = ignore_file.is_file() and "private/" in ignore_file.read_text(
+            encoding="utf-8", errors="replace"
+        )
     checks.append(
-        _check("private_git_boundary", "pass" if ignored else "fail", "private/ is ignored", required=True)
+        _check(
+            "private_git_boundary",
+            "pass" if ignored else "fail",
+            "private/ is ignored" if ignored else "run inside the cloned repository with private/ ignored",
+            required=True,
+        )
     )
     db_detail = "not initialized"
     db_ok = True
@@ -128,6 +157,11 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
     )
     configured = False
     bindings = 0
+    state: dict[str, Any] = {
+        "checkpoints": {},
+        "family_lens_configured": False,
+        "quality_review_accepted": False,
+    }
     if db.is_file() and db_version == SCHEMA_VERSION:
         state = onboarding_status(db)
         configured = bool(state["configured"])
@@ -150,14 +184,103 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
     )
     required_pass = all(item["status"] == "pass" for item in checks if item["required"])
     slack_ready = required_pass and slack_extra and token_shapes and configured and bindings > 0
+    checkpoints = state.get("checkpoints") or {}
+    transport_verified = slack_ready and (checkpoints.get("transport_verified") or {}).get("status") == "pass"
+    brain_check = onboarding_checkpoint(db, "brain_verified") if db.is_file() and db_version == SCHEMA_VERSION else None
+    current_brain_hash = brain_config_fingerprint()
+    brain_verified = bool(
+        model_ready
+        and brain_check
+        and brain_check["status"] == "pass"
+        and (brain_check.get("evidence") or {}).get("config_hash") == current_brain_hash
+    )
+    family_lens_ready = bool(state.get("family_lens_configured"))
+    quality_review_pending = brain_verified and family_lens_ready and not bool(state.get("quality_review_accepted"))
+    end_to_end_ready = (
+        transport_verified and brain_verified and family_lens_ready and bool(state.get("quality_review_accepted"))
+    )
+    if not required_pass:
+        next_action = "fix required local checks"
+    elif not configured:
+        next_action = "run curiosity setup and add a child"
+    elif not slack_ready:
+        next_action = "finish Slack installation, credentials, and pairing"
+    elif not transport_verified:
+        next_action = "send `connection` in the paired Slack conversation"
+    elif not model_ready:
+        next_action = "run curiosity brain configure, then paste provider credentials privately"
+    elif not brain_verified:
+        next_action = "run curiosity brain test --live"
+    elif not family_lens_ready:
+        next_action = "run curiosity family-lens configure"
+    elif not end_to_end_ready:
+        next_action = "ask one real Slack question and record curiosity onboard review"
+    else:
+        next_action = "run the Slack connector for everyday use"
     return {
         "status": "pass" if required_pass else "fail",
         "core_ready": required_pass,
         "slack_ready": slack_ready,
-        "answer_ready": slack_ready and model_ready,
+        "transport_verified": transport_verified,
+        "brain_configured": model_ready,
+        "brain_verified": brain_verified,
+        "multimodal_stack_configured": bool(brain.get("multimodal_stack_configured")),
+        "family_lens_ready": family_lens_ready,
+        "quality_review_pending": quality_review_pending,
+        "end_to_end_ready": end_to_end_ready,
+        "answer_ready": slack_ready and brain_verified,
         "response_mode": response_mode,
+        "next_action": next_action,
         "checks": checks,
         "privacy_note": "No token values, child names, questions, or licensed excerpts are included in this report.",
+    }
+
+
+def run_brain_probe(db_path: str | Path, *, live: bool) -> dict[str, Any]:
+    if not live:
+        raise ValueError("brain probe makes a billable network request; pass --live after reviewing disclosure")
+    app = AppConfig.load()
+    backend = configured_backend(app, role="reasoning")
+    if backend is None:
+        raise RuntimeError("an API reasoning provider is not configured")
+    try:
+        result = backend.complete(
+            role="reasoning",
+            system=(
+                "This is a synthetic Curiosity Engine connectivity test. Return only the requested schema. "
+                "No family, child, Slack, or private-resource data is present."
+            ),
+            payload={
+                "probe": "curiosity-engine-synthetic-v1",
+                "instruction": "Return marker ready and count 3.",
+                "policy": {"allowed_tools": []},
+            },
+            response_model=BrainProbeOutput,
+        )
+        if result != {"marker": "ready", "count": 3}:
+            raise RuntimeError("provider returned a valid schema but failed the fixed semantic probe")
+    except Exception:
+        record_onboarding_checkpoint(db_path, "brain_verified", status="fail", evidence={"probe": "synthetic-v1"})
+        raise
+    config_hash = brain_config_fingerprint()
+    record_onboarding_checkpoint(
+        db_path,
+        "brain_verified",
+        status="pass",
+        evidence={
+            "probe": "synthetic-v1",
+            "provider": backend.name,
+            "model": backend.model,
+            "config_hash": config_hash,
+            "family_data_sent": False,
+        },
+    )
+    return {
+        "status": "pass",
+        "provider": backend.name,
+        "model": backend.model,
+        "family_data_sent": False,
+        "note": "This verifies structured reasoning only; vision/OCR/image generation still require the eval checklist.",
     }
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .config import AppConfig
 from .context_builder import build_context
 from .contracts import DirectorCandidate
 from .db import connect, init_db, jdump, jload, utcnow
@@ -13,19 +14,26 @@ from .reasoning import POLICIES, ReasoningEngine
 
 
 class AutonomousDirector:
-    """A bounded weekly recommender: at most one suggestion, and doing nothing is valid."""
+    """A bounded reflection path held behind the public context-proactivity gate."""
 
     def __init__(self, db_path: str | Path, reasoning: ReasoningEngine | None = None):
         self.db_path = str(db_path)
         self.reasoning = reasoning or ReasoningEngine()
+        self.config = AppConfig.load()
         init_db(self.db_path)
 
-    def _proactive_enabled(self) -> bool:
+    def _parent_opted_in(self) -> bool:
         with connect(self.db_path) as conn:
             row = conn.execute(
                 "SELECT proactive_enabled FROM household_settings WHERE id='default'"
             ).fetchone()
         return bool(row and row["proactive_enabled"])
+
+    def _context_proactivity_available(self) -> bool:
+        return bool(self.config.autonomy.get("context_driven_suggestions_enabled", False))
+
+    def _proactive_enabled(self) -> bool:
+        return self._parent_opted_in() and self._context_proactivity_available()
 
     def ensure_weekly_schedule(
         self,
@@ -36,7 +44,8 @@ class AutonomousDirector:
     ) -> str:
         schedule_id = f"weekly:{child_id}"
         next_run = (start_at or datetime.now(UTC)).isoformat()
-        active = self._proactive_enabled() if enabled is None else enabled
+        requested = self._parent_opted_in() if enabled is None else enabled
+        active = bool(requested and self._context_proactivity_available())
         with connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO schedules(id,schedule_type,child_id,cadence,next_run_at,enabled,payload_json)
@@ -46,6 +55,8 @@ class AutonomousDirector:
         return schedule_id
 
     def run_due(self, *, now: datetime | None = None) -> list[dict[str, Any]]:
+        if not self._context_proactivity_available():
+            return []
         current = now or datetime.now(UTC)
         with connect(self.db_path) as conn:
             due = conn.execute(
@@ -66,41 +77,55 @@ class AutonomousDirector:
     ) -> dict[str, Any]:
         current = now or datetime.now(UTC)
         cooldown = (current - timedelta(days=6)).isoformat()
-        with connect(self.db_path) as conn:
-            recent = conn.execute(
-                """SELECT * FROM opportunities WHERE kind!='do_nothing'
-                   AND created_at>=? AND status IN ('suggested','accepted') ORDER BY created_at DESC LIMIT 1""",
-                (cooldown,),
-            ).fetchone()
-        if recent:
+        if not self._context_proactivity_available():
             choice = DirectorCandidate(
                 kind="do_nothing",
-                title="No extra suggestion this week",
-                rationale="A family opportunity is already active; avoid piling on parent work.",
+                title="Context-driven suggestions are not enabled yet",
+                rationale=(
+                    "The episode-aware context foundation has not yet passed shadow-mode and family review for "
+                    "unsolicited suggestions."
+                ),
                 parent_effort="very_low",
-                priority=0.05,
-                payload={"active_opportunity_id": recent["id"]},
+                priority=0.0,
+                payload={"policy": "context_proactivity_disabled_v1"},
             )
             considered: list[dict[str, Any]] = []
         else:
-            policy = POLICIES["weekly_reflection"]
-            context = build_context(
-                self.db_path,
-                child_id,
-                {"type": "scheduled_reflection", "text": "weekly reflection", "metadata": {}},
-                depth=policy.context_depth,
-            )
-            envelope = self.reasoning.run(
-                policy=policy,
-                context=context,
-                event={
-                    "type": "scheduled_reflection",
-                    "child_id": child_id,
-                    "text": "Find at most one unusually timely, low-effort learning opportunity; doing nothing is valid.",
-                },
-            )
-            choice = DirectorCandidate.model_validate(envelope.output["choice"])
-            considered = envelope.output.get("considered", [])
+            with connect(self.db_path) as conn:
+                recent = conn.execute(
+                    """SELECT * FROM opportunities WHERE kind!='do_nothing'
+                       AND created_at>=? AND status IN ('suggested','accepted') ORDER BY created_at DESC LIMIT 1""",
+                    (cooldown,),
+                ).fetchone()
+            if recent:
+                choice = DirectorCandidate(
+                    kind="do_nothing",
+                    title="No extra suggestion this week",
+                    rationale="A family opportunity is already active; avoid piling on parent work.",
+                    parent_effort="very_low",
+                    priority=0.05,
+                    payload={"active_opportunity_id": recent["id"]},
+                )
+                considered = []
+            else:
+                policy = POLICIES["weekly_reflection"]
+                context = build_context(
+                    self.db_path,
+                    child_id,
+                    {"type": "scheduled_reflection", "text": "weekly reflection", "metadata": {}},
+                    depth=policy.context_depth,
+                )
+                envelope = self.reasoning.run(
+                    policy=policy,
+                    context=context,
+                    event={
+                        "type": "scheduled_reflection",
+                        "child_id": child_id,
+                        "text": "Find at most one unusually timely, low-effort learning opportunity; doing nothing is valid.",
+                    },
+                )
+                choice = DirectorCandidate.model_validate(envelope.output["choice"])
+                considered = envelope.output.get("considered", [])
         if choice.parent_effort not in {"very_low", "low"}:
             choice = DirectorCandidate(
                 kind="do_nothing",

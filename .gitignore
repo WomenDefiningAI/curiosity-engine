@@ -11,6 +11,7 @@ dist/
 data/
 output/
 private/
+# Local coding-agent plans, council reviews, and other working notes.
 .Codex/
 .env
 .DS_Store

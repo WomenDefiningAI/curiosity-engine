@@ -9,19 +9,33 @@ description = "Local-first, Slack-connected family curiosity harness"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+keywords = ["education", "family", "local-first", "slack", "ai"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Education",
+]
 dependencies = [
   "fastapi>=0.115,<1",
   "jinja2>=3.1,<4",
   "openai>=1.68,<3",
   "pydantic>=2.10,<3",
   "python-multipart>=0.0.20,<1",
-  "reportlab>=4.2,<5",
+  "reportlab==5.0.1",
   "uvicorn>=0.34,<1",
 ]
 
 [project.optional-dependencies]
 slack = [
   "slack-bolt>=1.30,<2",
+]
+anthropic = [
+  "anthropic>=0.74,<1",
+]
+all-providers = [
+  "anthropic>=0.74,<1",
 ]
 dev = [
   "httpx>=0.28,<1",
@@ -34,6 +48,12 @@ dev = [
 [project.scripts]
 curiosity = "curiosity_engine.cli:main"
 curiosity-lab = "curiosity_engine.lab:main"
+
+[project.urls]
+Homepage = "https://github.com/WomenDefiningAI/curiosity-engine"
+Documentation = "https://github.com/WomenDefiningAI/curiosity-engine/tree/main/docs"
+Issues = "https://github.com/WomenDefiningAI/curiosity-engine/issues"
+Repository = "https://github.com/WomenDefiningAI/curiosity-engine"
 
 [tool.setuptools.packages.find]
 where = ["src"]

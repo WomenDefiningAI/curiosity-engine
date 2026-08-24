@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -143,10 +143,25 @@ CREATE TABLE IF NOT EXISTS claims (
   FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS episodes (
+  id TEXT PRIMARY KEY,
+  child_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'corrected', 'closed')),
+  topic_key TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  clustering_version TEXT NOT NULL,
+  opened_at TEXT NOT NULL,
+  last_event_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   child_id TEXT,
   event_id TEXT,
+  episode_id TEXT,
   evidence_type TEXT NOT NULL,
   content TEXT NOT NULL,
   source TEXT NOT NULL,
@@ -154,7 +169,39 @@ CREATE TABLE IF NOT EXISTS evidence (
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE,
-  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL,
+  FOREIGN KEY(episode_id) REFERENCES episodes(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS episode_memberships (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  episode_id TEXT NOT NULL,
+  event_id TEXT NOT NULL UNIQUE,
+  relation TEXT NOT NULL,
+  independence_status TEXT NOT NULL CHECK(independence_status IN ('eligible', 'same_episode', 'diagnostic', 'system', 'excluded', 'uncertain')),
+  learning_scope TEXT NOT NULL CHECK(learning_scope IN ('family_signal', 'diagnostic', 'system')),
+  confidence REAL NOT NULL DEFAULT 1.0 CHECK(confidence >= 0 AND confidence <= 1),
+  rationale TEXT NOT NULL,
+  classifier_source TEXT NOT NULL DEFAULT 'deterministic',
+  classifier_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS context_corrections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  child_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('retry', 'deepening', 'new_episode', 'exclude')),
+  related_event_id TEXT,
+  previous_json TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+  FOREIGN KEY(related_event_id) REFERENCES events(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS node_evidence (
@@ -415,6 +462,40 @@ CREATE TABLE IF NOT EXISTS interaction_audit (
   FOREIGN KEY(actor_parent_id) REFERENCES parent_principals(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS onboarding_checkpoints (
+  checkpoint TEXT PRIMARY KEY,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'pass', 'fail')),
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  verified_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS learning_preferences (
+  scope_type TEXT NOT NULL CHECK(scope_type IN ('household', 'child')),
+  scope_id TEXT NOT NULL,
+  profile_json TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL DEFAULT 'parent',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(scope_type, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS onboarding_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  brain_config_hash TEXT NOT NULL,
+  response_hash TEXT NOT NULL,
+  workflow TEXT NOT NULL,
+  factuality TEXT NOT NULL CHECK(factuality IN ('pass', 'retry')),
+  grade_fit TEXT NOT NULL CHECK(grade_fit IN ('pass', 'retry')),
+  curiosity_value TEXT NOT NULL CHECK(curiosity_value IN ('pass', 'retry')),
+  parent_effort TEXT NOT NULL CHECK(parent_effort IN ('pass', 'retry')),
+  note TEXT,
+  decision TEXT NOT NULL CHECK(decision IN ('pass', 'retry')),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE RESTRICT
+);
+
 CREATE TABLE IF NOT EXISTS resource_collections (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -492,6 +573,7 @@ END;
 LEGACY_COLUMNS: dict[str, dict[str, str]] = {
     "children": {"updated_at": "TEXT"},
     "observations": {"event_id": "TEXT"},
+    "evidence": {"episode_id": "TEXT"},
     "experiences": {"source_event_id": "TEXT"},
     "artifacts": {
         "sha256": "TEXT",
@@ -515,6 +597,11 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
     "runs": {"event_id": "TEXT", "policy_json": "TEXT", "result_json": "TEXT"},
     "household_settings": {
         "resource_context_mode": "TEXT NOT NULL DEFAULT 'metadata_only' CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts'))"
+    },
+    "onboarding_reviews": {
+        "brain_config_hash": "TEXT NOT NULL DEFAULT 'legacy'",
+        "response_hash": "TEXT NOT NULL DEFAULT 'legacy'",
+        "workflow": "TEXT NOT NULL DEFAULT 'legacy'",
     },
 }
 
@@ -622,10 +709,14 @@ def init_db(db_path: str | Path) -> Path | None:
             "CREATE INDEX IF NOT EXISTS idx_observations_child_time ON observations(child_id, occurred_at DESC)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_child_time ON nodes(child_id, last_seen DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_child_time ON episodes(child_id, last_event_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_episode_members_episode ON episode_memberships(episode_id, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_episode ON evidence(episode_id, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_resources_unit ON resource_documents(unit_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON transport_bindings(transport,team_id,user_id,status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_status ON capture_inbox(status,created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_outbox_ready ON delivery_outbox(transport,status,available_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_reviews_event ON onboarding_reviews(event_id)")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     path.chmod(0o600)
     if backup:

@@ -53,8 +53,9 @@ class CuriosityService:
         topics: list[str] | None = None,
         include_private_excerpts: bool = False,
         event_id: str | None = None,
+        context_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        metadata: dict[str, Any] = {"topics": topics or []}
+        metadata: dict[str, Any] = {"topics": topics or [], **(context_metadata or {})}
         if include_private_excerpts:
             metadata["private_resource_mode"] = "selected_excerpts"
         payload: dict[str, Any] = {

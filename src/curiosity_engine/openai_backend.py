@@ -138,7 +138,11 @@ class OpenAIBackend:
         if "resource_refs" in response_model.model_fields:
             existing_refs = [str(item) for item in data.get("resource_refs") or []]
             data["resource_refs"] = list(dict.fromkeys([*existing_refs, *_web_sources(response)]))[:8]
-        return response_model.model_validate(data).model_dump(mode="json")
+        # Return the provider candidate unchanged. ReasoningEngine owns contract
+        # validation so it can spend the workflow's repair round on malformed or
+        # overlong structured output instead of leaking a provider validation
+        # error through the transport.
+        return data
 
 
 def data_url_for_image(path: str | Path) -> str:

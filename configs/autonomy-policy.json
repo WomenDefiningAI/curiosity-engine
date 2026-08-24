@@ -1,5 +1,7 @@
 {
   "version": "1.0",
+  "context_driven_suggestions_enabled": false,
+  "context_driven_suggestions_disabled_reason": "Episode-independent evidence and parent corrections must pass shadow-mode and family review before context can trigger unsolicited suggestions.",
   "autonomous_allowed": [
     "read_context",
     "extract_low_risk_signals",

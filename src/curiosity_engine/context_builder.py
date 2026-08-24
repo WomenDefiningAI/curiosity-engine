@@ -91,10 +91,17 @@ def build_context(
             "Availability is not exposure; exposure is not understanding.",
             "One observation is not a durable trait.",
             "Uncertain attribution remains uncertain.",
+            "Repeated turns inside one episode are not independent evidence of interest.",
+            "Node evidence_count is mention frequency only, never interest confidence.",
         ]
+        preference = conn.execute(
+            "SELECT profile_json FROM learning_preferences WHERE scope_type='household' AND scope_id='default'"
+        ).fetchone()
+        if preference:
+            result["family_lens"] = jload(preference["profile_json"])
 
         observation_fetch = 30 if depth <= 2 else 100 if depth == 3 else 240
-        raw_observations = [
+        fetched_observations = [
             {**dict(row), "metadata": jload(row["metadata_json"])}
             for row in conn.execute(
                 """SELECT id,kind,text,source,confidence,occurred_at,metadata_json
@@ -102,8 +109,39 @@ def build_context(
                 (child_id, observation_fetch),
             ).fetchall()
         ]
+        raw_observations = [
+            row
+            for row in fetched_observations
+            if row["metadata"].get("learning_scope", "family_signal") == "family_signal"
+            and row["metadata"].get("independence_status") != "excluded"
+        ]
         obs_limit = {1: 8, 2: 16, 3: 30, 4: 60}[depth]
         result["observations"] = _rank(raw_observations, query_terms, ("kind", "text"), obs_limit)
+        episode_limit = {1: 4, 2: 8, 3: 16, 4: 24}[depth]
+        episode_rows = [
+            dict(row)
+            for row in conn.execute(
+                """SELECT ep.id,ep.summary,ep.status,ep.clustering_version,ep.opened_at,ep.last_event_at
+                   FROM episodes ep WHERE ep.child_id=? AND EXISTS(
+                     SELECT 1 FROM episode_memberships m WHERE m.episode_id=ep.id
+                       AND m.learning_scope='family_signal' AND m.independence_status!='excluded'
+                   ) ORDER BY ep.last_event_at DESC LIMIT ?""",
+                (child_id, episode_limit * 3),
+            ).fetchall()
+        ]
+        ranked_episodes = _rank(episode_rows, query_terms, ("summary",), episode_limit)
+        for episode in ranked_episodes:
+            episode["turns"] = [
+                dict(row)
+                for row in conn.execute(
+                    """SELECT m.relation,m.independence_status,m.learning_scope,m.confidence,e.text,e.status,e.created_at
+                       FROM episode_memberships m JOIN events e ON e.id=m.event_id
+                       WHERE m.episode_id=? AND m.learning_scope='family_signal'
+                         AND m.independence_status!='excluded' ORDER BY e.created_at LIMIT 12""",
+                    (episode["id"],),
+                ).fetchall()
+            ]
+        result["episodes"] = ranked_episodes
         school_limit = 8 if depth == 1 else 16
         result["school_signals"] = [
             dict(row)
@@ -115,12 +153,18 @@ def build_context(
             ).fetchall()
         ]
         node_fetch = 40 if depth <= 2 else 120 if depth == 3 else 240
-        raw_nodes = [
+        fetched_nodes = [
             {**dict(row), "state": jload(row["state_json"])}
             for row in conn.execute(
                 "SELECT * FROM nodes WHERE child_id=? ORDER BY last_seen DESC LIMIT ?",
                 (child_id, node_fetch),
             ).fetchall()
+        ]
+        raw_nodes = [
+            row
+            for row in fetched_nodes
+            if row["state"].get("learning_scope", "family_signal") == "family_signal"
+            and row["state"].get("independence_status") != "excluded"
         ]
         node_limit = {1: 10, 2: 24, 3: 50, 4: 90}[depth]
         nodes = _rank(raw_nodes, query_terms, ("kind", "label", "canonical_key"), node_limit)

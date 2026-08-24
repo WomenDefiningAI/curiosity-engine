@@ -8,6 +8,7 @@ Suites:
 - `harness/`: routing, persistence, context-depth and orchestration invariants.
 - `autonomy/`: Director opportunity selection, restraint, and `do_nothing` behavior.
 - `context/`: cumulative child-context use and one-rung-above behavior.
+- episode invariants live in `regressions/`: retries and exact repeats do not inflate independent evidence, developed later returns can form a new episode, and diagnostic events remain ineligible.
 - `curiosity/`: hook, notice, predict, nugget, next-thread quality.
 - `factual/`: correctness and epistemic uncertainty.
 - `artifacts/`: printout correctness and trust rules.

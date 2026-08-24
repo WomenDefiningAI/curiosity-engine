@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from curiosity_engine.brain_config import (
+    brain_config_fingerprint,
+    brain_status,
+    configure_api_brain,
+    ensure_model_env_template,
+    write_brain_config,
+)
+from curiosity_engine.interaction import configure_family_lens, onboarding_status, record_onboarding_review
+from curiosity_engine.lab import evaluate
+from curiosity_engine.onboarding import doctor, run_brain_probe
+
+
+def test_private_brain_stack_requires_reasoning_vision_ocr_image_and_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    brain_path = tmp_path / "private" / "setup" / "brain.json"
+    model_path = tmp_path / "private" / "setup" / "model.env"
+    monkeypatch.setenv("CURIOSITY_BRAIN_CONFIG", str(brain_path))
+    monkeypatch.setenv("CURIOSITY_MODEL_ENV", str(model_path))
+    config = configure_api_brain(
+        provider="openai",
+        model="reasoning-model",
+        vision_model="vision-model",
+        image_model="image-model",
+    )
+    write_brain_config(config)
+    ensure_model_env_template({"openai"})
+    assert brain_status()["configured"] is False
+    model_path.write_text("OPENAI_API_KEY=sk-private-example-key-123456789\n", encoding="utf-8")
+    model_path.chmod(0o600)
+    status = brain_status()
+    assert status["configured"] is True
+    assert status["multimodal_stack_configured"] is True
+    assert status["providers"] == ["openai"]
+
+
+def test_brain_probe_is_synthetic_and_records_only_sanitized_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    db = tmp_path / "db.sqlite"
+    brain_path = tmp_path / "brain.json"
+    monkeypatch.setenv("CURIOSITY_BRAIN_CONFIG", str(brain_path))
+    config = configure_api_brain(provider="openai", model="test-model", image_model="image-model")
+    write_brain_config(config)
+
+    class FakeBackend:
+        name = "fake-provider"
+        model = "fake-model"
+
+        def complete(self, **kwargs):
+            assert kwargs["payload"]["probe"] == "curiosity-engine-synthetic-v1"
+            rendered = str(kwargs["payload"])
+            assert "child" not in rendered.casefold()
+            assert "resource" not in rendered.casefold()
+            return {"marker": "ready", "count": 3}
+
+    monkeypatch.setattr("curiosity_engine.onboarding.configured_backend", lambda *_args, **_kwargs: FakeBackend())
+    result = run_brain_probe(db, live=True)
+    assert result["family_data_sent"] is False
+    state = onboarding_status(db)
+    assert state["checkpoints"]["brain_verified"]["status"] == "pass"
+
+
+def test_family_lens_and_parent_review_are_explicit_private_gates(tmp_path: Path):
+    db = tmp_path / "db.sqlite"
+    configure_family_lens(
+        db,
+        {
+            "pedagogy": ["show before explaining"],
+            "themes": [],
+            "activity_minutes": 10,
+            "parent_effort": "low",
+            "reading_load": "early_elementary",
+            "materials": ["paper"],
+            "content_boundaries": [],
+        },
+    )
+    state = onboarding_status(db)
+    assert state["family_lens_configured"] is True
+    with pytest.raises(ValueError, match="completed real Slack answer"):
+        record_onboarding_review(
+            db,
+            event_id="evt_not_delivered",
+            factuality="pass",
+            grade_fit="pass",
+            curiosity_value="pass",
+            parent_effort="pass",
+        )
+    assert onboarding_status(db)["quality_review_accepted"] is False
+
+
+def test_offline_lab_never_inherits_private_provider_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    model_path = tmp_path / "model.env"
+    model_path.write_text(
+        "CURIOSITY_BACKEND=openai\nOPENAI_API_KEY=sk-REPLACE_ME\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CURIOSITY_BACKEND", "openai")
+    monkeypatch.setenv("CURIOSITY_MODEL_ENV", str(model_path))
+    report = evaluate(Path(__file__).resolve().parents[1], live_judge=False)
+    assert report["status"] == "pass"
+    assert report["summary"]["failed"] == 0
+
+
+def test_doctor_fails_safely_outside_a_protected_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("curiosity_engine.onboarding.repository_root", lambda: tmp_path)
+    report = doctor(tmp_path / "private" / "data" / "db.sqlite")
+    boundary = next(check for check in report["checks"] if check["name"] == "private_git_boundary")
+    assert report["core_ready"] is False
+    assert boundary["status"] == "fail"
+    assert "cloned repository" in boundary["detail"]
+
+
+def test_legacy_brain_fingerprint_changes_with_non_secret_route(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("CURIOSITY_BACKEND", "openai")
+    monkeypatch.setenv("CURIOSITY_MODEL", "model-a")
+    first = brain_config_fingerprint()
+    monkeypatch.setenv("CURIOSITY_MODEL", "model-b")
+    assert brain_config_fingerprint() != first

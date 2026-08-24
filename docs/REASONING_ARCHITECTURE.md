@@ -8,7 +8,7 @@ Curiosity Engine treats model topology as code/configuration rather than an impl
 
 **NORMAL** — artifact/experience production. Generator + relevant validation/critics.
 
-**DEEP** — weekly reflection. Broad graph context, multiple opportunity lenses, critics, selector.
+**DEEP** — reserved weekly reflection policy. Broad graph context, multiple opportunity lenses, critics, selector. Context-driven execution is disabled by public policy in v0.1, so this route cannot currently call a model.
 
 **LAB** — background experiments, shadow runs, context audits, model/prompt challengers.
 

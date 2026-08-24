@@ -5,10 +5,14 @@ import socket
 from pathlib import Path
 from typing import Any
 
+from .brain_config import SECRET_KEYS, load_brain_config, load_secret_settings, secret_is_configured
 from .config import AppConfig
 from .context_builder import build_context
 from .contracts import ActionRequest, Event, GraphMutation, RunResult
-from .openai_backend import OpenAIBackend, load_model_settings, model_key_is_configured
+from .episodes import episode_for_event
+from .interaction import answer_stack_fingerprint
+from .openai_backend import OpenAIBackend
+from .providers import AnthropicBackend, OpenRouterBackend
 from .reasoning import ModelBackend, ReasoningEngine, ReasoningPolicy, ReasoningRejected, load_policies
 from .repository import Job, Repository
 
@@ -16,22 +20,48 @@ __all__ = ["CuriosityHarness", "Event", "RunResult"]
 
 
 def configured_backend(config: AppConfig, role: str = "reasoning") -> ModelBackend | None:
-    settings = load_model_settings()
-    if settings["CURIOSITY_BACKEND"].casefold() != "openai":
-        return None
-    if not model_key_is_configured(settings["OPENAI_API_KEY"]):
-        raise RuntimeError("OpenAI mode is enabled but private/setup/model.env does not contain a valid API key")
-    routes = config.production.get("models") or {}
-    route = routes.get(role) or {}
-    override = settings["CURIOSITY_MODEL"]
-    if override:
-        routes = {name: {**entry, "model": override} for name, entry in routes.items()}
-    return OpenAIBackend(
-        model=override or route.get("model") or "gpt-5.4",
-        api_key=settings["OPENAI_API_KEY"],
-        reasoning_effort=route.get("reasoning_effort"),
-        routes=routes,
-    )
+    settings = load_secret_settings()
+    brain = load_brain_config()
+    if brain is not None:
+        if brain.runtime != "api":
+            return None
+        selected = brain.routes.get(role) or brain.routes.get("reasoning")
+        if selected is None:
+            return None
+        provider = selected.provider
+        routes = {name: entry.model_dump(mode="json") for name, entry in brain.routes.items()}
+        model = selected.model
+        reasoning_effort = selected.reasoning_effort
+    else:
+        provider = settings["CURIOSITY_BACKEND"].casefold()
+        if provider == "deterministic":
+            return None
+        if provider not in SECRET_KEYS:
+            raise RuntimeError(f"unsupported reasoning provider: {provider!r}")
+        public_routes = config.production.get("models") or {}
+        public_route = public_routes.get(role) or public_routes.get("reasoning") or {}
+        model = settings["CURIOSITY_MODEL"] or public_route.get("model") or "gpt-5.4"
+        reasoning_effort = public_route.get("reasoning_effort")
+        routes = {
+            name: {**entry, "provider": provider, "model": settings["CURIOSITY_MODEL"] or entry.get("model") or model}
+            for name, entry in public_routes.items()
+        }
+    key_name = SECRET_KEYS[provider]
+    api_key = settings[key_name]
+    if not secret_is_configured(provider, api_key):
+        raise RuntimeError(
+            f"{provider} mode is enabled but private/setup/model.env does not contain a valid {key_name}"
+        )
+    if provider == "openai":
+        return OpenAIBackend(
+            model=model,
+            api_key=api_key,
+            reasoning_effort=reasoning_effort,
+            routes=routes,
+        )
+    if provider == "anthropic":
+        return AnthropicBackend(model=model, api_key=api_key, routes=routes)
+    return OpenRouterBackend(model=model, api_key=api_key, routes=routes)
 
 
 class CuriosityHarness:
@@ -101,7 +131,9 @@ class CuriosityHarness:
         run_id = self.repository.start_run(event.id, policy.workflow, policy.to_dict(), job.id)
         try:
             if event.child_id:
-                initial = self._initial_mutations(event)
+                episode = episode_for_event(self.db_path, event.id)
+                graph_eligible = bool(episode and episode.get("learning_scope") == "family_signal")
+                initial = self._initial_mutations(event, episode) if graph_eligible else []
                 self.repository.record_initial_mutations(event.id, event.child_id, run_id, initial)
                 context = build_context(
                     self.db_path,
@@ -126,9 +158,26 @@ class CuriosityHarness:
                 "policy": policy.to_dict(),
                 "private_resource_mode": context.get("private_resource_mode", "not_used"),
                 "private_resource_matches": len(context.get("private_resources", [])),
+                "answer_stack_hash": answer_stack_fingerprint(self.db_path),
             }
             graph_updates = [GraphMutation.model_validate(item) for item in envelope.output.get("graph_updates", [])]
             actions = [ActionRequest.model_validate(item) for item in envelope.output.get("actions", [])]
+            if event.child_id and graph_eligible:
+                graph_updates = [
+                    mutation.model_copy(
+                        update={
+                            "state": {
+                                **mutation.state,
+                                "source_event_id": event.id,
+                                **(episode or {}),
+                            }
+                        }
+                    )
+                    for mutation in graph_updates
+                ]
+            elif event.child_id:
+                graph_updates = []
+                actions = []
             return self.repository.complete_event(
                 event_id=event.id,
                 job_id=job.id,
@@ -153,7 +202,7 @@ class CuriosityHarness:
             raise
 
     @staticmethod
-    def _initial_mutations(event: Event) -> list[GraphMutation]:
+    def _initial_mutations(event: Event, episode: dict[str, Any] | None = None) -> list[GraphMutation]:
         if not event.child_id:
             return []
         if event.type in {"child_question", "curiosity"}:
@@ -164,14 +213,19 @@ class CuriosityHarness:
                     text=event.text,
                     source=event.source,
                     confidence=1.0,
-                    state={"event_id": event.id},
+                    state={"event_id": event.id, **(episode or {})},
                 ),
                 GraphMutation(
                     kind="upsert_node",
                     node_kind="question",
                     label=event.text,
                     confidence=1.0,
-                    state={"epistemic_state": "observation", "source_event_id": event.id},
+                    state={
+                        "epistemic_state": "observation",
+                        "source_event_id": event.id,
+                        "count_semantics": "mention_only",
+                        **(episode or {}),
+                    },
                 ),
             ]
             topics = event.metadata.get("topics") or ([event.metadata["topic"]] if event.metadata.get("topic") else [])
@@ -182,7 +236,12 @@ class CuriosityHarness:
                         node_kind="topic",
                         label=str(topic),
                         confidence=0.65,
-                        state={"epistemic_state": "observation", "source_event_id": event.id},
+                        state={
+                            "epistemic_state": "observation",
+                            "source_event_id": event.id,
+                            "count_semantics": "mention_only",
+                            **(episode or {}),
+                        },
                     )
                 )
             return mutations
@@ -194,7 +253,7 @@ class CuriosityHarness:
                     text=event.text,
                     source=event.source,
                     confidence=0.7,
-                    state={"event_id": event.id},
+                    state={"event_id": event.id, **(episode or {})},
                 )
             ]
         return []

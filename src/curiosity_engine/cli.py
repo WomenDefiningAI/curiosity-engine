@@ -9,24 +9,35 @@ from typing import Any
 from .actions import list_actions
 from .artifact_validation import validate_artifact_spec, validate_rendered_file
 from .artifacts import load_spec, render_html, render_pdf
+from .brain_config import (
+    brain_status,
+    configure_api_brain,
+    ensure_model_env_template,
+    write_brain_config,
+)
 from .config import repository_root
 from .contracts import Event, FeedbackInput
 from .db import init_db
 from .director import AutonomousDirector
+from .episodes import apply_episode_correction
 from .feedback import record_feedback
 from .graph import add_child, add_observation, add_school_signal, capture_question, child_context, upsert_node
 from .interaction import (
     add_parent,
+    configure_family_lens,
     create_pairing_code,
     list_bindings,
     list_inbox,
     onboarding_status,
+    record_onboarding_review,
+    reviewable_slack_events,
     revoke_binding,
     set_household_resource_context_mode,
     setup_household,
 )
-from .onboarding import doctor, write_setup_report
+from .onboarding import doctor, run_brain_probe, write_setup_report
 from .printer import approve_artifact, print_artifact
+from .public_projects import audit_public_projects, public_project, public_project_catalog, registry_status
 from .resources import discover_private_catalogs, index_collection, resource_inventory, search_resources
 from .runtime import CuriosityHarness
 from .service import CuriosityService
@@ -60,13 +71,68 @@ def build_parser() -> argparse.ArgumentParser:
     add_db(command)
     command.add_argument("--write-report", action="store_true")
 
+    onboard = sub.add_parser("onboard", help="Show or record end-to-end onboarding checkpoints")
+    onboard_sub = onboard.add_subparsers(dest="onboard_cmd", required=True)
+    command = onboard_sub.add_parser("status")
+    add_db(command)
+    command = onboard_sub.add_parser("pending", help="List recent delivered Slack answers by private event ID")
+    add_db(command)
+    command.add_argument("--limit", type=int, default=5)
+    command = onboard_sub.add_parser("review", help="Record the parent's review of one real Slack answer")
+    add_db(command)
+    review_target = command.add_mutually_exclusive_group(required=True)
+    review_target.add_argument("--event")
+    review_target.add_argument("--latest", action="store_true")
+    for rating in ("factuality", "grade-fit", "curiosity-value", "parent-effort"):
+        command.add_argument(f"--{rating}", required=True, choices=["pass", "retry"])
+    command.add_argument("--note")
+
+    brain = sub.add_parser("brain", help="Configure and verify the bring-your-own model stack")
+    brain_sub = brain.add_subparsers(dest="brain_cmd", required=True)
+    command = brain_sub.add_parser("configure")
+    command.add_argument("--provider", required=True, choices=["openai", "anthropic", "openrouter"])
+    command.add_argument("--model", required=True, help="Structured reasoning model ID")
+    command.add_argument("--vision-model", help="Vision/OCR model ID; defaults to --model")
+    command.add_argument("--image-provider", choices=["openai", "openrouter"])
+    command.add_argument("--image-model", help="Image generation model ID; required for the full visual stack")
+    command.add_argument("--web-search", action="store_true")
+    command.add_argument("--reasoning-effort")
+    command.add_argument(
+        "--recommendation-status",
+        choices=["family_evaluating", "family_recommended", "custom"],
+        default="custom",
+    )
+    command = brain_sub.add_parser("status")
+    command = brain_sub.add_parser("doctor")
+    command = brain_sub.add_parser("test", help="Run a family-data-free structured reasoning probe")
+    add_db(command)
+    command.add_argument("--live", action="store_true")
+
+    family_lens = sub.add_parser("family-lens", help="Configure private pedagogy and practical constraints")
+    family_lens_sub = family_lens.add_subparsers(dest="family_lens_cmd", required=True)
+    command = family_lens_sub.add_parser("configure")
+    add_db(command)
+    command.add_argument("--pedagogy", action="append", default=[])
+    command.add_argument("--theme", action="append", default=[])
+    command.add_argument("--activity-minutes", type=int, default=15)
+    command.add_argument("--parent-effort", choices=["very_low", "low", "moderate"], default="low")
+    command.add_argument("--reading-load", choices=["emerging", "early_elementary", "independent"], default="early_elementary")
+    command.add_argument("--material", action="append", default=[])
+    command.add_argument("--content-boundary", action="append", default=[])
+    command = family_lens_sub.add_parser("status")
+    add_db(command)
+
     command = sub.add_parser("setup", help="Configure the first parent and household defaults")
     add_db(command)
     command.add_argument("--owner-name", required=True)
     command.add_argument("--timezone", required=True, help="IANA timezone, such as America/New_York")
     command.add_argument("--quiet-start", default="20:00")
     command.add_argument("--quiet-end", default="07:00")
-    command.add_argument("--enable-weekly", action="store_true")
+    command.add_argument(
+        "--enable-weekly",
+        action="store_true",
+        help="Record parent opt-in for a future release; v0.1 public policy keeps suggestions disabled",
+    )
     command.add_argument(
         "--resource-context-mode",
         choices=["metadata_only", "selected_excerpts"],
@@ -159,9 +225,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--source-ref")
     command.add_argument("--expires-at")
 
-    command = sub.add_parser("context")
+    command = sub.add_parser("context", help="Inspect a child's episode-based context or append a correction")
     add_db(command)
     command.add_argument("--child", required=True)
+    command.add_argument("--correct-event")
+    command.add_argument("--classification", choices=["retry", "deepening", "new_episode", "exclude"])
+    command.add_argument("--related-event")
+    command.add_argument("--note")
 
     command = sub.add_parser("event")
     add_db(command)
@@ -188,6 +258,24 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("query")
     command.add_argument("--include-private-excerpts", action="store_true")
     command.add_argument("--limit", type=int, default=5)
+
+    ecosystem = sub.add_parser(
+        "ecosystem", help="Inspect vetted public projects without cloning or executing them"
+    )
+    ecosystem_sub = ecosystem.add_subparsers(dest="ecosystem_cmd", required=True)
+    command = ecosystem_sub.add_parser("list")
+    command.add_argument("--category")
+    command.add_argument(
+        "--status",
+        choices=["integrated", "approved_reference", "evaluation_candidate", "watch_only"],
+    )
+    command = ecosystem_sub.add_parser("show")
+    command.add_argument("--id", required=True)
+    ecosystem_sub.add_parser("status")
+    command = ecosystem_sub.add_parser(
+        "check", help="Refresh public metadata only; never clone, install, import, or execute upstream code"
+    )
+    command.add_argument("--live", action="store_true")
 
     artifact = sub.add_parser("artifact")
     artifact_sub = artifact.add_subparsers(dest="artifact_cmd", required=True)
@@ -233,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--experience")
     command.add_argument("--artifact")
 
-    command = sub.add_parser("reflect")
+    command = sub.add_parser("reflect", help="Inspect the disabled reflection path; v0.1 returns do_nothing")
     add_db(command)
     command.add_argument("--child", required=True)
 
@@ -260,6 +348,84 @@ def main(argv: list[str] | None = None) -> int:
             report["report_path"] = str(write_setup_report(args.db, report))
         dump(report)
         return 0 if report["core_ready"] else 1
+    elif args.cmd == "onboard" and args.onboard_cmd == "status":
+        dump(doctor(args.db))
+    elif args.cmd == "onboard" and args.onboard_cmd == "pending":
+        dump(reviewable_slack_events(args.db, limit=args.limit))
+    elif args.cmd == "onboard" and args.onboard_cmd == "review":
+        event_id = args.event
+        if args.latest:
+            reviewable = [
+                item
+                for item in reviewable_slack_events(args.db, limit=20)
+                if item["current_answer_stack"]
+            ]
+            if not reviewable:
+                raise ValueError("no delivered Slack answer from the current answer stack is available for review")
+            event_id = reviewable[0]["event_id"]
+        dump(
+            record_onboarding_review(
+                args.db,
+                event_id=event_id,
+                factuality=args.factuality,
+                grade_fit=args.grade_fit,
+                curiosity_value=args.curiosity_value,
+                parent_effort=args.parent_effort,
+                note=args.note,
+            )
+        )
+    elif args.cmd == "brain" and args.brain_cmd == "configure":
+        config = configure_api_brain(
+            provider=args.provider,
+            model=args.model,
+            vision_model=args.vision_model,
+            image_provider=args.image_provider,
+            image_model=args.image_model,
+            web_search=args.web_search,
+            reasoning_effort=args.reasoning_effort,
+            recommendation_status=args.recommendation_status,
+        )
+        config_path = write_brain_config(config)
+        providers = {route.provider for route in config.routes.values()}
+        credential_path = ensure_model_env_template(providers)
+        dump(
+            {
+                "status": "configured",
+                "brain_config": str(config_path),
+                "credential_file": str(credential_path),
+                "credentials_present": False,
+                "next_action": "paste provider keys directly into the credential file, chmod 600 it, then run curiosity brain doctor",
+            }
+        )
+    elif args.cmd == "brain" and args.brain_cmd in {"status", "doctor"}:
+        dump(brain_status())
+    elif args.cmd == "brain" and args.brain_cmd == "test":
+        dump(run_brain_probe(args.db, live=args.live))
+    elif args.cmd == "family-lens" and args.family_lens_cmd == "configure":
+        pedagogy = args.pedagogy or [
+            "follow the child's question",
+            "show before explaining",
+            "one conceptual rung above",
+            "productive struggle without spoon-feeding",
+        ]
+        materials = args.material or ["paper", "writing utensils", "common household materials"]
+        dump(
+            configure_family_lens(
+                args.db,
+                {
+                    "pedagogy": pedagogy,
+                    "themes": args.theme,
+                    "activity_minutes": args.activity_minutes,
+                    "parent_effort": args.parent_effort,
+                    "reading_load": args.reading_load,
+                    "materials": materials,
+                    "content_boundaries": args.content_boundary,
+                },
+            )
+        )
+    elif args.cmd == "family-lens" and args.family_lens_cmd == "status":
+        state = onboarding_status(args.db)
+        dump({"configured": state["family_lens_configured"], "private": True})
     elif args.cmd == "setup":
         result = setup_household(
             args.db,
@@ -337,7 +503,23 @@ def main(argv: list[str] | None = None) -> int:
         dump({"status": "ok"})
     elif args.cmd == "context":
         init_db(args.db)
-        dump(child_context(args.db, args.child))
+        if args.correct_event:
+            if not args.classification:
+                raise ValueError("--classification is required with --correct-event")
+            dump(
+                apply_episode_correction(
+                    args.db,
+                    child_id=args.child,
+                    event_id=args.correct_event,
+                    action=args.classification,
+                    related_event_id=args.related_event,
+                    note=args.note,
+                )
+            )
+        else:
+            if args.classification or args.related_event or args.note:
+                raise ValueError("--correct-event is required for a context correction")
+            dump(child_context(args.db, args.child))
     elif args.cmd == "event":
         init_db(args.db)
         payload = {
@@ -363,6 +545,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "resource" and args.resource_cmd == "search":
         init_db(args.db)
         dump(search_resources(args.db, args.query, limit=args.limit, include_excerpts=args.include_private_excerpts))
+    elif args.cmd == "ecosystem" and args.ecosystem_cmd == "list":
+        dump(public_project_catalog(category=args.category, status=args.status))
+    elif args.cmd == "ecosystem" and args.ecosystem_cmd == "show":
+        dump(public_project(args.id))
+    elif args.cmd == "ecosystem" and args.ecosystem_cmd == "status":
+        dump(registry_status())
+    elif args.cmd == "ecosystem" and args.ecosystem_cmd == "check":
+        dump(audit_public_projects(live=args.live))
     elif args.cmd == "artifact" and args.artifact_cmd == "render":
         spec = load_spec(args.spec)
         output = (

@@ -108,6 +108,12 @@ def _semantic_checks(suite: str, case: dict[str, Any], output: dict[str, Any]) -
     return failures
 
 
+def _offline_harness(db: str | Path) -> CuriosityHarness:
+    """Keep public fixture evaluation deterministic and isolated from family credentials."""
+
+    return CuriosityHarness(db, ReasoningEngine(StubBackend()))
+
+
 def _run_semantic_case(suite: str, case: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     with tempfile.TemporaryDirectory() as directory:
         db = Path(directory) / "eval.db"
@@ -116,7 +122,7 @@ def _run_semantic_case(suite: str, case: dict[str, Any]) -> tuple[dict[str, Any]
         for item in case.get("context", []):
             add_observation(db, "eval-child", "provided_context", str(item), source="public_eval")
             upsert_node(db, "eval-child", "context_signal", str(item), confidence=0.8)
-        result = CuriosityHarness(db).dispatch(
+        result = _offline_harness(db).dispatch(
             Event(
                 type="child_question",
                 child_id="eval-child",
@@ -225,8 +231,8 @@ def _run_regression(case: dict[str, Any]) -> list[str]:
             event = Event(
                 id="evt_fixed", type="child_question", child_id="eval-child", text="Why does the Moon follow us?"
             )
-            first = CuriosityHarness(db).dispatch(event)
-            second = CuriosityHarness(db).dispatch(event)
+            first = _offline_harness(db).dispatch(event)
+            second = _offline_harness(db).dispatch(event)
             with connect(db) as conn:
                 counts = {
                     "events": conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
@@ -240,7 +246,7 @@ def _run_regression(case: dict[str, Any]) -> list[str]:
             ):
                 failures.append(f"duplicate event was not exactly-once: {counts}")
         elif kind == "duplicate_conflict":
-            harness = CuriosityHarness(db)
+            harness = _offline_harness(db)
             harness.dispatch(Event(id="evt_fixed", type="child_question", child_id="eval-child", text="One"))
             try:
                 harness.dispatch(Event(id="evt_fixed", type="child_question", child_id="eval-child", text="Two"))
@@ -356,14 +362,71 @@ def _run_regression(case: dict[str, Any]) -> list[str]:
                 pass
             else:
                 failures.append("one observation became an established pattern")
+        elif kind == "episode_independence":
+            started = datetime(2026, 1, 5, 10, tzinfo=UTC)
+            harness = _offline_harness(db)
+            base = "Why do robots need sensors?"
+            for event_id, text, offset in (
+                ("evt_initial", base, timedelta()),
+                ("evt_retry", base, timedelta(minutes=4)),
+                ("evt_later_exact", base, timedelta(days=2)),
+                ("evt_developed", "Why do robots need different sensors?", timedelta(days=4)),
+            ):
+                harness.dispatch(
+                    Event(
+                        id=event_id,
+                        type="child_question",
+                        child_id="eval-child",
+                        text=text,
+                        source="parent",
+                        created_at=started + offset,
+                    )
+                )
+            with connect(db) as conn:
+                rows = {
+                    row["event_id"]: dict(row)
+                    for row in conn.execute(
+                        "SELECT event_id,episode_id,relation,independence_status FROM episode_memberships"
+                    )
+                }
+            initial_episode = rows["evt_initial"]["episode_id"]
+            if (
+                rows["evt_retry"]["episode_id"] != initial_episode
+                or rows["evt_later_exact"]["episode_id"] != initial_episode
+                or rows["evt_later_exact"]["relation"] != "later_repeat_uncertain"
+                or rows["evt_later_exact"]["independence_status"] != "uncertain"
+                or rows["evt_developed"]["episode_id"] == initial_episode
+                or rows["evt_developed"]["independence_status"] != "eligible"
+            ):
+                failures.append("episode grouping converted retries into independent interest evidence")
+        elif kind == "diagnostic_episode_excluded":
+            _offline_harness(db).dispatch(
+                Event(
+                    id="evt_public_eval",
+                    type="child_question",
+                    child_id="eval-child",
+                    text="Why do robots need sensors?",
+                    source="public_eval",
+                )
+            )
+            with connect(db) as conn:
+                row = conn.execute(
+                    "SELECT learning_scope,independence_status FROM episode_memberships WHERE event_id='evt_public_eval'"
+                ).fetchone()
+            if not row or row["learning_scope"] != "diagnostic" or row["independence_status"] != "diagnostic":
+                failures.append("public evaluation event was eligible as family evidence")
         elif kind == "director_bound":
             add_observation(db, "eval-child", "curiosity", "Why do birds migrate?")
             director = AutonomousDirector(db)
             first = director.reflect_for_child("eval-child")
             second = director.reflect_for_child("eval-child", now=datetime.now(UTC) + timedelta(hours=1))
             active = list_opportunities(db, "eval-child")
-            if first["choice"]["kind"] == "do_nothing" or second["choice"]["kind"] != "do_nothing" or len(active) > 1:
-                failures.append("director exceeded one active weekly opportunity")
+            if (
+                first["choice"]["kind"] != "do_nothing"
+                or second["choice"]["kind"] != "do_nothing"
+                or active
+            ):
+                failures.append("context-driven proactivity ran before episode evidence was enabled")
         elif kind == "migration_backup":
             legacy = root / "legacy.db"
             conn = sqlite3.connect(legacy)

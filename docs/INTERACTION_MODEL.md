@@ -39,4 +39,4 @@ The bot listens only to DMs and explicit mentions. It does not ingest ambient wo
 
 ## Proactive behavior
 
-Weekly reflection is off by default. When a parent enables it, the core may retain at most one active low-effort family suggestion in a week, and doing nothing is valid. The first Slack MVP does not send autonomous campaigns; proactive Slack delivery needs separate feedback and quiet-hour product testing.
+Context-driven reflection is disabled by the v0.1 public policy, including for households with an older weekly opt-in setting. The core returns `do_nothing` without calling a model. Future activation requires explicit parent opt-in after episode evidence and timing pass shadow-mode evaluation. The first Slack MVP does not send autonomous campaigns.

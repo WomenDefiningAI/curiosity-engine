@@ -7,6 +7,7 @@ from typing import Any
 
 from .contracts import GraphMutation, GraphMutationKind
 from .db import connect, jdump, jload, utcnow
+from .episodes import child_episode_context
 
 
 def key(text: str) -> str:
@@ -155,12 +156,14 @@ def child_context(db: str | Path, child_id: str, limit: int = 100) -> dict[str, 
             "SELECT id,experience_type,title,status,created_at,feedback FROM experiences WHERE child_id=? ORDER BY created_at DESC LIMIT 20",
             (child_id,),
         ).fetchall()
+    episode_context = child_episode_context(db, child_id, limit=min(limit, 30))
     return {
         "child": dict(child),
         "nodes": [{**dict(r), "state": jload(r["state_json"])} for r in nodes],
         "observations": [{**dict(r), "metadata": jload(r["metadata_json"])} for r in observations],
         "school_signals": [dict(r) for r in school],
         "recent_experiences": [dict(r) for r in experiences],
+        **episode_context,
     }
 
 

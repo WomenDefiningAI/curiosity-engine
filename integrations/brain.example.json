@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "runtime": "api",
+  "routes": {
+    "reasoning": {
+      "provider": "openai",
+      "model": "REVIEW_CURRENT_MODEL_DOCS",
+      "capabilities": ["structured_output", "web_search"]
+    },
+    "structured_extraction": {
+      "provider": "openai",
+      "model": "REVIEW_CURRENT_VISION_MODEL_DOCS",
+      "capabilities": ["structured_output", "vision", "document_ocr"]
+    },
+    "visual_qa": {
+      "provider": "openai",
+      "model": "REVIEW_CURRENT_VISION_MODEL_DOCS",
+      "capabilities": ["structured_output", "vision"]
+    },
+    "image_generation": {
+      "provider": "openai",
+      "model": "REVIEW_CURRENT_IMAGE_MODEL_DOCS",
+      "capabilities": ["image_generation"]
+    }
+  },
+  "disclosure_acknowledged_at": null,
+  "recommendation_status": "custom",
+  "notes": null
+}

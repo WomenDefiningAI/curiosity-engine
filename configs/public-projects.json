@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-08-24",
+  "recheck_after": "2026-11-22",
+  "default_policy": "reference_only",
+  "policy_document": "docs/PUBLIC_PROJECTS.md",
+  "projects": [
+    {
+      "id": "reportlab",
+      "name": "ReportLab",
+      "publisher": "ReportLab, Inc. and community",
+      "governance_notes": "Long-running commercial steward and named PyPI maintainers; production/stable package with an official security-focused 5.0 release line.",
+      "categories": ["artifact_creation", "worksheet_generation"],
+      "status": "integrated",
+      "use_mode": "integrated_pinned_release",
+      "repository_url": "https://hg.reportlab.com/hg-public/reportlab",
+      "documentation_url": "https://docs.reportlab.com/",
+      "freshness_url": "https://pypi.org/project/reportlab/",
+      "metadata_source": {"kind": "pypi", "identifier": "reportlab"},
+      "license_spdx": "BSD-3-Clause",
+      "why_relevant": "The current deterministic one-page PDF renderer already uses it for text, shapes, and print-safe layout.",
+      "age_fit": "Neutral rendering infrastructure; Curiosity Engine owns elementary pedagogy, readability, and trust validation.",
+      "safety_notes": [
+        "Use released packages, never repository tip.",
+        "Do not allow generated content to fetch arbitrary remote images or files.",
+        "The 5.0 release tightened remote-resource security defaults after a security review."
+      ]
+    },
+    {
+      "id": "typst",
+      "name": "Typst",
+      "publisher": "Typst GmbH and community",
+      "governance_notes": "Company-led open-source project with sustained community contribution, public releases, and disclosed institutional funding for open work.",
+      "categories": ["artifact_creation", "worksheet_generation"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/typst/typst",
+      "documentation_url": "https://typst.app/docs/",
+      "freshness_url": "https://github.com/typst/typst/releases",
+      "metadata_source": {"kind": "github", "identifier": "typst/typst"},
+      "license_spdx": "Apache-2.0",
+      "why_relevant": "Strong typesetting, reusable templates, math layout, and deterministic PDF-generation patterns.",
+      "age_fit": "Rendering infrastructure only; templates and generated pages still require first-grade readability and parent review.",
+      "safety_notes": [
+        "Study stable release APIs and template patterns; do not install or execute automatically.",
+        "Review every third-party Typst package and asset under its own license."
+      ]
+    },
+    {
+      "id": "weasyprint",
+      "name": "WeasyPrint",
+      "publisher": "CourtBouillon community",
+      "governance_notes": "Community project with professional maintenance/support by CourtBouillon, public changelogs, tests, and a long release history.",
+      "categories": ["artifact_creation", "worksheet_generation"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/Kozea/WeasyPrint",
+      "documentation_url": "https://doc.courtbouillon.org/weasyprint/stable/",
+      "freshness_url": "https://github.com/Kozea/WeasyPrint/releases",
+      "metadata_source": {"kind": "github", "identifier": "Kozea/WeasyPrint"},
+      "license_spdx": "BSD-3-Clause",
+      "why_relevant": "Useful reference for paged HTML/CSS layout, accessibility-minded documents, and printable web styling.",
+      "age_fit": "Neutral document infrastructure; generated HTML and remote resources are untrusted input.",
+      "safety_notes": [
+        "Reference only in the MVP because it adds native/system dependencies and URL-fetching risk.",
+        "Any future integration must disable arbitrary network fetches and pass SSRF-specific tests."
+      ]
+    },
+    {
+      "id": "ocrmypdf",
+      "name": "OCRmyPDF",
+      "publisher": "OCRmyPDF maintainers and community",
+      "governance_notes": "Mature specialist project with documented maintainers, frequent releases, signed tags observed, contributor guidance, and professional support options.",
+      "categories": ["visual_ocr"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/ocrmypdf/OCRmyPDF",
+      "documentation_url": "https://ocrmypdf.readthedocs.io/",
+      "freshness_url": "https://github.com/ocrmypdf/OCRmyPDF/releases",
+      "metadata_source": {"kind": "github", "identifier": "ocrmypdf/OCRmyPDF"},
+      "license_spdx": "MPL-2.0",
+      "why_relevant": "Mature local pipeline for adding searchable OCR text to scanned PDFs while retaining the original page image.",
+      "age_fit": "Good preprocessing reference for parent-provided worksheets; OCR output is evidence to verify, not ground truth.",
+      "safety_notes": [
+        "Reference only until a sandboxed local adapter and malformed-PDF corpus exist.",
+        "Its system dependencies and subprocesses require pinned versions and resource limits."
+      ]
+    },
+    {
+      "id": "paddleocr",
+      "name": "PaddleOCR",
+      "publisher": "PaddlePaddle community",
+      "governance_notes": "Large active project overseen by the PaddlePaddle community/PMC with frequent public releases; size and model supply chain require added scrutiny.",
+      "categories": ["visual_ocr"],
+      "status": "evaluation_candidate",
+      "use_mode": "evaluation_only",
+      "repository_url": "https://github.com/PaddlePaddle/PaddleOCR",
+      "documentation_url": "https://www.paddleocr.ai/",
+      "freshness_url": "https://github.com/PaddlePaddle/PaddleOCR/releases",
+      "metadata_source": {"kind": "github", "identifier": "PaddlePaddle/PaddleOCR"},
+      "license_spdx": "Apache-2.0",
+      "why_relevant": "Actively maintained OCR and document-layout pipelines covering images, PDFs, tables, and many languages.",
+      "age_fit": "Potentially useful for worksheet photos and layout extraction; handwriting and early-reader worksheets need dedicated evals.",
+      "safety_notes": [
+        "Large dependency and model-download surface; do not install during ordinary onboarding.",
+        "Evaluate model provenance, download hosts, local resource use, telemetry, and malformed inputs before promotion.",
+        "Never expose a distributed inference service on the family network by default."
+      ]
+    },
+    {
+      "id": "tesseract",
+      "name": "Tesseract OCR",
+      "publisher": "Tesseract OCR maintainers and community",
+      "governance_notes": "Long-lived widely used OCR project with named maintainers and a vulnerability-reporting document, although the reviewed support table needs updating.",
+      "categories": ["visual_ocr"],
+      "status": "evaluation_candidate",
+      "use_mode": "evaluation_only",
+      "repository_url": "https://github.com/tesseract-ocr/tesseract",
+      "documentation_url": "https://tesseract-ocr.github.io/",
+      "freshness_url": "https://github.com/tesseract-ocr/tesseract/releases",
+      "metadata_source": {"kind": "github", "identifier": "tesseract-ocr/tesseract"},
+      "license_spdx": "Apache-2.0",
+      "why_relevant": "Long-lived local OCR baseline with broad language support and no hosted-family-data requirement.",
+      "age_fit": "Printed-text baseline only; not sufficient by itself for worksheet semantics, handwriting, or visual reasoning.",
+      "safety_notes": [
+        "The reviewed SECURITY.md support table appears stale relative to current releases; require manual confirmation before integration.",
+        "Use packaged stable releases and isolate image parsing with size and time limits."
+      ]
+    },
+    {
+      "id": "numbas",
+      "name": "Numbas",
+      "publisher": "Newcastle University",
+      "governance_notes": "Developed by Newcastle University's School of Mathematics, Statistics and Physics with tests, contributor guidance, and a current security-reporting route.",
+      "categories": ["worksheet_generation", "education_creation", "math_validation"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/numbas/Numbas",
+      "documentation_url": "https://docs.numbas.org.uk/",
+      "freshness_url": "https://github.com/numbas/Numbas/commits/master/",
+      "metadata_source": {"kind": "github", "identifier": "numbas/Numbas"},
+      "license_spdx": "Apache-2.0",
+      "why_relevant": "University-governed patterns for parameterized math questions, marking, tests, schemas, and browser delivery.",
+      "age_fit": "Mechanics are useful, but the default ecosystem is not specifically first-grade; pedagogy and problem difficulty must be rebuilt and evaluated.",
+      "safety_notes": [
+        "Study question-generation and validation patterns; do not import community-authored questions without separate license and quality review.",
+        "Do not run its compiler or expression language on untrusted input in the MVP."
+      ]
+    },
+    {
+      "id": "sympy",
+      "name": "SymPy",
+      "publisher": "SymPy Development Team",
+      "governance_notes": "Established scientific Python community with broad institutional use, many contributors, public releases, and explicit contribution-quality rules.",
+      "categories": ["worksheet_generation", "math_validation"],
+      "status": "evaluation_candidate",
+      "use_mode": "evaluation_only",
+      "repository_url": "https://github.com/sympy/sympy",
+      "documentation_url": "https://docs.sympy.org/latest/",
+      "freshness_url": "https://github.com/sympy/sympy/releases",
+      "metadata_source": {"kind": "github", "identifier": "sympy/sympy"},
+      "license_spdx": "BSD-3-Clause",
+      "why_relevant": "Credible symbolic mathematics engine for generating and independently checking exact arithmetic relationships.",
+      "age_fit": "Could validate generated elementary math, but it supplies mathematics rather than child-centered pedagogy.",
+      "safety_notes": [
+        "Never parse or evaluate parent/model-provided expression strings as trusted SymPy code.",
+        "Promote only behind a tiny allowlisted arithmetic AST and adversarial parser tests."
+      ]
+    },
+    {
+      "id": "h5p-memory-game",
+      "name": "H5P Memory Game",
+      "publisher": "H5P Group and community",
+      "governance_notes": "Official content type in the active H5P organization with a long commit history, localization, contribution rules, and accessibility-oriented implementation.",
+      "categories": ["education_creation", "game_generation", "interactive_learning"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/h5p/h5p-memory-game",
+      "documentation_url": "https://h5p.org/memory-game",
+      "freshness_url": "https://github.com/h5p/h5p-memory-game/commits/master/",
+      "metadata_source": {"kind": "github", "identifier": "h5p/h5p-memory-game"},
+      "license_spdx": "MIT",
+      "why_relevant": "A concrete, accessible HTML5 learning-game content type with semantic configuration and localization patterns.",
+      "age_fit": "Simple matching can fit early elementary when reading load, card count, time pressure, and feedback are parent-tuned.",
+      "safety_notes": [
+        "Reference interaction and accessibility patterns only; the full H5P runtime is not an MVP dependency.",
+        "Images, audio, and authored game content each require their own rights and child-safety review."
+      ]
+    },
+    {
+      "id": "phet",
+      "name": "PhET Interactive Simulations",
+      "publisher": "University of Colorado Boulder",
+      "governance_notes": "University research/education project with documented development, code-review, licensing, cross-platform QA, and rigorously tested published simulations.",
+      "categories": ["education_creation", "interactive_learning", "game_generation"],
+      "status": "approved_reference",
+      "use_mode": "published_outputs_only",
+      "repository_url": "https://github.com/phetsims/phet-info",
+      "documentation_url": "https://phet.colorado.edu/",
+      "freshness_url": "https://github.com/orgs/phetsims/repositories",
+      "metadata_source": {"kind": "github", "identifier": "phetsims/phet-info"},
+      "license_spdx": "MIT",
+      "why_relevant": "Research-university examples of tested, inquiry-driven math and science simulations, including early-elementary number experiences.",
+      "age_fit": "Use the official simulation's stated grade level and parent preview; the organization covers a much wider age range.",
+      "safety_notes": [
+        "PhET explicitly says repository main branches are unstable; link to rigorously tested published simulations or fixed release SHAs.",
+        "Individual simulations are commonly GPL-3.0 and media, third-party assets, PhET branding, and interoperable editions have separate terms.",
+        "Do not copy a simulation or asset merely because its source repository is public."
+      ]
+    },
+    {
+      "id": "blockly",
+      "name": "Blockly",
+      "publisher": "Raspberry Pi Foundation",
+      "governance_notes": "Canonical project now maintained by the verified Raspberry Pi Foundation organization with scheduled releases, triage expectations, tests, and public compatibility policy.",
+      "categories": ["education_creation", "interactive_learning", "game_generation"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/RaspberryPiFoundation/blockly",
+      "documentation_url": "https://developers.google.com/blockly",
+      "freshness_url": "https://github.com/RaspberryPiFoundation/blockly/releases",
+      "metadata_source": {"kind": "github", "identifier": "RaspberryPiFoundation/blockly"},
+      "license_spdx": "Apache-2.0",
+      "why_relevant": "Foundation-maintained visual programming and interaction patterns that avoid syntax burden.",
+      "age_fit": "Potentially useful for parent-guided early-elementary sequencing games; not a default first-grade interface without usability testing.",
+      "safety_notes": [
+        "The canonical repository moved from Google to Raspberry Pi Foundation; old links must not be treated as current.",
+        "The maintainers say production users should select a release, not main or beta APIs."
+      ]
+    },
+    {
+      "id": "phaser",
+      "name": "Phaser",
+      "publisher": "Phaser Studio Inc. and community",
+      "governance_notes": "Commercially maintained open-source engine with more than a decade of development, public releases, documentation, and a large contributor/user base.",
+      "categories": ["game_generation"],
+      "status": "approved_reference",
+      "use_mode": "reference_only",
+      "repository_url": "https://github.com/phaserjs/phaser",
+      "documentation_url": "https://docs.phaser.io/",
+      "freshness_url": "https://github.com/phaserjs/phaser/releases",
+      "metadata_source": {"kind": "github", "identifier": "phaserjs/phaser"},
+      "license_spdx": "MIT",
+      "why_relevant": "Long-lived, actively maintained 2D web-game engine with a stable public API and strong examples ecosystem.",
+      "age_fit": "Engine only; every game still needs an elementary learning objective, no dark patterns, no ads, accessibility, and parent review.",
+      "safety_notes": [
+        "Use a stable tagged release, never an RC or repository HEAD.",
+        "Do not load third-party plugins, remote code, analytics, ads, accounts, or multiplayer services in child-facing artifacts."
+      ]
+    },
+    {
+      "id": "gdevelop",
+      "name": "GDevelop",
+      "publisher": "Florian Rival, GDevelop Ltd., and community",
+      "governance_notes": "Founder/company-led project with a very active signed-release stream and public extension review labels, but a large mixed official/community ecosystem.",
+      "categories": ["game_generation", "education_creation"],
+      "status": "evaluation_candidate",
+      "use_mode": "evaluation_only",
+      "repository_url": "https://github.com/4ian/GDevelop",
+      "documentation_url": "https://wiki.gdevelop.io/gdevelop5/",
+      "freshness_url": "https://github.com/4ian/GDevelop/releases",
+      "metadata_source": {"kind": "github", "identifier": "4ian/GDevelop"},
+      "license_spdx": "MIT",
+      "why_relevant": "Actively released visual game-creation environment with open engine, examples, and extension patterns.",
+      "age_fit": "Useful to study authoring and simple interactions, but it is a large general game platform rather than an elementary pedagogy system.",
+      "safety_notes": [
+        "Large desktop/web application and extension ecosystem; do not install or run during ordinary family onboarding.",
+        "Official, experimental, community, premium, and third-party assets/extensions must be distinguished and separately vetted.",
+        "Generated games must exclude accounts, ads, purchases, multiplayer, analytics, and external links."
+      ]
+    },
+    {
+      "id": "scratch-editor",
+      "name": "Scratch Editor",
+      "publisher": "Scratch Foundation",
+      "governance_notes": "Nonprofit educational steward with a major child-creator community and active engineering, currently consolidating formerly separate repositories into a monorepo.",
+      "categories": ["education_creation", "game_generation", "interactive_learning"],
+      "status": "watch_only",
+      "use_mode": "never_execute",
+      "repository_url": "https://github.com/scratchfoundation/scratch-editor",
+      "documentation_url": "https://scratch.mit.edu/",
+      "freshness_url": "https://github.com/scratchfoundation/scratch-editor/commits/develop/",
+      "metadata_source": {"kind": "github", "identifier": "scratchfoundation/scratch-editor"},
+      "license_spdx": "AGPL-3.0-only",
+      "why_relevant": "Credible child-centered creative-coding interaction patterns and a major educational community.",
+      "age_fit": "Scratch primarily targets older elementary children; a first grader generally needs substantial adult support.",
+      "safety_notes": [
+        "The former scratch-vm repository was archived after migration into this monorepo, which is still an evolving integration surface.",
+        "AGPL obligations, Scratch trademarks, community/network features, and child accounts require legal and privacy review.",
+        "Watch for design research only; not approved as an MVP dependency or generated-game runtime."
+      ]
+    }
+  ]
+}

@@ -51,4 +51,9 @@ def validate_model_config(config: dict[str, Any]) -> list[str]:
             continue
         if bool(entry.get("model")) != bool(entry.get("provider")):
             errors.append(f"models.{role} should set provider and model together")
+        capabilities = entry.get("capabilities")
+        if capabilities is not None and (
+            not isinstance(capabilities, list) or not all(isinstance(item, str) for item in capabilities)
+        ):
+            errors.append(f"models.{role}.capabilities must be a list of strings")
     return errors

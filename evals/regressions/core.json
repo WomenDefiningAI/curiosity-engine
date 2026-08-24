@@ -10,6 +10,8 @@
   {"id":"mvp-pdf-is-one-page","kind":"artifact_one_page"},
   {"id":"tier-c-generation-fails-closed","kind":"tier_c_closed"},
   {"id":"established-claim-needs-two-events","kind":"claim_threshold"},
+  {"id":"retries-do-not-become-independent-interest","kind":"episode_independence"},
+  {"id":"public-evals-cannot-become-family-evidence","kind":"diagnostic_episode_excluded"},
   {"id":"director-emits-at-most-one-active-opportunity","kind":"director_bound"},
   {"id":"migration-creates-backup-and-preserves-data","kind":"migration_backup"}
 ]

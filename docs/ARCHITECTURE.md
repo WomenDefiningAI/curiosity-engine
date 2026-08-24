@@ -28,6 +28,8 @@ local console / CLI ────────────────────
                               └────────► Slack outbox
 ```
 
+The fixed paired `connection` command exits at the Slack transport/outbox boundary. It does not construct the service, build family context, search resources, or invoke a model. This lets setup prove transport before the brain exists.
+
 ## Interaction ownership
 
 Slack owns no family truth. It converts an authorized message to a strict transport contract and delivers queued replies. Pairing binds an exact `(workspace, user, conversation)` tuple. Transport receipts prevent duplicate Slack delivery from duplicating state; the durable outbox separates processing from delivery.
@@ -44,8 +46,11 @@ Messages that do not explicitly name a child are saved to `capture_inbox`. The c
 - `context_builder.py` returns a controlled projection rather than the whole family database.
 - `resources.py` owns the licensed-content boundary and FTS5 retrieval.
 - `reasoning.py` owns generator/critic/revision topology. Backends cannot execute effects.
+- `brain_config.py` owns ignored non-secret role selections and redacted credential/config readiness.
+- `providers/` owns distinct OpenAI Responses, Anthropic Messages, and OpenRouter Chat Completions adapters.
 - `artifacts.py` owns deterministic one-page paper output and validation.
-- `director.py` owns the bounded, parent-enabled weekly suggestion.
+- `episodes.py` conservatively groups raw events into inspectable learning occasions and records append-only parent corrections.
+- `director.py` owns the bounded reflection path; public policy keeps context-driven suggestions disabled in v0.1.
 - `service.py` is the shared application boundary; `web.py` is a loopback setup/review console.
 
 ## Transactions and retries
@@ -57,3 +62,5 @@ Slack events receive an independent payload hash. A confirmed Slack API rejectio
 ## Deployment boundary
 
 The MVP is a local family service. SQLite and private source paths are deliberate. Slack Socket Mode establishes an outbound WebSocket from that service, so no inbound public endpoint or cloud database is required. The loopback console is not a LAN service. Cloud hosting and remote workers need a separate threat model.
+
+Coding agents are setup/customization operators. An experimental attended coding-agent backend would still have to implement the same bounded `ModelBackend` contract; the coding session itself does not own family truth or side effects.

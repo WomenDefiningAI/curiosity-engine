@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .contracts import ActionRequest, Event, GraphMutation, RunResult
 from .db import connect, init_db, jdump, jload, utcnow
+from .episodes import resolve_episode
 from .graph import apply_graph_mutation
 
 
@@ -65,10 +66,22 @@ class Repository:
                     event.payload_hash,
                 ),
             )
+            episode = resolve_episode(conn, event)
             conn.execute(
-                """INSERT INTO evidence(child_id,event_id,evidence_type,content,source,confidence,metadata_json,created_at)
-                   VALUES(?,?,?,?,?,?,?,?)""",
-                (event.child_id, event.id, "raw_event", event.text, event.source, 1.0, jdump(event.metadata), now),
+                """INSERT INTO evidence(
+                   child_id,event_id,episode_id,evidence_type,content,source,confidence,metadata_json,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    event.child_id,
+                    event.id,
+                    episode["episode_id"] if episode else None,
+                    "raw_event",
+                    event.text,
+                    event.source,
+                    1.0,
+                    jdump(event.metadata),
+                    now,
+                ),
             )
             conn.execute(
                 """INSERT INTO jobs(id,job_type,status,payload_json,attempts,created_at,updated_at,idempotency_key,event_id,available_at)

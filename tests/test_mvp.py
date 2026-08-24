@@ -14,7 +14,8 @@ from curiosity_engine.db import SCHEMA_VERSION, connect, init_db
 from curiosity_engine.graph import add_child, add_school_signal, capture_question
 from curiosity_engine.openai_backend import OpenAIBackend
 from curiosity_engine.printer import approve_artifact, print_artifact
-from curiosity_engine.reasoning import ReasoningEngine, StubBackend
+from curiosity_engine.providers import AnthropicBackend, OpenRouterBackend
+from curiosity_engine.reasoning import ReasoningEngine, ReasoningPolicy, StubBackend
 from curiosity_engine.repository import IdempotencyConflict
 from curiosity_engine.resources import index_collection, resource_inventory, search_resources
 from curiosity_engine.runtime import CuriosityHarness
@@ -229,6 +230,165 @@ def test_openai_adapter_enables_bounded_web_search_and_keeps_sources():
     assert result["resource_refs"] == [source_url]
 
 
+def test_openai_candidate_with_overlong_hook_uses_reasoning_repair_round():
+    valid = {
+        "hook": "Different robots win different size contests.",
+        "show": "Compare each robot with a person or a building.",
+        "ask": "Should biggest mean tallest or heaviest?",
+        "nugget": "Engineers must choose a measurement before comparing size.",
+        "next_possible_concepts": ["measurement", "scale"],
+        "physical_extension": None,
+        "graph_updates": [],
+        "actions": [],
+        "resource_refs": [],
+    }
+
+    class RepairResponses:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            payload = {**valid, "hook": "x" * 501} if self.calls == 1 else valid
+            return type("Response", (), {"output_text": json.dumps(payload), "output": []})()
+
+    responses = RepairResponses()
+    backend = OpenAIBackend(client=type("Client", (), {"responses": responses})(), model="test-model")
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy("pull_thread", 2, critic_roles=(), max_revision_rounds=1),
+        context={"child": {"grade": "1st"}},
+        event={"type": "child_question", "text": "What are the biggest robots?"},
+    )
+
+    assert responses.calls == 2
+    assert result.revision_rounds == 1
+    assert result.output["hook"] == valid["hook"]
+
+
+def test_contract_repair_does_not_consume_semantic_revision_budget():
+    class ContractThenContentBackend(StubBackend):
+        name = "repair-test"
+        model = "repair-test-v1"
+
+        def __init__(self):
+            self.generator_calls = 0
+            self.critic_calls = 0
+
+        def complete(self, *, role, system, payload, response_model):
+            del role, system
+            if response_model is CriticResult:
+                self.critic_calls += 1
+                if payload["candidate"]["nugget"] == "Draft explanation.":
+                    return {
+                        "verdict": "revise",
+                        "concerns": ["The explanation needs a robot/category distinction."],
+                        "required_changes": ["Clarify the category."],
+                    }
+                return {"verdict": "pass", "concerns": [], "required_changes": []}
+
+            self.generator_calls += 1
+            if self.generator_calls == 1:
+                hook = "x" * 501
+                nugget = "Draft explanation."
+            elif "validation_errors" in payload:
+                hook = "Different robots win different size contests."
+                nugget = "Draft explanation."
+            else:
+                hook = "Different robots win different size contests."
+                nugget = "A robot senses and acts; a very large operated machine may not be a robot."
+            return {
+                "hook": hook,
+                "show": "Compare each machine with a person.",
+                "ask": "Should biggest mean tallest or heaviest?",
+                "nugget": nugget,
+                "next_possible_concepts": ["measurement"],
+                "physical_extension": None,
+                "graph_updates": [],
+                "actions": [],
+                "resource_refs": [],
+            }
+
+    backend = ContractThenContentBackend()
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_factual",),
+            max_revision_rounds=1,
+        ),
+        context={"child": {"grade": "1st"}},
+        event={"type": "child_question", "text": "What are the biggest robots?"},
+    )
+
+    assert backend.generator_calls == 3
+    assert backend.critic_calls == 2
+    assert result.revision_rounds == 2
+    assert "operated machine may not be a robot" in result.output["nugget"]
+
+
+def test_anthropic_adapter_uses_native_messages_and_validates_schema():
+    class Messages:
+        def __init__(self):
+            self.request = None
+
+        def create(self, **kwargs):
+            self.request = kwargs
+            block = type(
+                "Block",
+                (),
+                {"model_dump": lambda self: {"type": "text", "text": json.dumps({"summary": "ok", "graph_updates": [], "actions": []})}},
+            )()
+            return type("Response", (), {"content": [block]})()
+
+    client = type("Client", (), {"messages": Messages()})()
+    backend = AnthropicBackend(client=client, model="test-model")
+    result = backend.complete(
+        role="reasoning",
+        system="system",
+        payload={"question": "test", "image_data_urls": ["data:image/png;base64,c2FmZQ=="]},
+        response_model=GenericOutput,
+    )
+    request = client.messages.request
+    assert result["summary"] == "ok"
+    assert request["output_config"]["format"]["type"] == "json_schema"
+    assert request["messages"][0]["content"][1]["type"] == "image"
+
+
+def test_openrouter_adapter_uses_chat_completions_and_privacy_routing():
+    class Completions:
+        def __init__(self):
+            self.request = None
+
+        def create(self, **kwargs):
+            self.request = kwargs
+            message = type("Message", (), {"content": json.dumps({"summary": "ok", "graph_updates": [], "actions": []})})()
+            return type("Response", (), {"choices": [type("Choice", (), {"message": message})()]})()
+
+    completions = Completions()
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+    backend = OpenRouterBackend(client=client, model="provider/model")
+    result = backend.complete(
+        role="reasoning",
+        system="system",
+        payload={"question": "test", "policy": {"allowed_tools": ["web_search"]}},
+        response_model=GenericOutput,
+    )
+    request = completions.request
+    provider = request["extra_body"]["provider"]
+    assert result["summary"] == "ok"
+    assert request["response_format"]["type"] == "json_schema"
+    assert request["tools"] == [
+        {"type": "openrouter:web_search", "parameters": {"max_results": 5}}
+    ]
+    assert provider == {
+        "require_parameters": True,
+        "allow_fallbacks": False,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+
+
 def test_first_grade_biggest_robot_demo_stays_on_question(tmp_path: Path):
     db = tmp_path / "db.sqlite"
     init_db(db)
@@ -298,16 +458,15 @@ def test_migration_backup_and_schema_version(tmp_path: Path):
         assert conn.execute("SELECT name FROM children WHERE id='child-a'").fetchone()[0] == "Demo Child"
 
 
-def test_parent_can_accept_director_opportunity(tmp_path: Path):
+def test_context_driven_director_stays_disabled_until_episode_policy_is_ready(tmp_path: Path):
     service = CuriosityService(tmp_path / "db.sqlite", tmp_path / "output")
     service.add_child("child-a", "Demo Child", 2020, "1st")
     service.ask(child_id="child-a", text="Why do birds migrate?")
     reflection = service.reflect("child-a")
-    assert reflection["choice"]["kind"] == "pull_thread"
-    accepted = service.respond_to_opportunity(reflection["opportunity_id"], "accepted")
-    assert accepted["thread"]["status"] == "completed"
+    assert reflection["choice"]["kind"] == "do_nothing"
+    assert reflection["choice"]["payload"]["policy"] == "context_proactivity_disabled_v1"
     with connect(tmp_path / "db.sqlite") as conn:
-        assert conn.execute("SELECT status FROM opportunities").fetchone()[0] == "accepted"
+        assert conn.execute("SELECT status FROM opportunities").fetchone()[0] == "no_action"
 
 
 def test_feedback_is_recorded_as_observation_not_trait(tmp_path: Path):

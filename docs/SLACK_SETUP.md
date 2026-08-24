@@ -1,21 +1,16 @@
 # Slack setup for a family
 
-This guide starts at zero: first create a free family workspace, then create the Curiosity Engine Slack app. Slack is the first supported messaging interface; no public web server is required because the connector uses Socket Mode.
+This guide proves only the messaging layer. Do not configure an LLM until the fixed `connection` response succeeds. Keeping those checks separate makes failures understandable.
 
-## 1. Create the family Slack workspace
+Slack is the only v1 messaging interface. The local connector uses outbound Socket Mode, so no public web server is required.
 
-If your family already has a workspace, skip to step 2.
+## 1. Create or choose the family workspace
 
-1. Open Slack's official [create-a-workspace guide](https://slack.com/help/articles/206845317-Create-a-Slack-workspace-Create-a-Slack-workspace) and choose **Create a new workspace**.
-2. Use an adult-controlled email address and a family-neutral workspace name.
-3. Invite a co-parent if wanted. Children do not need Slack accounts for this MVP.
-4. Optionally create a private channel such as `#family-curiosity`. DMs to the bot are the simplest starting point.
+If the family already has a workspace, continue to step 2. Otherwise use Slack's official [workspace guide](https://slack.com/help/articles/206845317-Create-a-Slack-workspace-Create-a-Slack-workspace) with an adult-controlled email and a family-neutral workspace name. Children do not need accounts.
 
-Slack's free plan has message/file history limits. Treat Slack as the interaction surface, not the family record; Curiosity Engine's durable record is the local ignored database. Review Slack's current [plans and features](https://slack.com/help/articles/115003205446-Slack-plans-and-features) and [free-workspace usage limits](https://slack.com/help/articles/115002422943-Usage-limits-for-free-workspaces).
+A private channel such as `#family-curiosity` is optional; a DM to the app is the simplest start. Slack's free plan may limit message/file history, so Slack is an interaction surface—not the durable family record. The local ignored SQLite database is the durable record.
 
 ## 2. Install local Slack support
-
-From the repository terminal:
 
 ```bash
 source .venv/bin/activate
@@ -23,132 +18,100 @@ python -m pip install -e '.[dev,slack]'
 curiosity doctor
 ```
 
-The Slack dependency may still read `not_configured` until installation finishes. Tokens should be absent at this point.
+## 3. Create the app from the public manifest
 
-## 3. Create the Slack app from the checked-in manifest
-
-1. Go to [Your Apps](https://api.slack.com/apps) and choose **Create New App**.
-2. Choose **From an app manifest**, then choose the family workspace.
-3. Select YAML and paste the contents of `integrations/slack/manifest.yaml`.
+1. Open [Your Slack Apps](https://api.slack.com/apps) and select **Create New App**.
+2. Choose **From an app manifest** and select the family workspace.
+3. Choose YAML and paste `integrations/slack/manifest.yaml`.
 4. Review and create the app.
 
-The manifest requests only these bot scopes:
+The manifest asks only for:
 
-- `chat:write` to answer;
-- `im:history` to receive direct messages;
+- `chat:write` to reply;
+- `im:history` to receive app DMs;
 - `app_mentions:read` to receive explicit mentions.
 
-It subscribes only to `message.im` and `app_mention`. It does not request user scopes or ambient public/private channel history.
+It subscribes only to `message.im` and `app_mention`. It does not request ambient channel history, files, users, or user-token scopes.
 
-## 4. Create the two tokens
+## 4. Create and install the two credentials
 
-These are two different credentials:
+These are different tokens:
 
-1. In **Basic Information → App-Level Tokens**, create a token named `curiosity-socket` with only `connections:write`. This is the `xapp-...` app token used by [Socket Mode](https://docs.slack.dev/tools/bolt-python/concepts/socket-mode/).
-2. In **OAuth & Permissions**, choose **Install to Workspace**, approve the three bot scopes, and copy the **Bot User OAuth Token**. This is the `xoxb-...` bot token.
+1. Under **Basic Information → App-Level Tokens**, create `curiosity-socket` with `connections:write`. Copy the `xapp-...` token.
+2. Under **OAuth & Permissions**, select **Install to Workspace**, approve the bot scopes, and copy the `xoxb-...` Bot User OAuth Token.
 
-Do not paste either token into a coding-agent chat, README, issue, or tracked file.
+Installing through OAuth is required; creating the app alone is not enough.
 
-## 5. Store tokens in the ignored local file
-
-In VS Code:
-
-1. Create `private/setup/slack.env`.
-2. Copy the two lines from `integrations/slack/slack.env.example`.
-3. Replace the placeholders with the tokens and save.
-4. In the terminal, protect the file:
+Never paste tokens into coding-agent chat, a README, issue, or tracked file. In VS Code, create `private/setup/slack.env` from `integrations/slack/slack.env.example`, paste both values directly, and run:
 
 ```bash
 chmod 600 private/setup/slack.env
 curiosity doctor
 ```
 
-The doctor reports only whether the prefixes and permissions look right. It never displays token values. Environment variables with the same names also work and take precedence over the file.
+The report validates only presence, prefixes, and permissions. It never prints token values.
 
-## 6. Configure question-specific reasoning
+## 5. Pair one exact adult and conversation
 
-Slack can now reach the local harness, but the safe default backend produces only labeled offline demo responses. Before using the bot as the family's primary question interface, create an [OpenAI API key](https://platform.openai.com/api-keys), then:
-
-1. Copy `integrations/openai/model.env.example` to `private/setup/model.env`.
-2. Paste the key directly into that ignored file; never paste it into agent chat.
-3. Protect and verify the file:
-
-```bash
-chmod 600 private/setup/model.env
-curiosity doctor
-```
-
-`answer_ready` becomes true only after Slack is paired as well. The provider processes the bounded request context, while the durable database remains local. Responses API storage is disabled by the harness.
-
-Purchased-resource excerpts are independently off for every new household. If the owner explicitly allows small relevant excerpts to enter hosted-model requests, run locally:
-
-```bash
-curiosity resource mode --mode selected_excerpts
-```
-
-The response paraphrases useful context rather than posting source passages to Slack, and irrelevant units are not forced into an answer.
-
-## 7. Pair the parent, not the whole workspace
-
-First configure the household if you have not already:
+Configure the household first if necessary:
 
 ```bash
 curiosity setup --owner-name "YOUR DISPLAY NAME" --timezone "America/New_York"
-```
-
-Create a one-time code:
-
-```bash
 curiosity slack pair-code
-```
-
-Start the local connector in the terminal:
-
-```bash
 curiosity slack run
 ```
 
-In Slack, open the Curiosity Engine app's **Messages** tab and send `pair CODE`, using the code printed locally. It expires after 15 minutes. Pairing authorizes only that exact workspace, Slack user, and DM. To use a private family channel, invite the app, mention it with the pair command, and create a separate pairing. Each co-parent gets a local parent record and their own code.
+Leave the connector running. In Slack, DM the app with `pair CODE`. For a family channel, invite the app, explicitly mention it with the pair command, and pair that channel separately.
 
-## 8. Verify the daily flow
+The code expires after 15 minutes and is single-use. Pairing authorizes one exact workspace, adult Slack user, and conversation. Each co-parent needs a local parent record and their own pairing.
 
-Send:
-
-```text
-children
-ask kid-a: Why do birds have different beaks?
-```
-
-Then try an unattributed note:
-
-```text
-We found a feather on our walk
-```
-
-The bot should save it without guessing a child and tell you how to assign or dismiss it. Finally run locally:
+Checkpoint:
 
 ```bash
 curiosity slack bindings
-curiosity doctor --write-report
+curiosity doctor
 ```
 
-Transport setup is complete when `slack_ready` is true. Tailored daily use is complete when `answer_ready` is true and a paired Slack question receives a relevant, grade-appropriate response.
+`slack_ready` should now be true. Do not share raw binding output publicly.
 
-## Running it later
+## 6. Prove transport without a model
 
-Whenever you want Slack replies, open the repository terminal and run:
+In the paired Slack conversation, send:
+
+```text
+connection
+```
+
+Expected response:
+
+> Slack connection works. This fixed response did not contact an AI model, load a child profile, or read family resources. Delivery confirmation is being recorded locally.
+
+The handler runs before model/service construction. The checkpoint passes only after Slack confirms delivery.
+
+```bash
+curiosity doctor
+```
+
+`transport_verified` should be true. If not, debug the Slack tokens, app installation, pairing, connector process, and delivery—not model prompts or API keys.
+
+## 7. Hand off to brain setup
+
+Messaging setup is now finished. Continue with [Brain setup](BRAIN_SETUP.md). The next live model test is synthetic and family-data-free; a real child question comes only after the brain and family lens are configured.
+
+## Running Slack later
 
 ```bash
 source .venv/bin/activate
 curiosity slack run
 ```
 
-Leave that process running. Stop it with Control-C. Automatic startup on a family computer is a later, optional operational choice—not required for the MVP walkthrough.
+Leave the process running. Control-C, closing the terminal, logging out of the computer, sleeping/shutting down the computer, or losing network connectivity stops replies. Background startup helpers are a later operational feature.
 
 ## Troubleshooting
 
-- **Bot does not answer:** confirm `curiosity slack run` is still running, then run `curiosity doctor`.
-- **Not paired:** create a new code; codes are single-use and expire.
-- **Channel mention is ignored:** invite the app, mention it explicitly, and pair that parent/channel combination.
-- **`invalid_auth` or token error:** reinstall the Slack app if its scopes changed and replace only the local token file.
-- **Concern about access:** run `curiosity slack bindings`, revoke an entry with `curiosity slack revoke --binding ID`, and rotate tokens in Slack if necessary.
+- **No response:** confirm `curiosity slack run` is still running; then run `curiosity doctor`.
+- **App exists but cannot post:** install/reinstall it from **OAuth & Permissions** and update the local bot token.
+- **Channel mention ignored:** invite the app, mention it explicitly, and pair that adult/channel combination.
+- **Pair rejected:** generate a new code; codes expire and are single-use.
+- **Token error:** rotate/reinstall in Slack and replace only ignored `private/setup/slack.env`.
+- **Remove access:** inspect `curiosity slack bindings`, revoke with `curiosity slack revoke --binding ID`, and rotate tokens if compromise is possible.
