@@ -1,0 +1,16 @@
+{
+  "hook": "Compare a nearby streetlight with the Moon while the car moves.",
+  "show": "A simple near-vs-far visual.",
+  "ask": "Which one seems to move more against the background?",
+  "nugget": "Very far-away objects change viewing angle much less when we move a short distance.",
+  "next_possible_concepts": ["distance", "parallax", "apparent motion"],
+  "physical_extension": {
+    "title": "Near finger, far wall",
+    "instructions": ["Compare a finger near your face with something far away."],
+    "materials": [],
+    "parent_effort": "very_low"
+  },
+  "graph_updates": [{"kind":"upsert_node","node_kind":"concept","label":"apparent motion","confidence":0.4,"state":{}}],
+  "actions": [],
+  "resource_refs": []
+}

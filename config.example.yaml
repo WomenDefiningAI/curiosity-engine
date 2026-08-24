@@ -1,0 +1,39 @@
+runtime:
+  db: ./data/curiosity.db
+  timezone: Etc/UTC
+
+context:
+  pull_thread_depth: 2
+  weekly_reflection_depth: 4
+
+parent_effort:
+  weekday_prep_minutes: 5
+  weekday_activity_minutes: 30
+  weekend_prep_minutes: 15
+  weekend_activity_minutes: 60
+
+paper_output:
+  enabled: true
+  printing_optional: true
+
+models:
+  reasoning:
+    provider: null
+    model: null
+  structured_extraction:
+    provider: null
+    model: null
+  image_generation:
+    provider: null
+    model: null
+  visual_qa:
+    provider: null
+    model: null
+  cheap_classifier:
+    provider: null
+    model: null
+
+lab:
+  auto_promote: false
+  shadow_enabled: true
+  preserve_previous_champion: true

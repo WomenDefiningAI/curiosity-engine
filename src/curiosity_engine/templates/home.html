@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Curiosity Engine</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">LOCAL SETUP &amp; REVIEW</p>
+      <h1>Curiosity Engine</h1>
+      <p class="subtitle">Slack is the daily front door. This private page is for setup, review, and paper downloads.</p>
+    </div>
+    <span class="privacy">Private on this Mac</span>
+  </header>
+
+  <section class="journey" aria-label="How Curiosity Engine works">
+    <div class="journey-step catch"><span>?</span><strong>Catch</strong><small>a real question</small></div>
+    <div class="journey-step connect"><span>✦</span><strong>Connect</strong><small>the right context</small></div>
+    <div class="journey-step think"><span>✓</span><strong>Think</strong><small>reason and check</small></div>
+    <div class="journey-step try"><span>→</span><strong>Try</strong><small>one small thing</small></div>
+    <div class="journey-step learn"><span>↻</span><strong>Learn</strong><small>notice and adapt</small></div>
+  </section>
+
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if not state.children %}
+  <main class="single">
+    <section class="panel onboarding tone-connect">
+      <p class="eyebrow">FIRST STEP</p>
+      <h2>Add a child profile</h2>
+      <p>Only the details you enter are stored. Personalization grows from attributable observations—not guesses.</p>
+      <form method="post" action="/children">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>Short ID <input name="child_id" required placeholder="kid-a"></label>
+        <label>Name <input name="name" required></label>
+        <div class="row"><label>Birth year <input name="birth_year" type="number" min="2008" max="2024"></label><label>Grade <input name="grade"></label></div>
+        <button type="submit">Create private profile</button>
+      </form>
+    </section>
+  </main>
+  {% else %}
+  <nav class="child-nav">
+    {% for child in state.children %}
+      <a href="/?child={{ child.id }}" class="{% if child.id == state.selected_child_id %}active{% endif %}">{{ child.name }}</a>
+    {% endfor %}
+  </nav>
+
+  <main class="grid">
+    <section class="panel wide setup-strip tone-catch">
+      <div><p class="eyebrow">DAILY ACCESS</p><h2>Use Slack to catch the moment</h2><p>Run <code>curiosity slack run</code>, then DM the paired bot or explicitly mention it in a paired family channel.</p></div>
+      <div class="setup-stat"><strong>{{ state.onboarding.bindings|length }}</strong><span>Slack binding(s)</span></div>
+    </section>
+
+    {% if state.inbox %}
+    <section class="panel wide tone-connect" id="inbox">
+      <div class="section-head"><div><p class="eyebrow">NEEDS A PARENT</p><h2>Unassigned Slack notes</h2></div><span class="count">{{ state.inbox|length }}</span></div>
+      <p class="fine">These stayed unassigned because the engine will not guess which child they belong to.</p>
+      {% for item in state.inbox %}
+      <article class="inbox-item">
+        <p>{{ item.text }}</p>
+        <div class="button-row">
+          <form method="post" action="/inbox/{{ item.id }}/assign"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button>Assign to selected child</button></form>
+          <form method="post" action="/inbox/{{ item.id }}/dismiss"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Dismiss</button></form>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="panel ask-panel tone-catch">
+      <p class="eyebrow">LOCAL FALLBACK</p>
+      <h2>Enter a question here</h2>
+      <form method="post" action="/ask">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+        <label class="sr-only" for="question">Question</label>
+        <textarea id="question" name="question" required placeholder="Why does the Moon follow our car?"></textarea>
+        <label>Optional topics <input name="topics" placeholder="moon, perspective"></label>
+        <label class="check"><input type="checkbox" name="private_excerpts" value="yes"> Include small, relevant excerpts from purchased family resources in this model request</label>
+        <button type="submit">Pull the thread</button>
+      </form>
+    </section>
+
+    <section class="panel resources tone-connect">
+      <div class="section-head"><div><p class="eyebrow">PRIVATE LIBRARY</p><h2>Purchased resources</h2></div><span class="count">{{ state.resources.units|length }} units</span></div>
+      <p class="fine">Available to use does not mean exposed, completed, understood, or liked.</p>
+      <div class="unit-grid">
+      {% for unit in state.resources.units %}
+        <article><h3>{{ unit.title }}</h3><p>{{ unit.summary }}</p><small>{{ unit.documents }} docs · {{ unit.chunks }} indexed passages</small></article>
+      {% endfor %}
+      </div>
+      {% if not state.resources.units %}
+      <form method="post" action="/resources/index"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Index private collection</button></form>
+      {% endif %}
+    </section>
+
+    <section class="panel wide tone-think" id="responses">
+      <div class="section-head"><div><p class="eyebrow">RECENT THREADS</p><h2>Questions and responses</h2></div></div>
+      {% for response in state.responses %}
+      <article class="response">
+        <p class="question">{{ response.question }}</p>
+        {% if response.status == 'completed' %}
+          <h3>{{ response.output.hook }}</h3>
+          <div class="response-grid"><div><span>SHOW</span><p>{{ response.output.show }}</p></div><div><span>ASK</span><p>{{ response.output.ask }}</p></div><div><span>NUGGET</span><p>{{ response.output.nugget }}</p></div></div>
+          {% if response.output.physical_extension %}<p class="extension"><strong>Try it:</strong> {{ response.output.physical_extension.title }} — {{ response.output.physical_extension.instructions|join(' ') }}</p>{% endif %}
+          <p class="meta">{{ response.output._reasoning.backend }} · private resources: {{ response.output._reasoning.private_resource_mode }}</p>
+          <form method="post" action="/responses/{{ response.event_id }}/artifact"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Make a one-page wonder sheet</button></form>
+        {% else %}<p>Response {{ response.status }}. It was not shown as a completed answer.</p>{% endif %}
+      </article>
+      {% else %}<p class="empty">The next child-led question will appear here.</p>{% endfor %}
+    </section>
+
+    <section class="panel tone-learn" id="opportunities">
+      <div class="section-head"><div><p class="eyebrow">WEEKLY LENS</p><h2>One timely opening</h2></div></div>
+      {% for item in state.opportunities %}<article class="opportunity"><h3>{{ item.title }}</h3><p>{{ item.rationale }}</p><small>{{ item.parent_effort|replace('_',' ') }} effort</small><form method="post" action="/opportunities/{{ item.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><div class="button-row"><button name="decision" value="accepted">Use this opening</button><button class="secondary" name="decision" value="dismissed">Not this week</button></div></form></article>{% else %}<p class="empty">No active suggestion. Doing nothing is a valid outcome.</p>{% endfor %}
+      <form method="post" action="/reflect"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Run weekly reflection</button></form>
+    </section>
+
+    <section class="panel tone-try" id="artifacts">
+      <p class="eyebrow">PAPER EXTENSIONS</p><h2>Downloadable pages</h2>
+      {% for artifact in state.artifacts %}
+      <article class="artifact">
+        <a href="/artifacts/{{ artifact.id }}/file"><strong>Download PDF — {{ artifact.spec.title }}</strong></a>
+        <span class="badge">{{ artifact.approval_status }}</span>
+        {% if artifact.approval_status == 'unreviewed' %}<form method="post" action="/artifacts/{{ artifact.id }}/approve"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Approve exact PDF</button></form>{% endif %}
+        <form method="post" action="/feedback"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><input type="hidden" name="artifact_id" value="{{ artifact.id }}"><input type="hidden" name="experience_id" value="{{ artifact.experience_id }}"><label>How did it go?<select name="outcome"><option value="engaged">Engaged</option><option value="loved">Loved it</option><option value="neutral">Neutral</option><option value="too_easy">Too easy</option><option value="too_hard">Too hard</option><option value="not_used">Not used</option><option value="disliked">Disliked</option></select></label><label>Optional note <input name="note"></label><button class="secondary">Save feedback</button></form>
+      </article>
+      {% else %}<p class="empty">No artifacts yet. Model-proposed artifacts still require a parent click before creation.</p>{% endfor %}
+    </section>
+  </main>
+  {% endif %}
+</body>
+</html>

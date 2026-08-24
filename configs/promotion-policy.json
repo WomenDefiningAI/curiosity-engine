@@ -1,0 +1,19 @@
+{
+  "block_on_any_golden_regression": true,
+  "block_on_safety_regression": true,
+  "block_on_factual_regression": true,
+  "required_suites": [
+    "golden",
+    "curiosity",
+    "context",
+    "harness",
+    "autonomy",
+    "factual",
+    "parent_effort",
+    "safety",
+    "artifacts"
+  ],
+  "minimum_cases_before_auto_recommendation": 20,
+  "auto_promote": false,
+  "require_operator_approval": true
+}

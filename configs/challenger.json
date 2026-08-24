@@ -1,0 +1,6 @@
+{
+  "release_id": "experimental-local",
+  "channel": "experimental",
+  "base_release": "0.1.0-slack-mvp",
+  "changes": []
+}

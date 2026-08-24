@@ -1,0 +1,15 @@
+[
+  {"id":"duplicate-event-exactly-once","kind":"duplicate_event"},
+  {"id":"duplicate-id-payload-conflict","kind":"duplicate_conflict"},
+  {"id":"child-profile-upsert-preserves-graph","kind":"child_upsert"},
+  {"id":"critic-rejection-fails-closed","kind":"critic_rejection"},
+  {"id":"expired-school-signal-excluded","kind":"expired_school"},
+  {"id":"private-excerpts-require-opt-in","kind":"private_opt_in"},
+  {"id":"model-action-remains-proposal","kind":"action_proposal"},
+  {"id":"print-requires-hash-bound-approval","kind":"print_approval"},
+  {"id":"mvp-pdf-is-one-page","kind":"artifact_one_page"},
+  {"id":"tier-c-generation-fails-closed","kind":"tier_c_closed"},
+  {"id":"established-claim-needs-two-events","kind":"claim_threshold"},
+  {"id":"director-emits-at-most-one-active-opportunity","kind":"director_bound"},
+  {"id":"migration-creates-backup-and-preserves-data","kind":"migration_backup"}
+]

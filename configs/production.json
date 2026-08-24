@@ -1,0 +1,33 @@
+{
+  "release_id": "0.1.0-slack-mvp",
+  "channel": "stable",
+  "runtime": {
+    "harness": "curiosity_engine.runtime.CuriosityHarness",
+    "director": "curiosity_engine.director.AutonomousDirector",
+    "reasoning_policy": "configs/reasoning-policy.json",
+    "context_policy": "configs/context-policy.json",
+    "autonomy_policy": "configs/autonomy-policy.json"
+  },
+  "components": {
+    "context_builder": {"version": "2", "default_pull_thread_depth": 2, "default_weekly_depth": 4},
+    "pull_thread": {"workflow_version": "3", "model_role": "reasoning", "critics": ["critic_factual", "critic_pedagogy", "critic_context"]},
+    "weekly_reflection": {"workflow_version": "2", "model_role": "reasoning", "critics": ["critic_pedagogy", "critic_context", "critic_parent_effort", "critic_factual"]},
+    "artifact_validator": {"version": "2", "model_role": "visual_qa"},
+    "school_context": {"workflow_version": "2", "model_role": "structured_extraction"},
+    "resource_index": {"version": "1", "private_by_default": true},
+    "jobs": {"version": "1", "durable": true, "max_attempts": 3},
+    "paper_artifacts": {"version": "2", "approval_required": true, "hash_bound": true, "printing_optional": true},
+    "slack_transport": {"version": "1", "pairing_required": true, "socket_mode": true}
+  },
+  "models": {
+    "reasoning": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "structured_extraction": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "low"},
+    "visual_qa": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "critic_factual": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "critic_pedagogy": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "critic_context": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "critic_parent_effort": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "low"},
+    "critic_epistemic": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "medium"},
+    "judge": {"provider": "openai", "model": "gpt-5.4", "reasoning_effort": "high"}
+  }
+}

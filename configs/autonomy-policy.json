@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "autonomous_allowed": [
+    "read_context",
+    "extract_low_risk_signals",
+    "generate_candidate_opportunities",
+    "research_public_resources",
+    "prepare_draft_artifacts",
+    "run_evaluations",
+    "schedule_internal_jobs"
+  ],
+  "requires_parent_approval": [
+    "print_artifact",
+    "purchase_materials",
+    "emotionally_sensitive_intervention",
+    "share_family_data_external",
+    "high_impact_child_profile_change"
+  ],
+  "never_autonomous": [
+    "promote_production_release",
+    "infer_friend_motive_as_fact",
+    "convert_single_observation_to_durable_trait",
+    "unbounded_parent_notifications"
+  ]
+}

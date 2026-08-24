@@ -1,0 +1,14 @@
+[
+  {
+    "id": "pull-thread-context-depth",
+    "workflow": "pull_thread",
+    "must": ["context_depth=2", "persist raw event before reasoning", "log run"],
+    "must_not": ["dump entire longitudinal graph"]
+  },
+  {
+    "id": "weekly-context-depth",
+    "workflow": "weekly_reflection",
+    "must": ["context_depth=4", "include evidence-backed claims when available"],
+    "must_not": ["treat hypotheses as established facts"]
+  }
+]

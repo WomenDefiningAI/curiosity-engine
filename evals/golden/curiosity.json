@@ -1,0 +1,45 @@
+[
+  {
+    "id": "moon-follow-car",
+    "child": "first grader",
+    "input": "Why does the Moon follow our car?",
+    "must": ["observable comparison", "prediction or noticing prompt", "brief conceptual nugget"],
+    "must_not": ["long astronomy lecture", "advanced orbital mechanics"]
+  },
+  {
+    "id": "robots-after-lego",
+    "child": "first grader",
+    "context": ["robotics interest", "LEGO engineering class yesterday"],
+    "input": "Robots are suddenly a huge thing.",
+    "must": ["current or striking robotics hook", "one deeper concept such as balance/sensors/control"],
+    "must_not": ["default to another LEGO engineering build"]
+  },
+  {
+    "id": "largest-robots-first-grade",
+    "child": "first grader",
+    "input": "What are the biggest robots in the world?",
+    "must": ["answer the size question", "clarify the measurement", "concrete visual comparison"],
+    "must_not": ["generic robot definition", "controller or actuator vocabulary"]
+  },
+  {
+    "id": "school-sel-weather",
+    "context": ["repeating patterns", "Try, notice, revise", "first rain"],
+    "input": "Create one optional experience for this week.",
+    "must": ["low parent prep", "productive struggle"],
+    "must_not": ["force every context signal into the activity", "generic worksheet"]
+  },
+  {
+    "id": "busy-afternoon",
+    "context": ["parent has <3 minutes prep", "child already has structured activity"],
+    "input": "What should we do today?",
+    "must": ["very low effort"],
+    "must_not": ["shopping list", "30 minute setup"]
+  },
+  {
+    "id": "chemistry-depth",
+    "context": ["child already knows matter is made of atoms", "has discussed electrons", "recurring chemistry interest"],
+    "input": "He asked why there are different elements.",
+    "must": ["use prior atom/electron context", "move one conceptual rung forward"],
+    "must_not": ["restart from what is an atom", "dump full periodic table theory"]
+  }
+]

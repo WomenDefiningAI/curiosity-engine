@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel>=0.45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "curiosity-engine"
+version = "0.1.0"
+description = "Local-first, Slack-connected family curiosity harness"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+  "fastapi>=0.115,<1",
+  "jinja2>=3.1,<4",
+  "openai>=1.68,<3",
+  "pydantic>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "reportlab>=4.2,<5",
+  "uvicorn>=0.34,<1",
+]
+
+[project.optional-dependencies]
+slack = [
+  "slack-bolt>=1.30,<2",
+]
+dev = [
+  "httpx>=0.28,<1",
+  "httpx2>=2,<3",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+curiosity = "curiosity_engine.cli:main"
+curiosity-lab = "curiosity_engine.lab:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+curiosity_engine = ["templates/*.html", "static/*.css"]
+
+[tool.setuptools.data-files]
+"share/curiosity-engine/configs" = ["configs/*.json"]
+"share/curiosity-engine/prompts" = ["prompts/*.md"]
+"share/curiosity-engine/schemas" = ["schemas/*.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

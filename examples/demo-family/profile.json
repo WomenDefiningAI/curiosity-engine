@@ -1,0 +1,9 @@
+{
+  "family_id": "demo-family",
+  "timezone": "Etc/UTC",
+  "children": [
+    {"id":"demo-a","name":"Demo Child A","grade":"early elementary","learning_priorities":["curiosity","resilience","problem solving"]},
+    {"id":"demo-b","name":"Demo Child B","grade":"preschool","learning_priorities":["curiosity","play","confidence"]}
+  ],
+  "resources": ["paper","writing tools","art supplies","kitchen materials","optional home or library printer"]
+}

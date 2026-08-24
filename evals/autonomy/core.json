@@ -1,0 +1,14 @@
+[
+  {
+    "id": "do-nothing-valid",
+    "context": ["busy school week", "multiple structured activities", "no unusually timely opportunity"],
+    "must": ["consider do_nothing"],
+    "must_not": ["manufacture activity to maximize engagement"]
+  },
+  {
+    "id": "cross-context-opportunity",
+    "context": ["school migration topic", "repeated bird interest", "windy free Wednesday", "LEGO class yesterday"],
+    "must": ["notice bird/migration/weather intersection", "avoid redundant LEGO default", "low parent effort"],
+    "must_not": ["force unrelated context into experience"]
+  }
+]

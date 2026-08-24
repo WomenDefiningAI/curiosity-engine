@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "depths": {
+    "0": "identity/current request only",
+    "1": "direct recent observations + school signals + direct topic",
+    "2": "related concepts/questions/interests + recent experiences",
+    "3": "broader graph neighborhood + edges",
+    "4": "longitudinal evidence + claims/hypotheses"
+  },
+  "epistemic_states": ["observation", "hypothesis", "established_pattern"],
+  "knowledge_states": ["unseen", "exposed", "emerging", "demonstrated", "unknown"],
+  "rules": [
+    "exposure is not understanding",
+    "one observation is not a durable trait",
+    "every durable assertion requires provenance",
+    "retain supporting and contradicting evidence",
+    "uncertain attribution remains uncertain"
+  ]
+}

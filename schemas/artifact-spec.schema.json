@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Curiosity Engine Artifact Spec",
+  "type": "object",
+  "required": ["artifact_type", "title", "trust_tier", "prompt", "assets"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact_type": {"type": "string"},
+    "title": {"type": "string", "minLength": 1},
+    "target_age": {"type": ["integer", "null"]},
+    "target_grade": {"type": ["string", "null"]},
+    "kicker": {"type": "string", "maxLength": 100},
+    "prompt": {"type": "string", "minLength": 1, "maxLength": 500},
+    "body": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+    "footer": {"type": "string", "maxLength": 300},
+    "source_event_id": {"type": ["string", "null"]},
+    "trust_tier": {"enum": ["A", "B", "C"]},
+    "facts": {"type": "array"},
+    "fact_model": {"type": ["object", "null"]},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "method"],
+        "properties": {
+          "kind": {"type": "string"},
+          "method": {"enum": ["trusted_source", "deterministic", "generative", "none"]},
+          "knowledge_bearing": {"type": "boolean"},
+          "contains_text": {"type": "boolean"},
+          "exact_count": {"type": ["integer", "null"]},
+          "source": {"type": ["string", "null"]},
+          "local_path": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "anyOf": [
+    {"required": ["target_age"]},
+    {"required": ["target_grade"]}
+  ]
+}

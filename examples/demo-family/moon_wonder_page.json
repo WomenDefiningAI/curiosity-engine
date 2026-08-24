@@ -1,0 +1,23 @@
+{
+  "artifact_type": "wonder_page",
+  "trust_tier": "B",
+  "target_age": 6,
+  "title": "Why does the Moon follow our car?",
+  "kicker": "LOOK OUT THE WINDOW",
+  "prompt": "Which seems to move more as the car moves: a nearby tree or the Moon?",
+  "body": [
+    "Make a prediction before you watch.",
+    "Compare one nearby object with the very distant Moon.",
+    "What changes when you look again a few seconds later?"
+  ],
+  "footer": "Notice first. Explain second.",
+  "assets": [
+    {
+      "kind": "decorative_moon_photo",
+      "method": "trusted_source",
+      "knowledge_bearing": false,
+      "contains_text": false,
+      "source": "Use a vetted NASA/public-domain lunar image in production"
+    }
+  ]
+}

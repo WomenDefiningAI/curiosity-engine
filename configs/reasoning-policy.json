@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "workflows": {
+    "pull_thread": {
+      "context_depth": 2,
+      "budget": "fast",
+      "generator_role": "reasoning",
+      "critics": ["factual", "pedagogy", "context"],
+      "max_revision_rounds": 1,
+      "allowed_tools": ["graph_read", "web_search"]
+    },
+    "artifact_generate": {
+      "context_depth": 2,
+      "budget": "normal",
+      "generator_role": "reasoning",
+      "critics": ["factual", "visual"],
+      "max_revision_rounds": 1,
+      "allowed_tools": ["graph_read", "trusted_resource_search", "image_generation"]
+    },
+    "weekly_reflection": {
+      "context_depth": 4,
+      "budget": "deep",
+      "generator_role": "reasoning",
+      "generators": ["school_lens", "curiosity_lens", "life_lens"],
+      "critics": ["pedagogy", "context", "parent_effort", "factual"],
+      "max_revision_rounds": 1,
+      "allowed_tools": ["graph_read", "web_search", "resource_search"]
+    },
+    "school_ingest": {
+      "context_depth": 1,
+      "budget": "normal",
+      "generator_role": "structured_extraction",
+      "critics": ["context"],
+      "max_revision_rounds": 0,
+      "allowed_tools": ["graph_read", "graph_write"]
+    },
+    "context_audit": {
+      "context_depth": 4,
+      "budget": "lab",
+      "generator_role": "reasoning",
+      "critics": ["context", "epistemic"],
+      "max_revision_rounds": 1,
+      "allowed_tools": ["graph_read"]
+    },
+    "interest_signal": {
+      "context_depth": 2,
+      "budget": "fast",
+      "generator_role": "structured_extraction",
+      "critics": [],
+      "max_revision_rounds": 0,
+      "allowed_tools": ["graph_read"]
+    },
+    "feedback": {
+      "context_depth": 2,
+      "budget": "fast",
+      "generator_role": "structured_extraction",
+      "critics": [],
+      "max_revision_rounds": 0,
+      "allowed_tools": ["graph_read", "graph_write"]
+    },
+    "generic": {
+      "context_depth": 1,
+      "budget": "fast",
+      "generator_role": "reasoning",
+      "critics": [],
+      "max_revision_rounds": 0,
+      "allowed_tools": []
+    }
+  }
+}

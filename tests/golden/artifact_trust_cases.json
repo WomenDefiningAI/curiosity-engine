@@ -1,0 +1,26 @@
+[
+  {
+    "name": "reject generated labeled anatomy",
+    "should_pass": false,
+    "spec": {
+      "artifact_type": "reference_page",
+      "title": "Inside the heart",
+      "target_age": 7,
+      "trust_tier": "C",
+      "fact_model": {"facts": [{"claim": "The heart has four chambers.", "certainty": "established", "source": "authoritative anatomy source"}]},
+      "assets": [{"kind": "anatomy_diagram", "method": "generative", "knowledge_bearing": true, "contains_text": true}]
+    }
+  },
+  {
+    "name": "accept deterministic knowledge diagram",
+    "should_pass": true,
+    "spec": {
+      "artifact_type": "reference_page",
+      "title": "Carbon atom model",
+      "target_age": 6,
+      "trust_tier": "C",
+      "fact_model": {"facts": [{"claim": "Carbon has atomic number 6.", "certainty": "established", "source": "authoritative chemistry source"}]},
+      "assets": [{"kind": "electron_configuration", "method": "deterministic", "knowledge_bearing": true, "contains_text": false}]
+    }
+  }
+]
