@@ -10,3 +10,4 @@ All notable public changes will be recorded here. The project follows semantic v
 - Added episode-aware context evidence, repair/retry grouping, inspectable graph health, and append-only parent corrections.
 - Kept embeddings, a graph database, probabilistic mastery, and context-driven unsolicited suggestions outside this release.
 - Added deterministic tests, behavioral Lab suites, public-project vetting, privacy guidance, and open-source contribution guardrails.
+- Added pinned GitHub Actions, CodeQL scanning, Dependabot updates, and an explicit first-publication safety checklist.

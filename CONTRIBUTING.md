@@ -47,3 +47,5 @@ Do not add, install, or execute a public project merely because it appears usefu
 - Keep provider-specific live results and family quality reviews local unless a separate synthetic public fixture exists.
 
 By contributing, you agree that your contribution is licensed under the repository's MIT License.
+
+Maintainers should follow `docs/PUBLISHING.md` before creating a public repository, changing repository security settings, or publishing a release.

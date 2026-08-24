@@ -220,4 +220,4 @@ WhatsApp, cloud multi-tenancy, child-facing chat accounts, autonomous purchasing
 
 Context-driven unsolicited suggestions are also disabled in this release. The repository records episode-aware evidence and permits parent corrections, but does not yet add embeddings, a graph database, probabilistic mastery, or unsolicited suggestions.
 
-See [MVP status](docs/MVP_STATUS.md), [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), [Testing](docs/TESTING.md), and the [Roadmap](ROADMAP.md).
+See [MVP status](docs/MVP_STATUS.md), [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), [Testing](docs/TESTING.md), and the [Roadmap](ROADMAP.md). Maintainers preparing a public push should follow the [publishing checklist](docs/PUBLISHING.md).
