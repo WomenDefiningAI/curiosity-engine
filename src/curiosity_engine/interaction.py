@@ -448,6 +448,32 @@ def reviewable_slack_events(db_path: str | Path, *, limit: int = 5) -> list[dict
     return result
 
 
+def delivered_slack_response(
+    db_path: str | Path,
+    *,
+    event_id: str,
+    binding_id: str,
+) -> dict[str, Any] | None:
+    """Return a response only when this exact paired conversation received it."""
+
+    init_db(db_path)
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT e.id AS event_id,e.child_id,e.text,r.status
+               FROM events e
+               JOIN responses r ON r.event_id=e.id
+               JOIN transport_receipts t ON t.event_id=e.id AND t.transport='slack'
+                 AND t.status='completed' AND t.binding_id=?
+               JOIN delivery_outbox d ON d.binding_id=t.binding_id AND d.status='sent'
+                 AND d.idempotency_key LIKE ('slack:' || t.external_event_id || ':%')
+               WHERE e.id=? AND e.type='child_question'
+                 AND r.status IN ('completed','rejected')
+               ORDER BY d.updated_at DESC LIMIT 1""",
+            (binding_id, event_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def create_pairing_code(db_path: str | Path, parent_id: str, *, ttl_minutes: int = 15) -> dict[str, Any]:
     if not 1 <= ttl_minutes <= 60:
         raise ValueError("pairing code TTL must be between 1 and 60 minutes")

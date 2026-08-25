@@ -34,8 +34,15 @@ from curiosity_engine.interaction import (
 from curiosity_engine.onboarding import doctor
 from curiosity_engine.transports.contracts import InboundMessage
 from curiosity_engine.transports.slack import (
+    INBOX_ASSIGN_ACTION,
+    INBOX_DISMISS_ACTION,
+    RESPONSE_HELPFUL_ACTION,
+    RESPONSE_NOT_HELPFUL_ACTION,
+    RESPONSE_RETRY_ACTION,
     SlackTransport,
+    _make_slack_action_receiver,
     _make_slack_event_receiver,
+    _make_slack_response_action_receiver,
     flush_slack_outbox,
 )
 
@@ -85,14 +92,38 @@ class FakeService:
         self.feedback_calls.append(payload)
         return len(self.feedback_calls)
 
+    def retry_response(self, **kwargs: Any) -> dict[str, Any]:
+        with connect(self.db_path) as conn:
+            source = conn.execute(
+                "SELECT child_id,text FROM events WHERE id=?", (kwargs["source_event_id"],)
+            ).fetchone()
+        assert source
+        return self.ask(
+            child_id=source["child_id"],
+            text=source["text"],
+            source="slack_parent_retry",
+            include_private_excerpts=kwargs["include_private_excerpts"],
+            event_id=kwargs["event_id"],
+            context_metadata={
+                **kwargs["context_metadata"],
+                "episode_relation": "retry",
+                "retry_of_event_id": kwargs["source_event_id"],
+            },
+        )
+
 
 class FakeSlackClient:
     def __init__(self):
         self.messages: list[dict[str, Any]] = []
+        self.updates: list[dict[str, Any]] = []
 
     def chat_postMessage(self, **kwargs: Any) -> dict[str, str]:
         self.messages.append(kwargs)
         return {"ts": f"100.{len(self.messages)}"}
+
+    def chat_update(self, **kwargs: Any) -> dict[str, str]:
+        self.updates.append(kwargs)
+        return {"ts": str(kwargs["ts"])}
 
 
 def incoming(event_id: str, text: str, *, channel: str = "D_PARENT", user: str = "U_PARENT") -> InboundMessage:
@@ -176,6 +207,7 @@ def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
             "user": "U_PARENT",
             "channel": "C_FAMILY",
             "text": f"<@U123ABC> pair {code}",
+            "ts": "100.1",
             "event_ts": "100.1",
         },
         client,
@@ -184,6 +216,7 @@ def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
     assert active_binding(db, incoming("lookup", "help", channel="C_FAMILY")) is not None
     assert client.messages
     assert client.messages[0]["channel"] == "C_FAMILY"
+    assert client.messages[0]["thread_ts"] == "100.1"
     assert client.messages[0]["text"].startswith("Paired.")
 
 
@@ -207,6 +240,13 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
     assert saved.inbox_id
     assert fake.calls == []
     assert list_inbox(db)[0]["child_id"] is None
+    flush_slack_outbox(client, db)
+    actions = client.messages[-1]["blocks"][1]
+    assert actions["block_id"] == f"curiosity_inbox:{saved.inbox_id}"
+    assert [element["action_id"] for element in actions["elements"]] == [
+        INBOX_ASSIGN_ACTION,
+        INBOX_DISMISS_ACTION,
+    ]
 
     assigned = transport.handle(incoming("EvAssign", f"assign {saved.inbox_id} kid-a"))
     assert assigned.status == "completed"
@@ -233,6 +273,194 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
             "source": "slack_parent",
         }
     ]
+
+
+def test_slack_accepts_backticked_commands_and_natural_health_check(tmp_path: Path):
+    db, transport, fake, _client, _code = paired_transport(tmp_path)
+    saved = transport.handle(incoming("EvBacktickNote", "A note to dismiss"))
+
+    dismissed = transport.handle(incoming("EvBacktickDismiss", f"`dismiss {saved.inbox_id}`"))
+    assert dismissed.status == "completed"
+    assert list_inbox(db, status="dismissed")[0]["id"] == saved.inbox_id
+
+    health = transport.handle(incoming("EvHealth", "still working?"))
+    assert health.status == "completed"
+    assert "Slack connection works" in health.message
+    assert fake.calls == []
+    assert len(list_inbox(db)) == 0
+
+
+def test_slack_inbox_command_returns_controls_for_each_note(tmp_path: Path):
+    db, transport, _fake, client, _code = paired_transport(tmp_path)
+    first = transport.handle(incoming("EvInboxOne", "First saved note"))
+    second = transport.handle(incoming("EvInboxTwo", "Second saved note"))
+    flush_slack_outbox(client, db)
+
+    result = transport.handle(incoming("EvInboxList", "inbox"))
+    assert result.status == "completed"
+    flush_slack_outbox(client, db)
+    blocks = client.messages[-1]["blocks"]
+    action_blocks = [block for block in blocks if block["type"] == "actions"]
+    assert {block["block_id"] for block in action_blocks} == {
+        f"curiosity_inbox:{first.inbox_id}",
+        f"curiosity_inbox:{second.inbox_id}",
+    }
+
+
+def test_slack_blockkit_actions_remain_bound_and_resolve_inbox(tmp_path: Path):
+    db, transport, fake, client, _code = paired_transport(tmp_path)
+    saved = transport.handle(incoming("EvActionNote", "We noticed a shiny rock"))
+    flush_slack_outbox(client, db)
+    actions = client.messages[-1]["blocks"][1]
+    select = actions["elements"][0]
+    dismissed_button = actions["elements"][1]
+    body = {
+        "trigger_id": "trigger-one",
+        "team": {"id": "T_FAMILY"},
+        "user": {"id": "U_PARENT"},
+        "channel": {"id": "D_PARENT"},
+        "container": {"channel_id": "D_PARENT", "message_ts": "100.2"},
+        "message": {"ts": "100.2"},
+    }
+    acknowledgements: list[bool] = []
+    assign = _make_slack_action_receiver(transport, db, action_id=INBOX_ASSIGN_ACTION)
+    assign(
+        lambda: acknowledgements.append(True),
+        body,
+        {
+            "action_id": INBOX_ASSIGN_ACTION,
+            "action_ts": "101.1",
+            "block_id": actions["block_id"],
+            "selected_option": select["options"][0],
+        },
+        client,
+    )
+    assert acknowledgements == [True]
+    assert list_inbox(db, status="assigned")[0]["id"] == saved.inbox_id
+    assert fake.calls[-1]["text"] == "We noticed a shiny rock"
+    assert client.updates[-2]["text"] == "Making a learning thread for Kid A…"
+    assert "hourglass_flowing_sand" in client.updates[-2]["blocks"][0]["text"]["text"]
+    assert client.updates[-1]["text"].startswith("Assigned")
+
+    second = transport.handle(incoming("EvDismissActionNote", "A second note"))
+    flush_slack_outbox(client, db)
+    second_actions = client.messages[-1]["blocks"][1]
+    dismiss = _make_slack_action_receiver(transport, db, action_id=INBOX_DISMISS_ACTION)
+    dismiss(
+        lambda: acknowledgements.append(True),
+        {**body, "trigger_id": "trigger-two", "message": {"ts": "100.4"}},
+        {
+            "action_id": INBOX_DISMISS_ACTION,
+            "action_ts": "102.1",
+            "block_id": second_actions["block_id"],
+            "value": dismissed_button["value"].replace(str(saved.inbox_id), str(second.inbox_id)),
+        },
+        client,
+    )
+    assert acknowledgements == [True, True]
+    assert list_inbox(db, status="dismissed")[0]["id"] == second.inbox_id
+    assert client.updates[-1]["text"].startswith("Dismissed")
+
+
+def test_slack_answer_controls_record_feedback_and_retry_in_a_thread(tmp_path: Path):
+    db, transport, fake, client, _code = paired_transport(tmp_path)
+    answer = transport.handle(incoming("EvAnswerControls", "ask kid-a: Why are rocks shiny?"))
+    assert answer.event_id
+    flush_slack_outbox(client, db)
+    answer_message = client.messages[-1]
+    action_block = answer_message["blocks"][-1]
+    assert [element["action_id"] for element in action_block["elements"]] == [
+        RESPONSE_HELPFUL_ACTION,
+        RESPONSE_NOT_HELPFUL_ACTION,
+        RESPONSE_RETRY_ACTION,
+    ]
+    body = {
+        "trigger_id": "answer-trigger-one",
+        "team": {"id": "T_FAMILY"},
+        "user": {"id": "U_PARENT"},
+        "channel": {"id": "D_PARENT"},
+        "container": {"channel_id": "D_PARENT", "message_ts": "200.1"},
+        "message": {"ts": "200.1", "text": answer_message["text"], "blocks": answer_message["blocks"]},
+    }
+    acknowledgements: list[bool] = []
+    helpful = _make_slack_response_action_receiver(
+        transport, db, action_id=RESPONSE_HELPFUL_ACTION
+    )
+    helpful(
+        lambda: acknowledgements.append(True),
+        body,
+        {
+            "action_id": RESPONSE_HELPFUL_ACTION,
+            "action_ts": "201.1",
+            "block_id": action_block["block_id"],
+            "value": answer.event_id,
+        },
+        client,
+    )
+    assert acknowledgements == [True]
+    assert fake.feedback_calls[-1]["event_id"] == answer.event_id
+    assert fake.feedback_calls[-1]["outcome"] == "helpful"
+    assert client.updates[-1]["blocks"][-1]["type"] == "context"
+
+    retry_answer = transport.handle(incoming("EvAnswerRetry", "ask kid-a: How do birds fly?"))
+    assert retry_answer.event_id
+    flush_slack_outbox(client, db)
+    retry_message = client.messages[-1]
+    retry_actions = retry_message["blocks"][-1]
+    retry = _make_slack_response_action_receiver(transport, db, action_id=RESPONSE_RETRY_ACTION)
+    retry(
+        lambda: acknowledgements.append(True),
+        {
+            **body,
+            "trigger_id": "answer-trigger-two",
+            "message": {"ts": "200.2", "text": retry_message["text"], "blocks": retry_message["blocks"]},
+        },
+        {
+            "action_id": RESPONSE_RETRY_ACTION,
+            "action_ts": "202.1",
+            "block_id": retry_actions["block_id"],
+            "value": retry_answer.event_id,
+        },
+        client,
+    )
+    assert acknowledgements == [True, True]
+    assert fake.feedback_calls[-1]["outcome"] == "not_helpful"
+    assert fake.calls[-1]["context_metadata"]["episode_relation"] == "retry"
+    assert client.updates[-2]["blocks"][-1]["type"] == "context"
+    assert "Trying a different approach" in client.updates[-2]["blocks"][-1]["elements"][0]["text"]
+    assert client.messages[-1]["thread_ts"] == "200.2"
+    assert client.messages[-1]["blocks"][-1]["elements"][-1]["action_id"] == RESPONSE_RETRY_ACTION
+
+    negative_answer = transport.handle(incoming("EvAnswerNegative", "ask kid-a: Why is snow cold?"))
+    assert negative_answer.event_id
+    flush_slack_outbox(client, db)
+    negative_message = client.messages[-1]
+    negative_actions = negative_message["blocks"][-1]
+    not_helpful = _make_slack_response_action_receiver(
+        transport, db, action_id=RESPONSE_NOT_HELPFUL_ACTION
+    )
+    not_helpful(
+        lambda: acknowledgements.append(True),
+        {
+            **body,
+            "trigger_id": "answer-trigger-three",
+            "message": {
+                "ts": "200.3",
+                "text": negative_message["text"],
+                "blocks": negative_message["blocks"],
+            },
+        },
+        {
+            "action_id": RESPONSE_NOT_HELPFUL_ACTION,
+            "action_ts": "203.1",
+            "block_id": negative_actions["block_id"],
+            "value": negative_answer.event_id,
+        },
+        client,
+    )
+    assert acknowledgements == [True, True, True]
+    assert fake.feedback_calls[-1]["outcome"] == "not_helpful"
+    assert client.updates[-1]["blocks"][-1]["elements"][-1]["action_id"] == RESPONSE_RETRY_ACTION
 
 
 def test_onboarding_review_requires_latest_confirmed_slack_answer(tmp_path: Path):
@@ -421,6 +649,8 @@ def test_manifest_has_only_mvp_scopes():
         assert f"- {scope}" in manifest
     for forbidden in ("channels:history", "groups:history", "users:read", "files:read"):
         assert forbidden not in manifest
+    assert "interactivity:" in manifest
+    assert "is_enabled: true" in manifest
 
 
 def test_contract_rejects_specialized_fabrication_terms():

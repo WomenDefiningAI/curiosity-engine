@@ -14,7 +14,7 @@ Slack is an interaction surface, not the durable record. Messages sent through i
 2. Select **From an app manifest** and the family workspace.
 3. Paste `integrations/slack/manifest.yaml` as YAML and create the app.
 
-The manifest requests `chat:write`, `files:write`, `im:history`, and `app_mentions:read`, and subscribes only to `message.im` and `app_mention`. It does not request file reads, ambient channel history, users, or user-token scopes. `files:write` is used only for response visuals.
+The manifest requests `chat:write`, `files:write`, `im:history`, and `app_mentions:read`, subscribes only to `message.im` and `app_mention`, and enables Block Kit interactions for parent controls. It does not request file reads, ambient channel history, users, or user-token scopes. `files:write` is used only for response visuals.
 
 ## 3. Install and save both tokens
 
@@ -24,6 +24,8 @@ The manifest requests `chat:write`, `files:write`, `im:history`, and `app_mentio
 Creating the app is not enough: the OAuth installation is required.
 
 If the app was installed before visual responses were added, add `files:write` under **OAuth & Permissions → Bot Token Scopes**, then choose **Reinstall to Workspace**. Reinstallation can change the bot token; update the ignored token file if needed.
+
+If the app was installed before interactive inbox controls were added, open **Interactivity & Shortcuts**, turn **Interactivity** on, and save. Socket Mode carries button and menu actions, so no Request URL is needed.
 
 Copy `integrations/slack/slack.env.example` to ignored `private/setup/slack.env`, then paste both values there directly in VS Code. Never paste them into agent chat.
 
@@ -70,6 +72,8 @@ visual connection
 ```
 
 This creates a fixed card locally and uploads it with alt text. It uses no model, child profile, family message, or resource. `curiosity doctor` should report `visual_delivery_verified: true`.
+
+Every unassigned note includes a child dropdown and Dismiss button. Completed learning threads include Helpful, Not for us, and Try another controls. These actions remain restricted to the paired parent and conversation; retries stay in the same learning episode instead of becoming new interest evidence.
 
 Continue with [brain setup](BRAIN_SETUP.md).
 

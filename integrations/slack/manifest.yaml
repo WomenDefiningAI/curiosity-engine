@@ -18,6 +18,8 @@ oauth_config:
       - files:write
       - im:history
 settings:
+  interactivity:
+    is_enabled: true
   event_subscriptions:
     bot_events:
       - app_mention

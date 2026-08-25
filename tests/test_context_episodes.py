@@ -16,6 +16,7 @@ from curiosity_engine.graph import add_child, child_context
 from curiosity_engine.interaction import setup_household
 from curiosity_engine.reasoning import ReasoningEngine, StubBackend
 from curiosity_engine.runtime import CuriosityHarness
+from curiosity_engine.service import CuriosityService
 
 
 def _harness(db: Path) -> CuriosityHarness:
@@ -131,6 +132,46 @@ def test_failed_answer_followed_by_same_question_is_repair_not_interest(tmp_path
     assert rows["evt_repair"]["episode_id"] == rows["evt_failed"]["episode_id"]
     assert rows["evt_repair"]["relation"] == "answer_repair"
     assert rows["evt_repair"]["independence_status"] == "same_episode"
+
+
+def test_parent_requested_response_retry_stays_in_same_episode(tmp_path: Path):
+    db = tmp_path / "db.sqlite"
+    service = CuriosityService(db, tmp_path / "output")
+    service.add_child("kid-a", "Demo Child", 2020, "1st")
+    metadata = {
+        "learning_scope": "family_signal",
+        "conversation_ref": "conversation-a",
+        "thread_ref": "thread-a",
+    }
+    first = service.ask(
+        child_id="kid-a",
+        text="Why do robots need sensors?",
+        source="slack_parent_report",
+        event_id="evt_first_response",
+        context_metadata=metadata,
+    )
+    assert first["status"] == "completed"
+    retry = service.retry_response(
+        source_event_id="evt_first_response",
+        event_id="evt_parent_retry",
+        context_metadata=metadata,
+    )
+    assert retry["status"] == "completed"
+
+    with connect(db) as conn:
+        memberships = {
+            row["event_id"]: dict(row)
+            for row in conn.execute(
+                "SELECT event_id,episode_id,relation,independence_status FROM episode_memberships"
+            )
+        }
+        retry_metadata = conn.execute(
+            "SELECT metadata_json FROM events WHERE id='evt_parent_retry'"
+        ).fetchone()[0]
+    assert memberships["evt_parent_retry"]["episode_id"] == memberships["evt_first_response"]["episode_id"]
+    assert memberships["evt_parent_retry"]["relation"] == "parent_marked_retry"
+    assert memberships["evt_parent_retry"]["independence_status"] == "same_episode"
+    assert "different_approach" in retry_metadata
 
 
 def test_diagnostic_events_are_visible_but_ineligible(tmp_path: Path):
