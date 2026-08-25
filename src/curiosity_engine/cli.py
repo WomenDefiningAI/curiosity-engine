@@ -10,6 +10,7 @@ from typing import Any
 from .actions import list_actions
 from .artifact_validation import validate_artifact_spec, validate_rendered_file
 from .artifacts import load_spec, render_html, render_pdf
+from .backups import backup_status, create_snapshot, default_backup_root, restore_snapshot, verify_snapshot
 from .brain_config import (
     brain_status,
     configure_api_brain,
@@ -80,6 +81,10 @@ def _default_output() -> str:
     return os.environ.get("CURIOSITY_OUTPUT") or str(repository_root() / "private" / "output")
 
 
+def _default_private() -> str:
+    return str(repository_root() / "private")
+
+
 def add_db(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db", default=_default_db())
 
@@ -94,6 +99,23 @@ def build_parser() -> argparse.ArgumentParser:
     command = sub.add_parser("doctor", help="Check local setup without printing secrets or family content")
     add_db(command)
     command.add_argument("--write-report", action="store_true")
+
+    backup = sub.add_parser("backup", help="Create and check owner-only family snapshots outside the repository")
+    backup_sub = backup.add_subparsers(dest="backup_cmd", required=True)
+    command = backup_sub.add_parser("create", help="Snapshot family data without saving Slack or model credentials")
+    add_db(command)
+    command.add_argument("--private-dir", default=_default_private())
+    command.add_argument("--output-dir", default=_default_output())
+    command.add_argument("--destination", default=str(default_backup_root()))
+    command = backup_sub.add_parser("status", help="Show backup count and the latest snapshot summary")
+    command.add_argument("--destination", default=str(default_backup_root()))
+    command = backup_sub.add_parser("verify", help="Verify checksums, permissions, and database integrity")
+    command.add_argument("snapshot", nargs="?", help="Snapshot ID; defaults to the latest")
+    command.add_argument("--destination", default=str(default_backup_root()))
+    command = backup_sub.add_parser("restore", help="Restore into a new path without overwriting current family data")
+    command.add_argument("snapshot", nargs="?", help="Snapshot ID; defaults to the latest")
+    command.add_argument("--destination", default=str(default_backup_root()))
+    command.add_argument("--target-private", help="New restore path; must not already exist")
 
     onboard = sub.add_parser("onboard", help="Show or record end-to-end onboarding checkpoints")
     onboard_sub = onboard.add_subparsers(dest="onboard_cmd", required=True)
@@ -384,6 +406,29 @@ def main(argv: list[str] | None = None) -> int:
             report["report_path"] = str(write_setup_report(args.db, report))
         dump(report)
         return 0 if report["core_ready"] else 1
+    elif args.cmd == "backup" and args.backup_cmd == "create":
+        dump(
+            create_snapshot(
+                db_path=args.db,
+                private_dir=args.private_dir,
+                output_dir=args.output_dir,
+                backup_root=args.destination,
+            )
+        )
+    elif args.cmd == "backup" and args.backup_cmd == "status":
+        dump(backup_status(backup_root=args.destination))
+    elif args.cmd == "backup" and args.backup_cmd == "verify":
+        result = verify_snapshot(args.snapshot, backup_root=args.destination)
+        dump(result)
+        return 0 if result["status"] == "pass" else 1
+    elif args.cmd == "backup" and args.backup_cmd == "restore":
+        dump(
+            restore_snapshot(
+                args.snapshot,
+                target_private=args.target_private,
+                backup_root=args.destination,
+            )
+        )
     elif args.cmd == "onboard" and args.onboard_cmd == "status":
         dump(doctor(args.db))
     elif args.cmd == "onboard" and args.onboard_cmd == "pending":
