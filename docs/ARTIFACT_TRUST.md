@@ -35,4 +35,6 @@ Visual QA inspects the rendered page for factual conflicts, misleading imagery, 
 
 Slack uses the same truth boundary with a smaller surface: at most one local PNG card or decorative illustration per answer. Comparison cards are qualitative and marked **not to scale**; activity cards show parent/child actions, not scientific sequence facts. Tier C response diagrams remain disabled.
 
+Model-proposed deterministic cards are never rendered directly. The runtime may substitute an exact reviewed local template for the supported robot-size comparison or pretend-robot activity; otherwise it stays text-only. It never relabels an instructional proposal as supportive. New deterministic templates require code review and tests.
+
 Decorative generation is household opt-in and receives only a minimized generic scene prompt; the broad topic may be present, but known household identities and private-context categories fail closed. Code supplies captions and alt text. Every upload rechecks the private output path, PNG signature, byte count, and validated hash; useful answer text is delivered first and survives any visual failure.

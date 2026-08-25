@@ -62,7 +62,7 @@ Network/model calls occur outside SQLite transactions. Raw evidence is committed
 
 Slack events receive an independent payload hash. A confirmed Slack API rejection can be retried with a bound attempt limit. An ambiguous network failure is marked `unknown` instead of automatically risking a duplicate parent message.
 
-Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. An ambiguous completion is never retried. Deterministic cards are Tier B and explicitly non-scale; Tier C instructional visuals remain disabled. Decorative generation uses a separate exact image route and never falls back to reasoning.
+Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. In v0.1, model-proposed deterministic cards are replaced by exact reviewed local templates; the available fallbacks cover robot-size comparisons and pretend-robot command activities. Safe decorative proposals may continue through the separate opt-in image route. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. An ambiguous completion is never retried. Deterministic cards are Tier B and explicitly non-scale; Tier C instructional visuals remain disabled.
 
 ## Deployment boundary
 
