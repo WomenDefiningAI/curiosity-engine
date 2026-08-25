@@ -8,7 +8,7 @@ pytest
 curiosity-lab --repo . --json-out private/eval-report.json
 ```
 
-Tests cover contracts, migrations, idempotency, retries, context episodes/corrections, disabled proactivity, private-resource gates, provider request shapes, artifact trust, staged onboarding, Slack authorization/delivery, redaction, and the loopback console.
+Tests cover contracts, migrations, idempotency, retries, context episodes/corrections, disabled proactivity, private-resource gates, provider request shapes, artifact trust, visual policy/rendering, Slack text/file crash boundaries, staged onboarding, redaction, and the loopback console.
 
 Tests force deterministic mode, ignore private provider configuration, and make no billable calls. The Lab runs public behavioral cases for golden behavior, curiosity, context, safety, uncertainty, parent effort, artifact trust, and regressions.
 
@@ -19,9 +19,11 @@ An offline pass proves orchestration and known invariants—not production-model
 Run live verification locally and in this order:
 
 1. paired Slack `connection`;
-2. family-data-free provider probe;
-3. synthetic vision/OCR/image checks;
-4. one real question with parent review.
+2. paired Slack `visual connection`;
+3. family-data-free provider probe;
+4. optional paid `curiosity visual test --live` for decorative mode;
+5. synthetic vision/OCR checks;
+6. one real question with parent review.
 
 Private messages, files, responses, keys, Slack IDs, and licensed excerpts never belong in CI artifacts. Live Lab judging uses only public fixtures:
 

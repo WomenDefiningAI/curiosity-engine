@@ -11,6 +11,7 @@ Release target: `0.1.0-slack-mvp`
 | Multimodal requirement | Public reasoning, vision/OCR, visual-QA, and image-generation requirements | Configuration checks; broader live evals remain family-local |
 | Public project research | Expiring canonical registry for artifact, OCR, worksheet, education, and game projects with reference/install separation | Schema tests plus explicit metadata-only live audit |
 | Slack parent entry | Socket Mode connector for DMs and explicit mentions | Transport unit tests; live workspace smoke test remains local |
+| Visual Slack response | One policy-governed card per useful K–2 answer; local deterministic default; optional decorative OpenAI route | Renderer, privacy, trust, crash, alt-text, synthetic robot, and live connection gates |
 | Parent authorization | Short-lived pairing code bound to workspace, user, and conversation | Expiry, replay, exact-binding tests |
 | Uncertain attribution | Durable unassigned inbox with explicit assign/dismiss | Inbox and Slack command tests |
 | Durable capture | Immutable event, raw evidence, job, run, response | Unit and regression cases |

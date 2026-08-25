@@ -52,6 +52,15 @@ curiosity brain test --live
 
 `brain doctor` is offline and redacted. The explicit live probe may be billable, uses a fixed synthetic payload, and tests only structured reasoning—not OCR, images, or family usefulness.
 
+Visual response cards default to deterministic local rendering. To enable optional decorative generation and test the exact image route:
+
+```bash
+curiosity visual mode --mode decorative
+curiosity visual test --live
+```
+
+The paid test sends one fixed, family-free scene prompt and stores the result under ignored private output. OpenAI is the maintained image-delivery adapter in this release; another configured image provider is reported as not runtime-ready instead of silently falling back to the reasoning model.
+
 ## Acceptance before recommendation
 
 Use only synthetic or de-identified material to check:
@@ -63,4 +72,4 @@ Use only synthetic or de-identified material to check:
 - current factual questions with sources;
 - repeated parent reviews for grade fit, usefulness, latency, and cost.
 
-`brain_verified` means only that the current reasoning route passed its synthetic probe. `end_to_end_ready` additionally requires Slack delivery, the family lens, and a parent-approved real answer. Run `curiosity doctor` for the next action.
+`brain_verified` means only that the current reasoning route passed its synthetic probe. `visual_delivery_verified` proves Slack accepted a synthetic card; `image_generation_verified` proves the current paid image route when decorative mode is enabled. `end_to_end_ready` additionally requires the configured visual mode, family lens, and a parent-approved real answer. Run `curiosity doctor` for the next action.

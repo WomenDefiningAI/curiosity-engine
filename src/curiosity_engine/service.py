@@ -11,10 +11,11 @@ from .db import connect, init_db, jload
 from .director import AutonomousDirector, list_opportunities
 from .feedback import record_feedback
 from .graph import add_child, child_context
-from .interaction import list_inbox, onboarding_status, resolve_inbox
+from .interaction import household_visual_mode, list_inbox, onboarding_status, resolve_inbox
 from .printer import approve_artifact, print_artifact
 from .resources import index_collection, resource_inventory, search_resources
 from .runtime import CuriosityHarness, configured_backend
+from .visuals import enqueue_response_visual
 
 
 class CuriosityService:
@@ -68,7 +69,21 @@ class CuriosityService:
         if event_id:
             payload["id"] = event_id
         result = CuriosityHarness(self.db_path).dispatch(Event.model_validate(payload))
-        return result.model_dump(mode="json")
+        response = result.model_dump(mode="json")
+        if response.get("status") == "completed":
+            try:
+                visual_job_id = enqueue_response_visual(
+                    self.db_path,
+                    event_id=str(response["event_id"]),
+                    visual=(response.get("output") or {}).get("visual"),
+                    mode=household_visual_mode(self.db_path),
+                )
+            except (ValueError, RuntimeError):
+                # A useful text answer must survive an unsafe or malformed visual proposal.
+                visual_job_id = None
+            if visual_job_id:
+                response["visual_job_id"] = visual_job_id
+        return response
 
     def event_result(self, event_id: str) -> dict[str, Any] | None:
         result = CuriosityHarness(self.db_path).repository.get_response(event_id)

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 import re
 import stat
+import threading
+import urllib.request
+from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
@@ -11,18 +15,23 @@ from ..interaction import (
     active_binding,
     begin_receipt,
     claim_delivery,
+    claim_visual_delivery,
     consume_pairing_code,
     create_unassigned_capture,
     enqueue_delivery,
+    enqueue_visual_delivery,
     finish_receipt,
     household_resource_context_mode,
     list_inbox,
     mark_delivery,
+    mark_visual_delivery,
     ready_deliveries,
+    ready_visual_deliveries,
     record_onboarding_checkpoint,
     resolve_inbox,
 )
 from ..service import CuriosityService
+from ..visuals import create_synthetic_visual_job, process_visual_jobs
 from .contracts import InboundMessage, OutboundMessage, TransportResult
 
 PAIR_RE = re.compile(r"^pair\s+([A-Z2-9]{8})$", re.IGNORECASE)
@@ -111,6 +120,7 @@ def _help_text() -> str:
     return (
         "I help parents catch questions and turn them into small, hands-on learning threads.\n\n"
         "• `connection` — prove Slack transport works without contacting a model\n"
+        "• `visual connection` — prove an accessible picture can reach this conversation\n"
         "• `children` — show child IDs\n"
         "• `ask CHILD_ID: Why does ice float?` — get a response now\n"
         "• Send any other note — save it unassigned so I never guess which child it belongs to\n"
@@ -150,6 +160,8 @@ def _format_thread(result: dict[str, Any]) -> str:
             0,
             "_Offline demo response — connect a reasoning provider for tailored answers to arbitrary questions._",
         )
+    if result.get("visual_job_id"):
+        parts.append("_A visual card is being prepared and will follow this answer._")
     return "\n\n".join(parts)[:4_000]
 
 
@@ -246,6 +258,8 @@ class SlackTransport:
         binding_id = str(binding["id"])
         text = message.text.strip()
         normalized = text.casefold()
+        visual_job_id: str | None = None
+        visual_purpose = "response_visual"
         try:
             if pair:
                 reply = "This conversation is already paired. Use `help` to see what I can do."
@@ -267,6 +281,23 @@ class SlackTransport:
                 purpose = "connection"
                 result_status = "completed"
                 event_id = None
+                inbox_id = None
+            elif normalized in {"visual connection", "visual connection test"}:
+                record_onboarding_checkpoint(
+                    self.db_path,
+                    "visual_delivery_verified",
+                    status="pending",
+                    evidence={"transport": "slack", "protocol": 1, "family_data_sent": False},
+                )
+                event_id = _engine_event_id(message, "visual-connection")
+                visual_job_id = create_synthetic_visual_job(self.db_path, event_id)
+                visual_purpose = "visual_connection"
+                reply = (
+                    "The fixed visual connection card is being prepared. It does not contact an AI model or "
+                    "use child, family, Slack-message, or private-resource content."
+                )
+                purpose = "visual-connection"
+                result_status = "completed"
                 inbox_id = None
             elif normalized in {"help", "commands"}:
                 reply = _help_text()
@@ -310,7 +341,10 @@ class SlackTransport:
                 reply = (
                     "Slack processes the messages and replies you send here. Curiosity Engine stores its durable "
                     "family record in the ignored `private/` directory on the computer running it. A configured "
-                    "model provider processes only the bounded context selected for that request. "
+                    "model provider processes only the bounded context selected for that request. Deterministic "
+                    "visual cards are created locally; any card uploaded here is then stored by Slack under this "
+                    "workspace's policies. Opt-in decorative generation sends a minimized generic scene prompt "
+                    "derived from the broad topic, while code rejects known identities and private-context categories. "
                     + resource_disclosure
                 )
                 purpose = "privacy"
@@ -349,6 +383,7 @@ class SlackTransport:
                 )
                 if response.get("status") == "completed":
                     reply = _format_thread(response)
+                    visual_job_id = response.get("visual_job_id")
                     purpose = "answer"
                     result_status = "completed"
                 else:
@@ -378,6 +413,7 @@ class SlackTransport:
                 if response.get("status") == "completed":
                     resolve_inbox(self.db_path, inbox_id, child_id=child_id)
                     reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
+                    visual_job_id = response.get("visual_job_id")
                     purpose = "assign"
                     result_status = "completed"
                 else:
@@ -409,6 +445,17 @@ class SlackTransport:
                 result_status = "unassigned"
                 event_id = None
             outbound_id = self._queue(message, binding_id, reply, purpose=purpose)
+            if visual_job_id:
+                enqueue_visual_delivery(
+                    self.db_path,
+                    visual_job_id=visual_job_id,
+                    binding_id=binding_id,
+                    depends_on_delivery_id=outbound_id,
+                    channel_id=message.channel_id,
+                    thread_id=message.thread_id,
+                    idempotency_key=f"slack:{message.external_event_id}:{purpose}:visual",
+                    purpose=visual_purpose,
+                )
             finish_receipt(self.db_path, message, status="completed", event_id=event_id)
             return TransportResult(
                 status=result_status,
@@ -495,6 +542,120 @@ def flush_slack_outbox(client: Any, db_path: str | Path) -> list[dict[str, str]]
     return results
 
 
+def _upload_bytes(upload_url: str, data: bytes) -> None:
+    request = urllib.request.Request(
+        upload_url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(data))},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - Slack supplies the signed URL
+        if int(response.status) < 200 or int(response.status) >= 300:
+            raise RuntimeError(f"Slack byte upload failed with HTTP {response.status}")
+
+
+def flush_slack_file_outbox(
+    client: Any,
+    db_path: str | Path,
+    output_dir: str | Path,
+    *,
+    uploader: Callable[[str, bytes], None] | None = None,
+) -> list[dict[str, str]]:
+    """Deliver validated private assets with at-most-one automatic completion attempt."""
+
+    results: list[dict[str, str]] = []
+    allowed_root = (Path(output_dir).resolve() / "visuals").resolve()
+    upload = uploader or _upload_bytes
+    for row in ready_visual_deliveries(db_path):
+        delivery_id = str(row["id"])
+        if not claim_visual_delivery(db_path, delivery_id):
+            continue
+        stage = "ticket_acquiring"
+        try:
+            path = Path(str(row["path"])).resolve()
+            if not path.is_relative_to(allowed_root) or not path.is_file():
+                raise ValueError("visual asset path is outside the private output root")
+            data = path.read_bytes()
+            if len(data) != int(row["byte_count"]):
+                raise ValueError("visual asset byte count changed after validation")
+            if sha256(data).hexdigest() != row["sha256"]:
+                raise ValueError("visual asset hash changed after validation")
+            if row["mime_type"] != "image/png" or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("visual asset is not a validated PNG")
+
+            ticket = client.files_getUploadURLExternal(
+                filename=row["filename"],
+                length=len(data),
+                alt_txt=row["alt_text"],
+            )
+            upload_url = str(ticket.get("upload_url") or "")
+            file_id = str(ticket.get("file_id") or "")
+            if not upload_url.startswith("https://") or not file_id:
+                raise RuntimeError("Slack did not return a valid upload ticket")
+            stage = "ticket_acquired"
+            mark_visual_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            stage = "uploading"
+            mark_visual_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            upload(upload_url, data)
+            stage = "bytes_uploaded"
+            mark_visual_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            stage = "completing"
+            mark_visual_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            kwargs: dict[str, Any] = {
+                "files": [{"id": file_id, "title": row["title"]}],
+                "channel_id": row["channel_id"],
+                "initial_comment": row["caption"],
+            }
+            if row.get("thread_id"):
+                kwargs["thread_ts"] = row["thread_id"]
+            response = client.files_completeUploadExternal(**kwargs)
+            external_id = file_id
+            response_files = response.get("files") or []
+            if response_files and isinstance(response_files[0], dict):
+                external_id = str(response_files[0].get("id") or file_id)
+            mark_visual_delivery(
+                db_path,
+                delivery_id,
+                status="sent",
+                slack_file_id=file_id,
+                external_message_id=external_id,
+            )
+            if row.get("purpose") == "visual_connection":
+                record_onboarding_checkpoint(
+                    db_path,
+                    "visual_delivery_verified",
+                    status="pass",
+                    evidence={
+                        "transport": "slack",
+                        "protocol": 1,
+                        "delivery_confirmed": True,
+                        "family_data_sent": False,
+                    },
+                )
+            results.append({"delivery_id": delivery_id, "status": "sent"})
+        except Exception as exc:
+            slack_rejection = exc.__class__.__name__ == "SlackApiError"
+            if stage == "completing" and not slack_rejection:
+                status = "unknown"
+            elif slack_rejection or isinstance(exc, ValueError):
+                status = "expired"
+            else:
+                status = "failed"
+            mark_visual_delivery(db_path, delivery_id, status=status, error=exc.__class__.__name__)
+            results.append({"delivery_id": delivery_id, "status": status})
+    return results
+
+
+def _run_visual_worker(client: Any, db_path: str | Path, output_dir: str | Path, stop: threading.Event) -> None:
+    while not stop.is_set():
+        try:
+            process_visual_jobs(db_path, output_dir)
+            flush_slack_file_outbox(client, db_path, output_dir)
+        except Exception:
+            logging.getLogger(__name__).exception("visual worker iteration failed")
+        stop.wait(1.0)
+
+
 def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -> Any:
     # Slack Bolt discovers injectable arguments from positional parameter names.
     # These must not be keyword-only even though Bolt invokes the listener with kwargs.
@@ -557,4 +718,16 @@ def run_slack_connector(db_path: str | Path, output_dir: str | Path) -> None:
         raise RuntimeError("SLACK_APP_TOKEN is missing or does not look like an app token")
     app = build_slack_app(db_path, output_dir)
     flush_slack_outbox(app.client, db_path)
-    SocketModeHandler(app, app_token).start()
+    stop = threading.Event()
+    worker = threading.Thread(
+        target=_run_visual_worker,
+        args=(app.client, db_path, output_dir, stop),
+        name="curiosity-visual-worker",
+        daemon=True,
+    )
+    worker.start()
+    try:
+        SocketModeHandler(app, app_token).start()
+    finally:
+        stop.set()
+        worker.join(timeout=5)

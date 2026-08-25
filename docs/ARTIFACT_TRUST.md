@@ -30,3 +30,9 @@ Prefer trusted assets, then deterministic diagrams, then fact-grounded illustrat
 - Parent approval applies to the exact validated file hash.
 
 Visual QA inspects the rendered page for factual conflicts, misleading imagery, label/arrow errors, wrong counts, clipping, overlap, tiny type, age-inappropriate density, and ambiguity. Structural PDF checks always run for Tier A/B; configured multimodal QA can add model review. Parent approval cannot override a changed hash.
+
+## Slack response visuals
+
+Slack uses the same truth boundary with a smaller surface: at most one local PNG card or decorative illustration per answer. Comparison cards are qualitative and marked **not to scale**; activity cards show parent/child actions, not scientific sequence facts. Tier C response diagrams remain disabled.
+
+Decorative generation is household opt-in and receives only a minimized generic scene prompt; the broad topic may be present, but known household identities and private-context categories fail closed. Code supplies captions and alt text. Every upload rechecks the private output path, PNG signature, byte count, and validated hash; useful answer text is delivered first and survives any visual failure.

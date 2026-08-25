@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 TRUST_TIERS = {"A", "B", "C"}
@@ -21,6 +22,40 @@ FORBIDDEN_GENERATIVE_KINDS = {
     "geometry_diagram",
     "life_cycle_sequence",
     "labeled_scientific_diagram",
+}
+
+PRIVATE_PROMPT_MARKERS = {
+    "my child",
+    "my daughter",
+    "my son",
+    "our family",
+    "slack",
+    "private resource",
+    "purchased resource",
+}
+
+PRIVATE_DECORATIVE_TERMS = {
+    "address",
+    "classmate",
+    "dad",
+    "daughter",
+    "doctor",
+    "email",
+    "family",
+    "father",
+    "friend",
+    "home",
+    "hospital",
+    "mom",
+    "mother",
+    "parent",
+    "school",
+    "sister",
+    "son",
+    "street",
+    "teacher",
+    "therapy",
+    "therapist",
 }
 
 
@@ -93,3 +128,52 @@ def trust_summary(spec: dict[str, Any]) -> dict[str, Any]:
         },
         "errors": errors,
     }
+
+
+def validate_response_visual_intent(intent: dict[str, Any]) -> list[str]:
+    """Fail closed for response visuals that exceed the v0.1 educational trust boundary."""
+
+    errors: list[str] = []
+    kind = str(intent.get("kind") or "")
+    role = str(intent.get("knowledge_role") or "")
+    panels = intent.get("panels") or []
+    source_refs = intent.get("source_refs") or []
+    if role == "instructional":
+        errors.append("instructional response visuals require the future Tier C pipeline")
+    if kind == "comparison_cards" and not intent.get("not_to_scale"):
+        errors.append("comparison cards must be labeled not to scale")
+    if kind in {"comparison_cards", "activity_sequence"}:
+        panel_text = " ".join(
+            str(value)
+            for panel in panels
+            if isinstance(panel, dict)
+            for value in (panel.get("label", ""), panel.get("detail", ""))
+        )
+        if any(character.isdigit() for character in panel_text):
+            errors.append("MVP deterministic response cards may not teach exact numeric values")
+    if kind == "decorative_illustration":
+        if role != "decorative":
+            errors.append("generated illustrations must be decorative")
+        if panels:
+            errors.append("generated illustrations may not contain instructional panels")
+        if source_refs:
+            errors.append("purchased or public source imagery is not copied into generated illustrations")
+        subject = str(intent.get("subject") or "")
+        lowered = subject.casefold()
+        if not subject.strip():
+            errors.append("decorative subject is required")
+        if any(marker in lowered for marker in PRIVATE_PROMPT_MARKERS):
+            errors.append("decorative subject may not contain family or private-resource context")
+        if any(marker in subject for marker in ("<@", "@", "/Users/", "private/", "http://", "https://")):
+            errors.append("decorative subject contains an identifier, path, or URL")
+        if subject != lowered:
+            errors.append("decorative subject must use lowercase generic nouns without proper names")
+        words = set(re.findall(r"[a-z]+", lowered))
+        if words & PRIVATE_DECORATIVE_TERMS or words & {"my", "our", "your", "his", "her", "their"}:
+            errors.append("decorative subject contains personal relationship, school, home, or health context")
+        if any(character.isdigit() for character in subject):
+            errors.append("decorative subject may not contain numbers or identifiers")
+    for source in source_refs:
+        if not str(source).startswith(("https://", "http://")):
+            errors.append("visual source references must be public HTTP(S) URLs")
+    return errors

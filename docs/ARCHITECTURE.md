@@ -25,7 +25,10 @@ local console / CLI ────────────────────
                               │
             optional paper PDF • parent review • feedback
                               │
-                              └────────► Slack outbox
+                              └────────► Slack text outbox
+                                           │
+                    visual intent → trust policy → private PNG
+                                           └────► dependent Slack file outbox
 ```
 
 The fixed paired `connection` command exits at the Slack transport/outbox boundary. It does not construct the service, build family context, search resources, or invoke a model. This lets setup prove transport before the brain exists.
@@ -58,6 +61,8 @@ Messages that do not explicitly name a child are saved to `capture_inbox`. The c
 Network/model calls occur outside SQLite transactions. Raw evidence is committed before reasoning. Final response, validated graph effects, action proposals, and completion statuses commit together. Duplicate event IDs return the original result; an ID reused with different content fails.
 
 Slack events receive an independent payload hash. A confirmed Slack API rejection can be retried with a bound attempt limit. An ambiguous network failure is marked `unknown` instead of automatically risking a duplicate parent message.
+
+Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. An ambiguous completion is never retried. Deterministic cards are Tier B and explicitly non-scale; Tier C instructional visuals remain disabled. Decorative generation uses a separate exact image route and never falls back to reasoning.
 
 ## Deployment boundary
 

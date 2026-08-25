@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -364,6 +364,8 @@ CREATE TABLE IF NOT EXISTS household_settings (
   weekly_suggestion_limit INTEGER NOT NULL DEFAULT 1 CHECK(weekly_suggestion_limit BETWEEN 0 AND 1),
   resource_context_mode TEXT NOT NULL DEFAULT 'metadata_only'
     CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts')),
+  visual_mode TEXT NOT NULL DEFAULT 'deterministic'
+    CHECK(visual_mode IN ('off', 'deterministic', 'decorative')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -449,6 +451,72 @@ CREATE TABLE IF NOT EXISTS delivery_outbox (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(binding_id) REFERENCES transport_bindings(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS visual_jobs (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  intent_json TEXT NOT NULL,
+  method TEXT NOT NULL CHECK(method IN ('deterministic', 'generative')),
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued', 'processing', 'completed', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TEXT NOT NULL,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS visual_assets (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL UNIQUE,
+  event_id TEXT NOT NULL,
+  method TEXT NOT NULL CHECK(method IN ('deterministic', 'generative')),
+  trust_tier TEXT NOT NULL CHECK(trust_tier IN ('A', 'B')),
+  renderer_version TEXT NOT NULL,
+  path TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  byte_count INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  title TEXT NOT NULL,
+  caption TEXT NOT NULL,
+  alt_text TEXT NOT NULL,
+  provenance_json TEXT NOT NULL DEFAULT '{}',
+  validation_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES visual_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS slack_file_outbox (
+  id TEXT PRIMARY KEY,
+  visual_job_id TEXT NOT NULL,
+  visual_asset_id TEXT,
+  binding_id TEXT NOT NULL,
+  depends_on_delivery_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  thread_id TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  purpose TEXT NOT NULL DEFAULT 'response_visual',
+  status TEXT NOT NULL DEFAULT 'waiting_asset'
+    CHECK(status IN ('waiting_asset', 'queued', 'ticket_acquiring', 'ticket_acquired', 'uploading',
+                     'bytes_uploaded', 'completing', 'sent', 'failed', 'unknown', 'expired')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TEXT NOT NULL,
+  expires_at TEXT,
+  slack_file_id TEXT,
+  external_message_id TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(visual_job_id) REFERENCES visual_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(visual_asset_id) REFERENCES visual_assets(id) ON DELETE SET NULL,
+  FOREIGN KEY(binding_id) REFERENCES transport_bindings(id) ON DELETE CASCADE,
+  FOREIGN KEY(depends_on_delivery_id) REFERENCES delivery_outbox(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS interaction_audit (
@@ -596,7 +664,8 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
     },
     "runs": {"event_id": "TEXT", "policy_json": "TEXT", "result_json": "TEXT"},
     "household_settings": {
-        "resource_context_mode": "TEXT NOT NULL DEFAULT 'metadata_only' CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts'))"
+        "resource_context_mode": "TEXT NOT NULL DEFAULT 'metadata_only' CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts'))",
+        "visual_mode": "TEXT NOT NULL DEFAULT 'deterministic' CHECK(visual_mode IN ('off', 'deterministic', 'decorative'))",
     },
     "onboarding_reviews": {
         "brain_config_hash": "TEXT NOT NULL DEFAULT 'legacy'",
@@ -716,6 +785,10 @@ def init_db(db_path: str | Path) -> Path | None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON transport_bindings(transport,team_id,user_id,status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_status ON capture_inbox(status,created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_outbox_ready ON delivery_outbox(transport,status,available_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_visual_jobs_ready ON visual_jobs(status,available_at,created_at)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_slack_files_ready ON slack_file_outbox(status,available_at,created_at)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_reviews_event ON onboarding_reviews(event_id)")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     path.chmod(0o600)

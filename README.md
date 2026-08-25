@@ -19,7 +19,7 @@ The family computer and Slack connector must stay running for replies. Paper and
 
 Clone the repo, open it in VS Code, and tell your coding agent:
 
-> Read `AGENTS.md` and `docs/AGENT_ONBOARDING.md`. Act as my Family Operator and walk me through each checkpoint. Keep all family data and credentials private. Do not call setup complete until the fixed Slack test, synthetic model test, and one parent-reviewed real answer pass.
+> Read `AGENTS.md` and `docs/AGENT_ONBOARDING.md`. Act as my Family Operator and walk me through each checkpoint. Keep all family data and credentials private. Do not call setup complete until the fixed Slack text and visual tests, synthetic model test, and one parent-reviewed real answer pass.
 
 Then let the agent run:
 
@@ -39,6 +39,7 @@ curiosity doctor
 | Local | `private/` is ignored; household and child records exist locally |
 | Slack | One adult and conversation are paired |
 | Connection | Slack replies to `connection` without loading a model or family context |
+| Visual delivery | Slack receives the fixed `visual connection` card with useful alt text |
 | Brain | A family-data-free live provider probe passes |
 | Family fit | The family lens is set and one real Slack answer passes parent review |
 
@@ -48,6 +49,7 @@ Use [Slack setup](docs/SLACK_SETUP.md) first, then [brain setup](docs/BRAIN_SETU
 
 ```text
 connection
+visual connection
 children
 ask kid-a: Why does ice float?
 We saw a shiny beetle today
@@ -75,7 +77,7 @@ Do not paste credentials into agent chat. Enter them directly in the ignored fil
 
 ## MVP boundaries
 
-Included: Slack capture, bring-your-own model APIs, local context, parent feedback, and optional one-page PDFs.
+Included: Slack capture, accessible visual response cards, optional decorative image generation, bring-your-own model APIs, local context, parent feedback, and optional one-page PDFs.
 
 Not included: unsolicited suggestions, embeddings, a graph database, probabilistic mastery, child-facing accounts, cloud hosting, autonomous purchasing, or 3D printing. Telegram, school email, calendars, and easier printer workflows are future extensions.
 

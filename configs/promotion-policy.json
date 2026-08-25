@@ -11,7 +11,8 @@
     "factual",
     "parent_effort",
     "safety",
-    "artifacts"
+    "artifacts",
+    "visuals"
   ],
   "minimum_cases_before_auto_recommendation": 20,
   "auto_promote": false,

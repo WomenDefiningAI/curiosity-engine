@@ -34,9 +34,10 @@ from .interaction import (
     reviewable_slack_events,
     revoke_binding,
     set_household_resource_context_mode,
+    set_household_visual_mode,
     setup_household,
 )
-from .onboarding import doctor, run_brain_probe, write_setup_report
+from .onboarding import doctor, run_brain_probe, run_image_generation_probe, write_setup_report
 from .printer import approve_artifact, print_artifact
 from .public_projects import audit_public_projects, public_project, public_project_catalog, registry_status
 from .resources import discover_private_catalogs, index_collection, resource_inventory, search_resources
@@ -129,6 +130,18 @@ def build_parser() -> argparse.ArgumentParser:
     command = brain_sub.add_parser("doctor")
     command = brain_sub.add_parser("test", help="Run a family-data-free structured reasoning probe")
     add_db(command)
+    command.add_argument("--live", action="store_true")
+
+    visual = sub.add_parser("visual", help="Configure and verify visual Slack responses")
+    visual_sub = visual.add_subparsers(dest="visual_cmd", required=True)
+    command = visual_sub.add_parser("status")
+    add_db(command)
+    command = visual_sub.add_parser("mode", help="Choose off, deterministic cards, or opt-in decorative generation")
+    add_db(command)
+    command.add_argument("--mode", required=True, choices=["off", "deterministic", "decorative"])
+    command = visual_sub.add_parser("test", help="Run one billable, family-data-free decorative image probe")
+    add_db(command)
+    command.add_argument("--output-dir", default=_default_output())
     command.add_argument("--live", action="store_true")
 
     family_lens = sub.add_parser("family-lens", help="Configure private pedagogy and practical constraints")
@@ -424,6 +437,26 @@ def main(argv: list[str] | None = None) -> int:
         dump(brain_status())
     elif args.cmd == "brain" and args.brain_cmd == "test":
         dump(run_brain_probe(args.db, live=args.live))
+    elif args.cmd == "visual" and args.visual_cmd == "status":
+        report = doctor(args.db)
+        dump(
+            {
+                key: report[key]
+                for key in (
+                    "visual_mode",
+                    "deterministic_visual_ready",
+                    "visual_delivery_verified",
+                    "image_generation_configured",
+                    "image_generation_verified",
+                    "visual_ready",
+                    "next_action",
+                )
+            }
+        )
+    elif args.cmd == "visual" and args.visual_cmd == "mode":
+        dump(set_household_visual_mode(args.db, args.mode))
+    elif args.cmd == "visual" and args.visual_cmd == "test":
+        dump(run_image_generation_probe(args.db, args.output_dir, live=args.live))
     elif args.cmd == "family-lens" and args.family_lens_cmd == "configure":
         pedagogy = args.pedagogy or [
             "follow the child's question",
