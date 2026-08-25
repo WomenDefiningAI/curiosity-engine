@@ -4,6 +4,8 @@
 
 Family profiles, events, evidence, curriculum source files, extracted text, indexes, eval reports, and artifacts are stored under `private/` by default. The repository ignores that entire directory. `.env`, `data/`, and `output/` are also ignored.
 
+`curiosity backup create` copies family data to an owner-only directory outside the repository and records checksums. It includes only allowlisted non-secret setup files; Slack and model credential files are excluded and must be re-entered after recovery. Keep the backup directory on an encrypted disk and include it in normal system backups.
+
 Slack tokens live in owner-only `private/setup/slack.env`; non-secret private routes live in `private/setup/brain.json`; provider keys live in owner-only `private/setup/model.env`. Setup reports contain readiness categories only: never credential values, child names, questions, Slack IDs, provider keys, purchased-resource titles/URLs, or licensed excerpts.
 
 Response PNGs use opaque filenames under `private/output/visuals/`, owner-only permissions, stripped metadata, bounded dimensions, and a recorded hash. Uploading a card sends that image, its caption, and alt text to Slack, where Slack retains it under the workspace's policies. The app can write files but cannot read workspace files.

@@ -30,15 +30,28 @@ These commands are redacted except `slack bindings`, which contains private IDs.
 
 Revoke access with `curiosity slack revoke --binding ID`. If a token may be exposed, rotate it at the provider and update only the owner-readable ignored env file.
 
-## Jobs and recovery
+## Back up and recover
+
+```bash
+curiosity backup create
+curiosity backup status
+curiosity backup verify                    # latest snapshot
+curiosity backup restore                   # separate recovery copy
+```
+
+Snapshots default to `curiosity-engine-family-backups/` beside the repository. Set `CURIOSITY_BACKUP_DIR` or pass `--destination` to use another location. Each snapshot contains the SQLite database, private resources, generated output, and non-secret setup state. It excludes Slack/model credentials, uses owner-only permissions, and has file checksums plus a SQLite integrity check.
+
+Restore verifies first, rebases stored resource/output paths for the new location, and never overwrites an existing path. By default it creates `private/restores/SNAPSHOT_ID`; use `--target-private NEW_PATH` for a different new path. To recover an empty clone directly, pass its not-yet-created `private/` path, then re-enter credentials and run `curiosity doctor`.
+
+These snapshots protect against accidental repository cleanup, not disk loss. Include the backup directory in an encrypted system backup such as Time Machine.
+
+## Jobs and database migrations
 
 ```bash
 curiosity worker --drain
 ```
 
-Jobs use leases, bounded retries, and independent idempotency boundaries. Setup commands migrate the database in place and first back up an older non-empty database beside it as `curiosity.db.backup-v<old>-<timestamp>`.
-
-For manual recovery, stop the connector/console, preserve the current database, copy a backup to a new filename, and point `CURIOSITY_DB` to it.
+Jobs use leases, bounded retries, and independent idempotency boundaries. Setup commands migrate the database in place and first make a database-only migration backup beside it as `curiosity.db.backup-v<old>-<timestamp>`. That is not a substitute for a full family snapshot.
 
 Inspect context locally with `curiosity context --child CHILD_ID`. It contains family text. Context-driven model calls and unsolicited suggestions remain disabled in v1.
 

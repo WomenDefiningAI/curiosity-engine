@@ -75,6 +75,16 @@ private/setup/      Slack and model configuration
 
 Do not paste credentials into agent chat. Enter them directly in the ignored files created by setup. Purchased-resource excerpts are off by default and require both parent opt-in and relevant retrieval. See [Privacy](docs/PRIVACY.md).
 
+Protect the ignored family data with a separate local snapshot:
+
+```bash
+curiosity backup create
+curiosity backup verify
+curiosity backup status
+```
+
+Snapshots live beside the repository by default, include the database, purchased resources, and generated output, and exclude Slack/model credentials. Back them up with Time Machine or your normal encrypted computer backup too.
+
 ## MVP boundaries
 
 Included: Slack capture, accessible visual response cards, optional decorative image generation, bring-your-own model APIs, local context, parent feedback, and optional one-page PDFs.

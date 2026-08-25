@@ -108,6 +108,13 @@ curiosity inbox list      # unattributed notes
 
 Control-C, closing the terminal, sleep, or shutdown stops Slack replies. Explain token rotation, binding revocation, backups, and private output locations; see [Operations](OPERATIONS.md).
 
+Create and verify the first family snapshot:
+
+```bash
+curiosity backup create
+curiosity backup verify
+```
+
 ## 8. Run the steward review
 
 At session end, follow [Open-source stewardship](OPEN_SOURCE_STEWARDSHIP.md). Report: **public contribution prepared**, **family-only customization retained**, and **ideas needing more evidence**. Prepare generic work locally, but ask before pushing, publishing, opening a PR, filing an issue, or contacting anyone.
