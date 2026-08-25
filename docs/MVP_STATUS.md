@@ -13,7 +13,7 @@ Release target: `0.1.0-slack-mvp`
 | Slack parent entry | Socket Mode connector for DMs and explicit mentions | Transport unit tests; live workspace smoke test remains local |
 | Visual Slack response | One policy-governed card per useful K–2 answer; local deterministic default; optional generated imaginary art inside reviewed templates | Renderer, privacy, trust, crash, alt-text, synthetic robot, and live connection gates |
 | Parent authorization | Short-lived pairing code bound to workspace, user, and conversation | Expiry, replay, exact-binding tests |
-| Uncertain attribution | Durable unassigned inbox with explicit assign/dismiss | Inbox and Slack command tests |
+| Parent controls | Block Kit child attribution, dismiss, response feedback, and same-episode retry | Inbox, authorization, feedback, retry, and Slack action tests |
 | Durable capture | Immutable event, raw evidence, job, run, response | Unit and regression cases |
 | Exactly-once behavior | Payload hashes, transport receipts, event/action/outbox idempotency | Duplicate and conflict tests |
 | Family context | Depth 0–4, conservative episode grouping, evidence eligibility, append-only parent corrections | Context and episode regression suites |

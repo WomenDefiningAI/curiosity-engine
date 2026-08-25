@@ -436,6 +436,8 @@ def test_safe_visual_fallbacks_are_narrow_and_exclude_social_inference():
     activity = infer_safe_response_visual("Can we make a paper robot?", {})
     assert activity and activity.kind == "activity_sequence"
     assert [panel.label for panel in activity.panels] == ["GO", "STOP", "TURN"]
+    gerund_activity = infer_safe_response_visual("How can we start making robots?", {})
+    assert gerund_activity and gerund_activity.kind == "activity_sequence"
     assert infer_safe_response_visual("Why was my friend mad at me?", {}) is None
     assert infer_safe_response_visual("Why did she ignore me?", {}) is None
     assert infer_safe_response_visual("What is the largest number?", {}) is None

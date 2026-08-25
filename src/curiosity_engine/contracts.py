@@ -235,10 +235,21 @@ class DirectorOutput(StrictModel):
 
 
 class FeedbackInput(StrictModel):
+    event_id: str | None = None
     experience_id: str | None = None
     artifact_id: str | None = None
     child_id: str
-    outcome: Literal["loved", "engaged", "neutral", "too_easy", "too_hard", "not_used", "disliked"]
+    outcome: Literal[
+        "loved",
+        "engaged",
+        "neutral",
+        "too_easy",
+        "too_hard",
+        "not_used",
+        "disliked",
+        "helpful",
+        "not_helpful",
+    ]
     note: str | None = Field(default=None, max_length=2_000)
     source: str = "parent"
 

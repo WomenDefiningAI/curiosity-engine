@@ -85,6 +85,54 @@ class CuriosityService:
                 response["visual_job_id"] = visual_job_id
         return response
 
+    def retry_response(
+        self,
+        *,
+        source_event_id: str,
+        event_id: str,
+        include_private_excerpts: bool = False,
+        context_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Generate a different answer while keeping the retry in the original learning episode."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT e.child_id,e.text,r.status,r.output_json FROM events e
+                   JOIN responses r ON r.event_id=e.id WHERE e.id=?""",
+                (source_event_id,),
+            ).fetchone()
+        if not row or not row["child_id"] or row["status"] not in {"completed", "rejected"}:
+            raise ValueError("response not found")
+        previous: dict[str, Any] = {}
+        if row["status"] == "completed":
+            output = jload(row["output_json"])
+            previous = {
+                key: str(output[key])[:500]
+                for key in ("hook", "show", "ask", "nugget")
+                if output.get(key)
+            }
+        retry_metadata = {
+            **(context_metadata or {}),
+            "episode_relation": "retry",
+            "retry_of_event_id": source_event_id,
+            "response_retry": {
+                "intent": "different_approach",
+                "instruction": (
+                    "Use a clearly different hook, example, question, and hands-on option. "
+                    "Do not merely paraphrase the prior answer."
+                ),
+                "previous_answer_to_avoid": previous,
+            },
+        }
+        return self.ask(
+            child_id=str(row["child_id"]),
+            text=str(row["text"]),
+            source="slack_parent_retry",
+            include_private_excerpts=include_private_excerpts,
+            event_id=event_id,
+            context_metadata=retry_metadata,
+        )
+
     def event_result(self, event_id: str) -> dict[str, Any] | None:
         result = CuriosityHarness(self.db_path).repository.get_response(event_id)
         return result.model_dump(mode="json") if result else None

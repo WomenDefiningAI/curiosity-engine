@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .contracts import FeedbackInput
-from .db import connect, init_db, utcnow
+from .db import connect, init_db, jdump, utcnow
 
 
 def record_feedback(db_path: str | Path, feedback: FeedbackInput) -> int:
@@ -11,6 +11,15 @@ def record_feedback(db_path: str | Path, feedback: FeedbackInput) -> int:
 
     init_db(db_path)
     with connect(db_path) as conn:
+        if feedback.event_id:
+            event = conn.execute(
+                """SELECT e.child_id FROM events e
+                   JOIN responses r ON r.event_id=e.id
+                   WHERE e.id=? AND r.status='completed'""",
+                (feedback.event_id,),
+            ).fetchone()
+            if not event or event["child_id"] != feedback.child_id:
+                raise ValueError("response does not belong to child")
         if feedback.experience_id:
             experience = conn.execute(
                 "SELECT child_id FROM experiences WHERE id=?", (feedback.experience_id,)
@@ -23,10 +32,12 @@ def record_feedback(db_path: str | Path, feedback: FeedbackInput) -> int:
                 raise ValueError("artifact does not belong to child")
         now = utcnow()
         cur = conn.execute(
-            """INSERT INTO feedback(child_id,experience_id,artifact_id,outcome,note,source,created_at)
-               VALUES(?,?,?,?,?,?,?)""",
+            """INSERT INTO feedback(
+               child_id,event_id,experience_id,artifact_id,outcome,note,source,created_at
+               ) VALUES(?,?,?,?,?,?,?,?)""",
             (
                 feedback.child_id,
+                feedback.event_id,
                 feedback.experience_id,
                 feedback.artifact_id,
                 feedback.outcome,
@@ -56,7 +67,12 @@ def record_feedback(db_path: str | Path, feedback: FeedbackInput) -> int:
                 feedback.source,
                 1.0,
                 now,
-                '{"epistemic_state":"observation"}',
+                jdump(
+                    {
+                        "epistemic_state": "observation",
+                        **({"response_event_id": feedback.event_id} if feedback.event_id else {}),
+                    }
+                ),
             ),
         )
         return int(cur.lastrowid)

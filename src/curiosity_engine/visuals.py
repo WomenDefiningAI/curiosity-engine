@@ -48,15 +48,25 @@ SOCIAL_INFERENCE_VERBS = {
 
 ROBOT_ACTIVITY_VERBS = {
     "build",
+    "building",
     "craft",
+    "crafting",
     "create",
+    "creating",
     "design",
+    "designing",
     "draw",
+    "drawing",
     "make",
+    "making",
     "plan",
+    "planning",
     "play",
+    "playing",
     "pretend",
+    "pretending",
     "program",
+    "programming",
 }
 
 PALETTE = {

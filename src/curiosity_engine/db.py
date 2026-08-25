@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -290,6 +290,7 @@ CREATE TABLE IF NOT EXISTS actions (
 CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   child_id TEXT NOT NULL,
+  event_id TEXT,
   experience_id TEXT,
   artifact_id TEXT,
   outcome TEXT NOT NULL,
@@ -297,6 +298,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   source TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL,
   FOREIGN KEY(experience_id) REFERENCES experiences(id) ON DELETE SET NULL,
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL
 );
@@ -642,6 +644,7 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
     "children": {"updated_at": "TEXT"},
     "observations": {"event_id": "TEXT"},
     "evidence": {"episode_id": "TEXT"},
+    "feedback": {"event_id": "TEXT"},
     "experiences": {"source_event_id": "TEXT"},
     "artifacts": {
         "sha256": "TEXT",
@@ -790,6 +793,7 @@ def init_db(db_path: str | Path) -> Path | None:
             "CREATE INDEX IF NOT EXISTS idx_slack_files_ready ON slack_file_outbox(status,available_at,created_at)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_reviews_event ON onboarding_reviews(event_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id,created_at)")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     path.chmod(0o600)
     if backup:

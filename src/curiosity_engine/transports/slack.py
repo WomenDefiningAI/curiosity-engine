@@ -18,6 +18,7 @@ from ..interaction import (
     claim_visual_delivery,
     consume_pairing_code,
     create_unassigned_capture,
+    delivered_slack_response,
     enqueue_delivery,
     enqueue_visual_delivery,
     finish_receipt,
@@ -40,11 +41,175 @@ ASSIGN_RE = re.compile(
     r"^assign\s+(inbox_[A-Za-z0-9_-]+)\s+([A-Za-z0-9_-]{1,120})$", re.IGNORECASE
 )
 DISMISS_RE = re.compile(r"^dismiss\s+(inbox_[A-Za-z0-9_-]+)$", re.IGNORECASE)
+RATE_RESPONSE_RE = re.compile(
+    r"^rate_response\s+([A-Za-z0-9_-]{1,120})\s+(helpful|not_helpful)$", re.IGNORECASE
+)
+RETRY_RESPONSE_RE = re.compile(r"^retry_response\s+([A-Za-z0-9_-]{1,120})$", re.IGNORECASE)
+INBOX_BLOCK_RE = re.compile(r"^curiosity_inbox:(inbox_[A-Za-z0-9_-]+)$")
+RESPONSE_BLOCK_RE = re.compile(r"^curiosity_response:([A-Za-z0-9_-]{1,120})$")
+HEALTH_RE = re.compile(
+    r"^(?:(?:are\s+you|is\s+(?:this|it))\s+)?(?:still\s+)?(?:working|online|connected)\??$",
+    re.IGNORECASE,
+)
 FEEDBACK_RE = re.compile(
     r"^feedback\s+([A-Za-z0-9_-]{1,120})\s+"
     r"(loved|engaged|neutral|too_easy|too_hard|not_used|disliked)(?:\s*:\s*(.*))?$",
     re.IGNORECASE | re.DOTALL,
 )
+
+INBOX_ASSIGN_ACTION = "curiosity_inbox_assign"
+INBOX_DISMISS_ACTION = "curiosity_inbox_dismiss"
+RESPONSE_HELPFUL_ACTION = "curiosity_response_helpful"
+RESPONSE_NOT_HELPFUL_ACTION = "curiosity_response_not_helpful"
+RESPONSE_RETRY_ACTION = "curiosity_response_retry"
+
+
+def _command_text(text: str) -> str:
+    """Accept Slack inline-code formatting without changing saved note text."""
+
+    value = text.strip()
+    if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+        return value[1:-1].strip()
+    return value
+
+
+def _child_action_token(child_id: str) -> str:
+    return sha256(child_id.encode()).hexdigest()[:20]
+
+
+def _plain_text(value: Any, *, fallback: str) -> str:
+    rendered = re.sub(r"[\x00-\x1f\x7f]", " ", str(value)).strip()
+    return (rendered or fallback)[:75]
+
+
+def _mrkdwn_text(value: Any, *, limit: int = 500) -> str:
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")[:limit]
+
+
+def _inbox_controls(inbox_id: str, children: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    elements: list[dict[str, Any]] = []
+    options = [
+        {
+            "text": {
+                "type": "plain_text",
+                "text": _plain_text(child.get("name"), fallback="Child"),
+                "emoji": True,
+            },
+            "value": _child_action_token(str(child["id"])),
+        }
+        for child in children[:100]
+        if child.get("id")
+    ]
+    if options:
+        elements.append(
+            {
+                "type": "static_select",
+                "action_id": INBOX_ASSIGN_ACTION,
+                "placeholder": {"type": "plain_text", "text": "Choose a child", "emoji": True},
+                "options": options,
+            }
+        )
+    elements.append(
+        {
+            "type": "button",
+            "action_id": INBOX_DISMISS_ACTION,
+            "text": {"type": "plain_text", "text": "Dismiss", "emoji": True},
+            "value": inbox_id,
+        }
+    )
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "*Who was this for?* Choose a child to make a learning thread, or dismiss it.",
+            },
+        },
+        {
+            "type": "actions",
+            "block_id": f"curiosity_inbox:{inbox_id}",
+            "elements": elements,
+        },
+    ]
+
+
+def _inbox_list_blocks(
+    rows: list[dict[str, Any]], children: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*Unassigned notes*"},
+        }
+    ]
+    for row in rows[:10]:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _mrkdwn_text(row.get("text", ""))},
+            }
+        )
+        blocks.append(_inbox_controls(str(row["id"]), children)[1])
+    return blocks
+
+
+def _mrkdwn_sections(text: str, *, limit: int = 2_900) -> list[str]:
+    sections: list[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            sections.append(current)
+        while len(paragraph) > limit:
+            sections.append(paragraph[:limit])
+            paragraph = paragraph[limit:]
+        current = paragraph
+    if current:
+        sections.append(current)
+    return sections
+
+
+def _response_blocks(text: str, event_id: str, *, retry_only: bool = False) -> list[dict[str, Any]]:
+    elements: list[dict[str, Any]] = []
+    if not retry_only:
+        elements.extend(
+            [
+                {
+                    "type": "button",
+                    "action_id": RESPONSE_HELPFUL_ACTION,
+                    "text": {"type": "plain_text", "text": "👍 Helpful", "emoji": True},
+                    "value": event_id,
+                },
+                {
+                    "type": "button",
+                    "action_id": RESPONSE_NOT_HELPFUL_ACTION,
+                    "text": {"type": "plain_text", "text": "👎 Not for us", "emoji": True},
+                    "value": event_id,
+                },
+            ]
+        )
+    elements.append(
+        {
+            "type": "button",
+            "action_id": RESPONSE_RETRY_ACTION,
+            "text": {"type": "plain_text", "text": "✨ Try another", "emoji": True},
+            "value": event_id,
+        }
+    )
+    return [
+        *[
+            {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+            for section in _mrkdwn_sections(text)
+        ],
+        {
+            "type": "actions",
+            "block_id": f"curiosity_response:{event_id}",
+            "elements": elements,
+        },
+    ]
 
 
 def load_slack_tokens() -> dict[str, str]:
@@ -93,6 +258,15 @@ class CuriosityServiceLike(Protocol):
 
     def feedback(self, payload: dict[str, Any]) -> int: ...
 
+    def retry_response(
+        self,
+        *,
+        source_event_id: str,
+        event_id: str,
+        include_private_excerpts: bool = False,
+        context_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
 
 def _engine_event_id(message: InboundMessage, suffix: str = "") -> str:
     material = f"{message.transport}:{message.team_id}:{message.external_event_id}:{suffix}"
@@ -123,7 +297,8 @@ def _help_text() -> str:
         "• `visual connection` — prove an accessible picture can reach this conversation\n"
         "• `children` — show child IDs\n"
         "• `ask CHILD_ID: Why does ice float?` — get a response now\n"
-        "• Send any other note — save it unassigned so I never guess which child it belongs to\n"
+        "• Learning threads include Helpful, Not for us, and Try another controls\n"
+        "• Send any other note — choose a child or dismiss it with the buttons I show\n"
         "• `assign INBOX_ID CHILD_ID` — attach a saved question and answer it\n"
         "• `dismiss INBOX_ID` — discard a saved note\n"
         "• `inbox` — list saved, unassigned notes\n"
@@ -209,8 +384,14 @@ class SlackTransport:
         text: str,
         *,
         purpose: str,
+        blocks: list[dict[str, Any]] | None = None,
     ) -> str:
-        outbound = OutboundMessage(channel_id=message.channel_id, text=text, thread_id=message.thread_id)
+        outbound = OutboundMessage(
+            channel_id=message.channel_id,
+            text=text,
+            thread_id=message.thread_id,
+            blocks=blocks or [],
+        )
         return enqueue_delivery(
             self.db_path,
             binding_id,
@@ -226,7 +407,8 @@ class SlackTransport:
         except TransportConflict:
             raise
 
-        pair = PAIR_RE.fullmatch(message.text.strip())
+        text = _command_text(message.text)
+        pair = PAIR_RE.fullmatch(text)
         if not binding:
             if not pair:
                 finish_receipt(self.db_path, message, status="rejected", error="unpaired Slack identity/channel")
@@ -257,10 +439,10 @@ class SlackTransport:
             )
 
         binding_id = str(binding["id"])
-        text = message.text.strip()
         normalized = text.casefold()
         visual_job_id: str | None = None
         visual_purpose = "response_visual"
+        reply_blocks: list[dict[str, Any]] = []
         try:
             if pair:
                 reply = "This conversation is already paired. Use `help` to see what I can do."
@@ -268,7 +450,7 @@ class SlackTransport:
                 result_status = "completed"
                 event_id = None
                 inbox_id = None
-            elif normalized in {"connection", "connection test", "ping"}:
+            elif normalized in {"connection", "connection test", "ping"} or HEALTH_RE.fullmatch(text):
                 record_onboarding_checkpoint(
                     self.db_path,
                     "transport_verified",
@@ -319,6 +501,7 @@ class SlackTransport:
                 inbox_id = None
             elif normalized == "inbox":
                 rows = [row for row in list_inbox(self.db_path) if row["parent_id"] == binding["parent_id"]]
+                children = self.service.children() if rows else []
                 reply = (
                     "Unassigned notes:\n"
                     + "\n".join(f"• `{row['id']}` — {row['text'][:180]}" for row in rows[:10])
@@ -326,6 +509,7 @@ class SlackTransport:
                     if rows
                     else "You have no unassigned notes."
                 )
+                reply_blocks = _inbox_list_blocks(rows, children) if rows else []
                 purpose = "inbox"
                 result_status = "completed"
                 event_id = None
@@ -369,6 +553,73 @@ class SlackTransport:
                 result_status = "completed"
                 event_id = None
                 inbox_id = None
+            elif match := RATE_RESPONSE_RE.fullmatch(text):
+                source_event_id, rating = match.groups()
+                delivered = delivered_slack_response(
+                    self.db_path,
+                    event_id=source_event_id,
+                    binding_id=binding_id,
+                )
+                if not delivered or delivered["status"] != "completed" or not delivered["child_id"]:
+                    raise ValueError("response not found for this parent")
+                self.service.feedback(
+                    {
+                        "child_id": str(delivered["child_id"]),
+                        "event_id": source_event_id,
+                        "outcome": rating.casefold(),
+                        "note": "Parent rated this Slack learning thread.",
+                        "source": f"slack_response:{binding['parent_id']}",
+                    }
+                )
+                reply = (
+                    "Thanks — marked helpful."
+                    if rating.casefold() == "helpful"
+                    else "Thanks — marked not for us."
+                )
+                purpose = "response-feedback"
+                result_status = "completed"
+                event_id = None
+                inbox_id = None
+            elif match := RETRY_RESPONSE_RE.fullmatch(text):
+                source_event_id = match.group(1)
+                delivered = delivered_slack_response(
+                    self.db_path,
+                    event_id=source_event_id,
+                    binding_id=binding_id,
+                )
+                if not delivered or not delivered["child_id"]:
+                    raise ValueError("response not found for this parent")
+                if delivered["status"] == "completed":
+                    self.service.feedback(
+                        {
+                            "child_id": str(delivered["child_id"]),
+                            "event_id": source_event_id,
+                            "outcome": "not_helpful",
+                            "note": "Parent requested a different response.",
+                            "source": f"slack_response:{binding['parent_id']}",
+                        }
+                    )
+                resource_mode = household_resource_context_mode(self.db_path)
+                include_private_excerpts = resource_mode == "selected_excerpts"
+                event_id = _engine_event_id(message, f"retry:{source_event_id}")
+                response = self.service.retry_response(
+                    source_event_id=source_event_id,
+                    event_id=event_id,
+                    include_private_excerpts=include_private_excerpts,
+                    context_metadata=_episode_metadata(message),
+                )
+                if response.get("status") == "completed":
+                    reply = _format_thread(response)
+                    reply_blocks = _response_blocks(reply, event_id)
+                    visual_job_id = response.get("visual_job_id")
+                    purpose = "response-retry"
+                    result_status = "completed"
+                else:
+                    reply = _response_did_not_pass()
+                    reply_blocks = _response_blocks(reply, event_id, retry_only=True)
+                    purpose = "response-retry-rejected"
+                    result_status = "rejected"
+                inbox_id = None
             elif match := ASK_RE.fullmatch(text):
                 resource_mode = household_resource_context_mode(self.db_path)
                 include_private_excerpts = resource_mode == "selected_excerpts"
@@ -384,11 +635,13 @@ class SlackTransport:
                 )
                 if response.get("status") == "completed":
                     reply = _format_thread(response)
+                    reply_blocks = _response_blocks(reply, event_id)
                     visual_job_id = response.get("visual_job_id")
                     purpose = "answer"
                     result_status = "completed"
                 else:
                     reply = _response_did_not_pass()
+                    reply_blocks = _response_blocks(reply, event_id, retry_only=True)
                     purpose = "answer_rejected"
                     result_status = "rejected"
                 inbox_id = None
@@ -414,6 +667,7 @@ class SlackTransport:
                 if response.get("status") == "completed":
                     resolve_inbox(self.db_path, inbox_id, child_id=child_id)
                     reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
+                    reply_blocks = _response_blocks(reply, event_id)
                     visual_job_id = response.get("visual_job_id")
                     purpose = "assign"
                     result_status = "completed"
@@ -437,15 +691,23 @@ class SlackTransport:
             else:
                 capture = create_unassigned_capture(self.db_path, message, str(binding["parent_id"]))
                 inbox_id = str(capture["inbox_id"])
+                children = self.service.children()
                 reply = (
                     f"Saved as `{inbox_id}` without choosing a child.\n\n"
                     f"Reply `assign {inbox_id} CHILD_ID` to attach it and get a learning thread, or "
                     f"`dismiss {inbox_id}`. Use `children` to see IDs."
                 )
+                reply_blocks = _inbox_controls(inbox_id, children)
                 purpose = "unassigned"
                 result_status = "unassigned"
                 event_id = None
-            outbound_id = self._queue(message, binding_id, reply, purpose=purpose)
+            outbound_id = self._queue(
+                message,
+                binding_id,
+                reply,
+                purpose=purpose,
+                blocks=reply_blocks,
+            )
             if visual_job_id:
                 enqueue_visual_delivery(
                     self.db_path,
@@ -669,6 +931,11 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
         text = re.sub(r"<@[A-Z0-9]+>", "", str(event.get("text", ""))).strip()
         if not text:
             return
+        thread_id = str(event.get("thread_ts") or "") or None
+        if not thread_id and event_type == "app_mention":
+            # Keep public-family-channel conversations compact: the parent's
+            # mention is the thread root and every bot artifact follows there.
+            thread_id = str(event.get("ts") or event.get("event_ts") or "") or None
         external_event_id = str(body.get("event_id") or event.get("client_msg_id") or event.get("ts") or "")
         incoming = InboundMessage(
             external_event_id=external_event_id,
@@ -676,7 +943,7 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
             user_id=str(event.get("user") or ""),
             channel_id=str(event.get("channel") or ""),
             text=text,
-            thread_id=str(event.get("thread_ts")) if event.get("thread_ts") else None,
+            thread_id=thread_id,
             occurred_at=str(event.get("event_ts")) if event.get("event_ts") else None,
         )
         result = transport.handle(incoming)
@@ -686,6 +953,271 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
                 direct["thread_ts"] = incoming.thread_id
             client.chat_postMessage(**direct)
         flush_slack_outbox(client, db_path)
+
+    return receive
+
+
+def _make_slack_action_receiver(
+    transport: SlackTransport,
+    db_path: str | Path,
+    *,
+    action_id: str,
+) -> Any:
+    # Interactive actions must be acknowledged before any local or model work begins.
+    def receive(ack: Any, body: dict[str, Any], action: dict[str, Any], client: Any) -> None:
+        ack()
+        try:
+            block_match = INBOX_BLOCK_RE.fullmatch(str(action.get("block_id") or ""))
+            if not block_match:
+                raise ValueError("invalid inbox action context")
+            inbox_id = block_match.group(1)
+            selected_child_name: str | None = None
+            if action_id == INBOX_DISMISS_ACTION:
+                if str(action.get("value") or "") != inbox_id:
+                    raise ValueError("invalid inbox action value")
+                command = f"dismiss {inbox_id}"
+            elif action_id == INBOX_ASSIGN_ACTION:
+                selected = action.get("selected_option") or {}
+                child_token = str(selected.get("value") or "")
+                matches = [
+                    child
+                    for child in transport.service.children()
+                    if child.get("id") and _child_action_token(str(child["id"])) == child_token
+                ]
+                if len(matches) != 1:
+                    raise ValueError("child not found")
+                command = f"assign {inbox_id} {matches[0]['id']}"
+                selected_child_name = _plain_text(matches[0].get("name"), fallback="your child")
+            else:
+                raise ValueError("unsupported inbox action")
+
+            team = body.get("team") or {}
+            user = body.get("user") or {}
+            channel = body.get("channel") or {}
+            container = body.get("container") or {}
+            source_message = body.get("message") or {}
+            team_id = str(team.get("id") or body.get("team_id") or "")
+            user_id = str(user.get("id") or body.get("user_id") or "")
+            channel_id = str(channel.get("id") or container.get("channel_id") or "")
+            message_ts = str(source_message.get("ts") or container.get("message_ts") or "")
+            action_material = ":".join(
+                (
+                    str(body.get("trigger_id") or ""),
+                    str(action.get("action_ts") or ""),
+                    action_id,
+                    inbox_id,
+                    user_id,
+                    channel_id,
+                )
+            )
+            incoming = InboundMessage(
+                external_event_id=f"act_slack_{sha256(action_material.encode()).hexdigest()[:24]}",
+                team_id=team_id,
+                user_id=user_id,
+                channel_id=channel_id,
+                text=command,
+                thread_id=str(source_message.get("thread_ts"))
+                if source_message.get("thread_ts")
+                else None,
+            )
+            if action_id == INBOX_ASSIGN_ACTION and message_ts:
+                working_text = f"Making a learning thread for {selected_child_name}…"
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=working_text,
+                        blocks=[
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f":hourglass_flowing_sand: {working_text}",
+                                },
+                            }
+                        ],
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "could not show Slack inbox assignment progress"
+                    )
+            result = transport.handle(incoming)
+            if result.status == "completed":
+                if message_ts:
+                    resolved_text = (
+                        "Dismissed this saved note."
+                        if action_id == INBOX_DISMISS_ACTION
+                        else "Assigned this saved note. The learning thread follows."
+                    )
+                    try:
+                        client.chat_update(
+                            channel=channel_id,
+                            ts=message_ts,
+                            text=resolved_text,
+                            blocks=[
+                                {
+                                    "type": "section",
+                                    "text": {"type": "mrkdwn", "text": f":white_check_mark: {resolved_text}"},
+                                }
+                            ],
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception("could not retire Slack inbox controls")
+            elif action_id == INBOX_ASSIGN_ACTION and message_ts:
+                retry_text = "I couldn't finish that learning thread. The note is still saved."
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=retry_text,
+                        blocks=[
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f":warning: {retry_text} Choose a child to try again, or dismiss it.",
+                                },
+                            },
+                            _inbox_controls(inbox_id, transport.service.children())[1],
+                        ],
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "could not restore Slack inbox controls"
+                    )
+            flush_slack_outbox(client, db_path)
+        except Exception:
+            logging.getLogger(__name__).exception("Slack inbox action failed")
+
+    return receive
+
+
+def _make_slack_response_action_receiver(
+    transport: SlackTransport,
+    db_path: str | Path,
+    *,
+    action_id: str,
+) -> Any:
+    def receive(ack: Any, body: dict[str, Any], action: dict[str, Any], client: Any) -> None:
+        ack()
+        try:
+            block_match = RESPONSE_BLOCK_RE.fullmatch(str(action.get("block_id") or ""))
+            if not block_match:
+                raise ValueError("invalid response action context")
+            source_event_id = block_match.group(1)
+            if str(action.get("value") or "") != source_event_id:
+                raise ValueError("invalid response action value")
+            if action_id == RESPONSE_HELPFUL_ACTION:
+                command = f"rate_response {source_event_id} helpful"
+            elif action_id == RESPONSE_NOT_HELPFUL_ACTION:
+                command = f"rate_response {source_event_id} not_helpful"
+            elif action_id == RESPONSE_RETRY_ACTION:
+                command = f"retry_response {source_event_id}"
+            else:
+                raise ValueError("unsupported response action")
+
+            team = body.get("team") or {}
+            user = body.get("user") or {}
+            channel = body.get("channel") or {}
+            container = body.get("container") or {}
+            source_message = body.get("message") or {}
+            team_id = str(team.get("id") or body.get("team_id") or "")
+            user_id = str(user.get("id") or body.get("user_id") or "")
+            channel_id = str(channel.get("id") or container.get("channel_id") or "")
+            action_material = ":".join(
+                (
+                    str(body.get("trigger_id") or ""),
+                    str(action.get("action_ts") or ""),
+                    action_id,
+                    source_event_id,
+                    user_id,
+                    channel_id,
+                )
+            )
+            incoming = InboundMessage(
+                external_event_id=f"act_slack_{sha256(action_material.encode()).hexdigest()[:24]}",
+                team_id=team_id,
+                user_id=user_id,
+                channel_id=channel_id,
+                text=command,
+                thread_id=str(source_message.get("thread_ts") or source_message.get("ts") or "") or None,
+            )
+            message_ts = str(source_message.get("ts") or container.get("message_ts") or "")
+            if action_id == RESPONSE_RETRY_ACTION and message_ts:
+                original_blocks = [
+                    block
+                    for block in (source_message.get("blocks") or [])
+                    if str(block.get("block_id") or "")
+                    != f"curiosity_response:{source_event_id}"
+                ]
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=str(source_message.get("text") or "Trying a different approach…"),
+                        blocks=[
+                            *original_blocks,
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": ":hourglass_flowing_sand: Trying a different approach…",
+                                    }
+                                ],
+                            },
+                        ],
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "could not show Slack response retry progress"
+                    )
+            result = transport.handle(incoming)
+            if result.status == "completed":
+                if message_ts:
+                    if action_id == RESPONSE_HELPFUL_ACTION:
+                        resolved_text = ":white_check_mark: Marked helpful."
+                    elif action_id == RESPONSE_NOT_HELPFUL_ACTION:
+                        resolved_text = ":white_check_mark: Marked not for us."
+                    else:
+                        resolved_text = ":sparkles: Another approach is in the thread."
+                    original_blocks = [
+                        block
+                        for block in (source_message.get("blocks") or [])
+                        if str(block.get("block_id") or "")
+                        != f"curiosity_response:{source_event_id}"
+                    ]
+                    updated_blocks = [
+                        *original_blocks,
+                        {"type": "context", "elements": [{"type": "mrkdwn", "text": resolved_text}]},
+                    ]
+                    if action_id == RESPONSE_NOT_HELPFUL_ACTION:
+                        updated_blocks.extend(_response_blocks("", source_event_id, retry_only=True))
+                    try:
+                        client.chat_update(
+                            channel=channel_id,
+                            ts=message_ts,
+                            text=str(source_message.get("text") or result.message),
+                            blocks=updated_blocks,
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception("could not retire Slack response controls")
+            elif action_id == RESPONSE_RETRY_ACTION and message_ts:
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text=str(source_message.get("text") or result.message),
+                        blocks=source_message.get("blocks")
+                        or _response_blocks("", source_event_id, retry_only=True),
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "could not restore Slack response controls"
+                    )
+            flush_slack_outbox(client, db_path)
+        except Exception:
+            logging.getLogger(__name__).exception("Slack response action failed")
 
     return receive
 
@@ -705,6 +1237,24 @@ def build_slack_app(db_path: str | Path, output_dir: str | Path) -> Any:
 
     app.event("message")(receive)
     app.event("app_mention")(receive)
+    app.action(INBOX_ASSIGN_ACTION)(
+        _make_slack_action_receiver(transport, db_path, action_id=INBOX_ASSIGN_ACTION)
+    )
+    app.action(INBOX_DISMISS_ACTION)(
+        _make_slack_action_receiver(transport, db_path, action_id=INBOX_DISMISS_ACTION)
+    )
+    for response_action in (
+        RESPONSE_HELPFUL_ACTION,
+        RESPONSE_NOT_HELPFUL_ACTION,
+        RESPONSE_RETRY_ACTION,
+    ):
+        app.action(response_action)(
+            _make_slack_response_action_receiver(
+                transport,
+                db_path,
+                action_id=response_action,
+            )
+        )
     return app
 
 

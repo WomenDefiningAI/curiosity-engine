@@ -725,3 +725,40 @@ def test_feedback_is_recorded_as_observation_not_trait(tmp_path: Path):
         assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM observations WHERE kind='feedback'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+
+
+def test_response_feedback_is_bound_to_the_completed_child_response(tmp_path: Path):
+    service = CuriosityService(tmp_path / "db.sqlite", tmp_path / "output")
+    service.add_child("child-a", "Demo Child", 2020, "1st")
+    service.add_child("child-b", "Other Child", 2019, "2nd")
+    response = service.ask(
+        child_id="child-a",
+        text="Why do birds have feathers?",
+        event_id="evt_response_feedback",
+    )
+    assert response["status"] == "completed"
+    feedback_id = service.feedback(
+        {
+            "child_id": "child-a",
+            "event_id": "evt_response_feedback",
+            "outcome": "helpful",
+            "source": "slack_response:parent-test",
+        }
+    )
+    assert feedback_id > 0
+    with pytest.raises(ValueError, match="does not belong"):
+        service.feedback(
+            {
+                "child_id": "child-b",
+                "event_id": "evt_response_feedback",
+                "outcome": "not_helpful",
+                "source": "slack_response:parent-test",
+            }
+        )
+    with connect(tmp_path / "db.sqlite") as conn:
+        row = conn.execute("SELECT event_id,outcome FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+        observation = conn.execute(
+            "SELECT metadata_json FROM observations WHERE kind='feedback' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert tuple(row) == ("evt_response_feedback", "helpful")
+    assert "evt_response_feedback" in observation["metadata_json"]
