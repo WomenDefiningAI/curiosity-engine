@@ -100,6 +100,54 @@ class PhysicalExtension(StrictModel):
         return self
 
 
+class VisualPanel(StrictModel):
+    label: str = Field(min_length=1, max_length=48)
+    detail: str = Field(min_length=1, max_length=140)
+    icon: Literal[
+        "height",
+        "weight",
+        "strength",
+        "look",
+        "predict",
+        "try",
+        "go",
+        "stop",
+        "turn",
+        "robot",
+        "question",
+        "idea",
+    ]
+
+
+class VisualIntent(StrictModel):
+    """A semantic request for one child-facing visual; code still owns whether and how it renders."""
+
+    kind: Literal["comparison_cards", "activity_sequence", "decorative_illustration"]
+    purpose: Literal["compare", "sequence", "notice", "imagine"]
+    knowledge_role: Literal["decorative", "supportive", "instructional"]
+    title: str = Field(min_length=1, max_length=120)
+    pedagogical_value: str = Field(min_length=1, max_length=300)
+    caption: str = Field(min_length=1, max_length=280)
+    alt_text: str = Field(min_length=12, max_length=1_000)
+    subject: str | None = Field(default=None, max_length=160)
+    panels: list[VisualPanel] = Field(default_factory=list, max_length=4)
+    source_refs: list[str] = Field(default_factory=list, max_length=4)
+    not_to_scale: bool = False
+
+    @model_validator(mode="after")
+    def valid_shape(self) -> VisualIntent:
+        if self.kind in {"comparison_cards", "activity_sequence"} and len(self.panels) < 2:
+            raise ValueError("deterministic visual cards require at least two panels")
+        if self.kind == "decorative_illustration":
+            if not self.subject:
+                raise ValueError("decorative illustrations require a short subject")
+            if self.panels:
+                raise ValueError("decorative illustrations may not contain instructional panels")
+        if self.kind == "comparison_cards" and not self.not_to_scale:
+            raise ValueError("MVP comparison cards must be explicitly marked not to scale")
+        return self
+
+
 class PullThreadOutput(StrictModel):
     hook: str = Field(min_length=1, max_length=500)
     show: str = Field(min_length=1, max_length=1_000)
@@ -107,6 +155,7 @@ class PullThreadOutput(StrictModel):
     nugget: str = Field(min_length=1, max_length=500)
     next_possible_concepts: list[str] = Field(default_factory=list, max_length=6)
     physical_extension: PhysicalExtension | None = None
+    visual: VisualIntent | None = None
     graph_updates: list[GraphMutation] = Field(default_factory=list, max_length=12)
     actions: list[ActionRequest] = Field(default_factory=list, max_length=4)
     resource_refs: list[str] = Field(default_factory=list, max_length=8)

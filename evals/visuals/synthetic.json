@@ -1,0 +1,18 @@
+[
+  {
+    "id": "robot-size-needs-safe-comparison",
+    "input": "What are the biggest robots in the world?",
+    "expected_kind": "comparison_cards",
+    "not_to_scale": true
+  },
+  {
+    "id": "robot-plan-needs-visible-actions",
+    "input": "Can we build a robot?",
+    "expected_kind": "activity_sequence"
+  },
+  {
+    "id": "social-inference-control-stays-text-only",
+    "input": "Why was my friend mad at me?",
+    "expected_kind": "none"
+  }
+]

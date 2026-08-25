@@ -36,6 +36,7 @@ SUITES = [
     "parent_effort",
     "safety",
     "artifacts",
+    "visuals",
     "regressions",
 ]
 SEMANTIC_SUITES = {"golden", "curiosity", "context", "factual", "parent_effort", "safety"}
@@ -146,6 +147,27 @@ def _run_harness_case(case: dict[str, Any]) -> list[str]:
         failures.append(f"expected context depth {expected}, got {policy.context_depth}")
     if workflow == "pull_thread" and "critic_factual" not in policy.critic_roles:
         failures.append("pull_thread is missing factual critic")
+    return failures
+
+
+def _run_visual_case(case: dict[str, Any]) -> list[str]:
+    output, failures = _run_semantic_case("curiosity", case)
+    visual = output.get("visual")
+    expected = case.get("expected_kind")
+    if expected == "none":
+        if visual is not None:
+            failures.append("response added a visual where the control expected none")
+        return failures
+    if not isinstance(visual, dict):
+        return [*failures, "response omitted the required visual intent"]
+    if visual.get("kind") != expected:
+        failures.append(f"expected visual kind {expected}, got {visual.get('kind')}")
+    if not str(visual.get("alt_text") or "").strip():
+        failures.append("visual omitted useful alt text")
+    if case.get("not_to_scale") and not visual.get("not_to_scale"):
+        failures.append("comparison visual was not marked not to scale")
+    if visual.get("knowledge_role") == "instructional":
+        failures.append("MVP response attempted an instructional Tier C visual")
     return failures
 
 
@@ -495,6 +517,8 @@ def evaluate(repo: Path, *, live_judge: bool | None = None) -> dict[str, Any]:
                         if actual_pass == bool(case["should_pass"])
                         else [f"expected should_pass={case['should_pass']}, got {actual_pass}"]
                     )
+                elif suite == "visuals":
+                    failures = _run_visual_case(case)
                 elif suite == "harness":
                     failures = _run_harness_case(case)
                 elif suite == "autonomy":

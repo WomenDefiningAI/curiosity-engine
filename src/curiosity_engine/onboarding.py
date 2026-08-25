@@ -14,10 +14,12 @@ from pydantic import BaseModel, ConfigDict
 
 from .brain_config import brain_config_fingerprint, brain_status
 from .config import AppConfig, ConfigurationError, configuration_root, repository_root
-from .db import SCHEMA_VERSION
+from .db import SCHEMA_VERSION, connect, init_db, utcnow
 from .interaction import onboarding_checkpoint, onboarding_status, record_onboarding_checkpoint
+from .openai_image_backend import configured_image_backend
 from .runtime import configured_backend
 from .transports.slack import load_slack_tokens
+from .visuals import enqueue_response_visual, process_visual_jobs
 
 
 class BrainProbeOutput(BaseModel):
@@ -25,6 +27,9 @@ class BrainProbeOutput(BaseModel):
 
     marker: str
     count: int
+
+
+IMAGE_PROBE_VERSION = "synthetic-image-v2"
 
 
 def _check(name: str, status: str, detail: str, *, required: bool) -> dict[str, Any]:
@@ -195,9 +200,43 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         and (brain_check.get("evidence") or {}).get("config_hash") == current_brain_hash
     )
     family_lens_ready = bool(state.get("family_lens_configured"))
+    visual_mode = str((state.get("settings") or {}).get("visual_mode") or "deterministic")
+    visual_check = (
+        onboarding_checkpoint(db, "visual_delivery_verified")
+        if db.is_file() and db_version == SCHEMA_VERSION
+        else None
+    )
+    visual_delivery_verified = bool(
+        slack_ready and visual_check and visual_check["status"] == "pass"
+    )
+    image_check = (
+        onboarding_checkpoint(db, "image_generation_verified")
+        if db.is_file() and db_version == SCHEMA_VERSION
+        else None
+    )
+    image_generation_verified = bool(
+        brain.get("image_generation_runtime_ready")
+        and image_check
+        and image_check["status"] == "pass"
+        and (image_check.get("evidence") or {}).get("probe") == IMAGE_PROBE_VERSION
+        and (image_check.get("evidence") or {}).get("config_hash") == current_brain_hash
+    )
+    deterministic_visual_ready = importlib.util.find_spec("PIL") is not None
+    visual_ready = bool(
+        visual_mode == "off"
+        or (
+            deterministic_visual_ready
+            and visual_delivery_verified
+            and (visual_mode != "decorative" or image_generation_verified)
+        )
+    )
     quality_review_pending = brain_verified and family_lens_ready and not bool(state.get("quality_review_accepted"))
     end_to_end_ready = (
-        transport_verified and brain_verified and family_lens_ready and bool(state.get("quality_review_accepted"))
+        transport_verified
+        and visual_ready
+        and brain_verified
+        and family_lens_ready
+        and bool(state.get("quality_review_accepted"))
     )
     if not required_pass:
         next_action = "fix required local checks"
@@ -207,10 +246,14 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         next_action = "finish Slack installation, credentials, and pairing"
     elif not transport_verified:
         next_action = "send `connection` in the paired Slack conversation"
+    elif visual_mode != "off" and not visual_delivery_verified:
+        next_action = "send `visual connection` in the paired Slack conversation after installing files:write"
     elif not model_ready:
         next_action = "run curiosity brain configure, then paste provider credentials privately"
     elif not brain_verified:
         next_action = "run curiosity brain test --live"
+    elif visual_mode == "decorative" and not image_generation_verified:
+        next_action = "run curiosity visual test --live"
     elif not family_lens_ready:
         next_action = "run curiosity family-lens configure"
     elif not end_to_end_ready:
@@ -225,6 +268,12 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         "brain_configured": model_ready,
         "brain_verified": brain_verified,
         "multimodal_stack_configured": bool(brain.get("multimodal_stack_configured")),
+        "visual_mode": visual_mode,
+        "deterministic_visual_ready": deterministic_visual_ready,
+        "visual_delivery_verified": visual_delivery_verified,
+        "image_generation_configured": bool(brain.get("image_generation_configured")),
+        "image_generation_verified": image_generation_verified,
+        "visual_ready": visual_ready,
         "family_lens_ready": family_lens_ready,
         "quality_review_pending": quality_review_pending,
         "end_to_end_ready": end_to_end_ready,
@@ -281,6 +330,91 @@ def run_brain_probe(db_path: str | Path, *, live: bool) -> dict[str, Any]:
         "model": backend.model,
         "family_data_sent": False,
         "note": "This verifies structured reasoning only; vision/OCR/image generation still require the eval checklist.",
+    }
+
+
+def run_image_generation_probe(
+    db_path: str | Path,
+    output_dir: str | Path,
+    *,
+    live: bool,
+) -> dict[str, Any]:
+    if not live:
+        raise ValueError("image probe makes a billable network request; pass --live after reviewing disclosure")
+    backend = configured_image_backend()
+    if backend is None:
+        raise RuntimeError("an OpenAI image-generation route is not configured")
+    config_hash = brain_config_fingerprint()
+    init_db(db_path)
+    event_id = f"evt_image_probe_v2_{config_hash}"
+    now = utcnow()
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO events(
+                 id,type,child_id,text,source,metadata_json,created_at,status,processed_at,result_json
+               ) VALUES(?,'image_generation_probe',NULL,'synthetic decorative image probe','system','{}',
+                        ?,'completed',?,'{}')""",
+            (event_id, now, now),
+        )
+    visual = {
+        "kind": "decorative_illustration",
+        "purpose": "imagine",
+        "knowledge_role": "decorative",
+        "title": "Synthetic image test",
+        "pedagogical_value": "Tests decorative image delivery without family context.",
+        "caption": "A synthetic decorative image-generation test.",
+        "alt_text": "A playful imaginary robot watering a tiny garden on the Moon.",
+        "subject": "a friendly imaginary robot watering a tiny garden on the moon",
+        "panels": [],
+        "source_refs": [],
+        "not_to_scale": False,
+    }
+    job_id = enqueue_response_visual(db_path, event_id=event_id, visual=visual, mode="decorative")
+    if not job_id:
+        raise RuntimeError("could not create the image-generation probe")
+    # The probe is an explicit, billable operator action. Permit that action to
+    # retry a previously failed job for the same configuration without creating
+    # duplicate events or assets.
+    with connect(db_path) as conn:
+        conn.execute(
+            """UPDATE visual_jobs SET status='queued',available_at=?,last_error=NULL,updated_at=?
+               WHERE id=? AND status='failed'""",
+            (utcnow(), utcnow(), job_id),
+        )
+    process_visual_jobs(db_path, output_dir, image_backend=backend, limit=1)
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT j.status,j.last_error,a.id AS asset_id,a.sha256
+               FROM visual_jobs j LEFT JOIN visual_assets a ON a.job_id=j.id WHERE j.id=?""",
+            (job_id,),
+        ).fetchone()
+    if not row or row["status"] != "completed" or not row["asset_id"]:
+        record_onboarding_checkpoint(
+            db_path,
+            "image_generation_verified",
+            status="fail",
+            evidence={"probe": IMAGE_PROBE_VERSION, "config_hash": config_hash, "family_data_sent": False},
+        )
+        raise RuntimeError("image-generation probe failed; run curiosity doctor for redacted status")
+    record_onboarding_checkpoint(
+        db_path,
+        "image_generation_verified",
+        status="pass",
+        evidence={
+            "probe": IMAGE_PROBE_VERSION,
+            "provider": backend.name,
+            "model": backend.model,
+            "config_hash": config_hash,
+            "family_data_sent": False,
+        },
+    )
+    return {
+        "status": "pass",
+        "provider": backend.name,
+        "model": backend.model,
+        "asset_id": row["asset_id"],
+        "family_data_sent": False,
+        "note": "The paid probe used one fixed synthetic prompt and stored the image only in private output.",
     }
 
 

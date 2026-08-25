@@ -248,6 +248,8 @@ def brain_status(root: str | Path | None = None) -> dict[str, Any]:
                 legacy_provider and secret_is_configured(legacy_provider, secrets[SECRET_KEYS[legacy_provider]])
             ),
             "multimodal_stack_configured": False,
+            "image_generation_configured": False,
+            "image_generation_runtime_ready": False,
             "blockers": ["run curiosity brain configure"],
         }
     providers = {route.provider for route in config.routes.values()}
@@ -279,6 +281,15 @@ def brain_status(root: str | Path | None = None) -> dict[str, Any]:
         "providers": sorted(providers),
         "credentials_present": not missing_keys,
         "multimodal_stack_configured": bool(vision and extraction and image),
+        "image_generation_configured": bool(
+            image and "image_generation" in image.capabilities and image.provider not in missing_keys
+        ),
+        "image_generation_runtime_ready": bool(
+            image
+            and "image_generation" in image.capabilities
+            and image.provider == "openai"
+            and image.provider not in missing_keys
+        ),
         "recommendation_status": config.recommendation_status,
         "blockers": blockers,
     }

@@ -14,7 +14,7 @@ from curiosity_engine.brain_config import (
 from curiosity_engine.cli import dump
 from curiosity_engine.interaction import configure_family_lens, onboarding_status, record_onboarding_review
 from curiosity_engine.lab import evaluate
-from curiosity_engine.onboarding import doctor, run_brain_probe
+from curiosity_engine.onboarding import doctor, run_brain_probe, run_image_generation_probe
 
 
 def test_private_brain_stack_requires_reasoning_vision_ocr_image_and_credentials(
@@ -100,6 +100,44 @@ def test_brain_probe_is_synthetic_and_records_only_sanitized_evidence(
     assert result["family_data_sent"] is False
     state = onboarding_status(db)
     assert state["checkpoints"]["brain_verified"]["status"] == "pass"
+
+
+def test_image_probe_is_explicit_paid_synthetic_and_route_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from io import BytesIO
+
+    from PIL import Image
+
+    from curiosity_engine.openai_image_backend import GeneratedImage
+
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    output = tmp_path / "private" / "output"
+    brain_path = tmp_path / "private" / "setup" / "brain.json"
+    monkeypatch.setenv("CURIOSITY_BRAIN_CONFIG", str(brain_path))
+    write_brain_config(configure_api_brain(provider="openai", model="text-test", image_model="image-test"))
+
+    class FakeImageBackend:
+        name = "openai"
+        model = "image-test"
+
+        def generate(self, prompt: str) -> GeneratedImage:
+            assert "friendly imaginary robot" in prompt
+            assert "private resource" not in prompt.casefold()
+            image = Image.new("RGB", (1024, 1024), "#AADDCC")
+            image.paste("#224466", (100, 100, 900, 900))
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            return GeneratedImage(buffer.getvalue(), self.model, "request-synthetic")
+
+    monkeypatch.setattr(
+        "curiosity_engine.onboarding.configured_image_backend", lambda: FakeImageBackend()
+    )
+    with pytest.raises(ValueError, match="billable"):
+        run_image_generation_probe(db, output, live=False)
+    result = run_image_generation_probe(db, output, live=True)
+    assert result["status"] == "pass" and result["family_data_sent"] is False
+    assert onboarding_status(db)["checkpoints"]["image_generation_verified"]["status"] == "pass"
 
 
 def test_family_lens_and_parent_review_are_explicit_private_gates(tmp_path: Path):

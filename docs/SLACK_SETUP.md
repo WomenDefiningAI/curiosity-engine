@@ -14,7 +14,7 @@ Slack is an interaction surface, not the durable record. Messages sent through i
 2. Select **From an app manifest** and the family workspace.
 3. Paste `integrations/slack/manifest.yaml` as YAML and create the app.
 
-The manifest requests `chat:write`, `im:history`, and `app_mentions:read`, and subscribes only to `message.im` and `app_mention`. It does not request ambient channel history, files, users, or user-token scopes.
+The manifest requests `chat:write`, `files:write`, `im:history`, and `app_mentions:read`, and subscribes only to `message.im` and `app_mention`. It does not request file reads, ambient channel history, users, or user-token scopes. `files:write` is used only for response visuals.
 
 ## 3. Install and save both tokens
 
@@ -22,6 +22,8 @@ The manifest requests `chat:write`, `im:history`, and `app_mentions:read`, and s
 2. Under **OAuth & Permissions**, choose **Install to Workspace**; copy the `xoxb-...` Bot User OAuth Token.
 
 Creating the app is not enough: the OAuth installation is required.
+
+If the app was installed before visual responses were added, add `files:write` under **OAuth & Permissions → Bot Token Scopes**, then choose **Reinstall to Workspace**. Reinstallation can change the bot token; update the ignored token file if needed.
 
 Copy `integrations/slack/slack.env.example` to ignored `private/setup/slack.env`, then paste both values there directly in VS Code. Never paste them into agent chat.
 
@@ -61,6 +63,14 @@ connection
 
 The reply states that Slack works without contacting a model, loading a child profile, or reading resources. `curiosity doctor` should then report `transport_verified: true`.
 
+Next send:
+
+```text
+visual connection
+```
+
+This creates a fixed card locally and uploads it with alt text. It uses no model, child profile, family message, or resource. `curiosity doctor` should report `visual_delivery_verified: true`.
+
 Continue with [brain setup](BRAIN_SETUP.md).
 
 ## Restart and troubleshoot
@@ -70,4 +80,4 @@ source .venv/bin/activate
 curiosity slack run
 ```
 
-No reply usually means the connector stopped. Also check app installation, current tokens, pairing, channel invitation, and explicit mention. Reinstalling the app can change the bot token. Revoke access with `curiosity slack revoke --binding ID`; rotate both tokens if exposure is possible.
+No reply usually means the connector stopped. A text reply without its card usually means `files:write` was not authorized or the visual worker failed; run `curiosity doctor`. Also check app installation, current tokens, pairing, channel invitation, and explicit mention. Revoke access with `curiosity slack revoke --binding ID`; rotate both tokens if exposure is possible.

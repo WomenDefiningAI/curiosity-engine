@@ -16,6 +16,7 @@ from .transports.contracts import InboundMessage, OutboundMessage
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 RESOURCE_CONTEXT_MODES = {"metadata_only", "selected_excerpts"}
+VISUAL_MODES = {"off", "deterministic", "decorative"}
 CHECKPOINT_STATUSES = {"pending", "pass", "fail"}
 
 
@@ -35,6 +36,8 @@ def answer_stack_fingerprint(db_path: str | Path) -> str:
         "configs/context-policy.json",
         "prompts/generator-v1.md",
         "prompts/critic-v1.md",
+        "src/curiosity_engine/visuals.py",
+        "src/curiosity_engine/trust.py",
     ):
         path = app.root / relative
         if path.is_file():
@@ -45,10 +48,11 @@ def answer_stack_fingerprint(db_path: str | Path) -> str:
             "SELECT profile_json FROM learning_preferences WHERE scope_type='household' AND scope_id='default'"
         ).fetchone()
         resource_mode = conn.execute(
-            "SELECT resource_context_mode FROM household_settings WHERE id='default'"
+            "SELECT resource_context_mode,visual_mode FROM household_settings WHERE id='default'"
         ).fetchone()
     digest.update(str(family_lens["profile_json"] if family_lens else "unconfigured").encode())
     digest.update(str(resource_mode["resource_context_mode"] if resource_mode else "metadata_only").encode())
+    digest.update(str(resource_mode["visual_mode"] if resource_mode else "deterministic").encode())
     return digest.hexdigest()[:16]
 
 
@@ -115,6 +119,9 @@ def setup_household(
                  resource_context_mode=excluded.resource_context_mode,updated_at=excluded.updated_at""",
             (timezone, quiet_start, quiet_end, int(proactive_enabled), resource_context_mode, now, now),
         )
+        visual_mode = str(
+            conn.execute("SELECT visual_mode FROM household_settings WHERE id='default'").fetchone()["visual_mode"]
+        )
         conn.execute(
             "INSERT INTO interaction_audit(actor_parent_id,action,subject_type,subject_id,metadata_json,created_at) VALUES(?,?,'household','default',?,?)",
             (
@@ -125,6 +132,7 @@ def setup_household(
                         "timezone": timezone,
                         "proactive_enabled": proactive_enabled,
                         "resource_context_mode": resource_context_mode,
+                        "visual_mode": visual_mode,
                     }
                 ),
                 now,
@@ -147,6 +155,7 @@ def setup_household(
             proactive_enabled and context_proactivity_available
         ),
         "resource_context_mode": resource_context_mode,
+        "visual_mode": visual_mode,
         "weekly_suggestion_limit": 1,
     }
 
@@ -182,6 +191,36 @@ def set_household_resource_context_mode(db_path: str | Path, mode: str) -> dict[
             (owner["id"] if owner else None, "resource_context_mode_changed", jdump({"mode": mode}), now),
         )
     return {"status": "configured", "resource_context_mode": mode}
+
+
+def household_visual_mode(db_path: str | Path) -> str:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT visual_mode FROM household_settings WHERE id='default'").fetchone()
+    return str(row["visual_mode"]) if row else "deterministic"
+
+
+def set_household_visual_mode(db_path: str | Path, mode: str) -> dict[str, str]:
+    if mode not in VISUAL_MODES:
+        raise ValueError("visual mode must be off, deterministic, or decorative")
+    init_db(db_path)
+    now = utcnow()
+    with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        settings = conn.execute("SELECT id FROM household_settings WHERE id='default'").fetchone()
+        if not settings:
+            raise ValueError("household setup is not configured")
+        owner = conn.execute(
+            "SELECT id FROM parent_principals WHERE role='owner' AND status='active'"
+        ).fetchone()
+        conn.execute("UPDATE household_settings SET visual_mode=?,updated_at=? WHERE id='default'", (mode, now))
+        conn.execute(
+            """INSERT INTO interaction_audit(
+                   actor_parent_id,action,subject_type,subject_id,metadata_json,created_at
+               ) VALUES(?,?,'household','default',?,?)""",
+            (owner["id"] if owner else None, "visual_mode_changed", jdump({"mode": mode}), now),
+        )
+    return {"status": "configured", "visual_mode": mode}
 
 
 def add_parent(db_path: str | Path, display_name: str) -> dict[str, Any]:
@@ -717,6 +756,153 @@ def mark_delivery(
                 status,
                 attempts,
                 available.isoformat(),
+                external_message_id,
+                error[:2_000] if error else None,
+                now.isoformat(),
+                delivery_id,
+            ),
+        )
+
+
+def enqueue_visual_delivery(
+    db_path: str | Path,
+    *,
+    visual_job_id: str,
+    binding_id: str,
+    depends_on_delivery_id: str,
+    channel_id: str,
+    thread_id: str | None,
+    idempotency_key: str,
+    purpose: str = "response_visual",
+    expires_in_hours: int = 24,
+) -> str:
+    """Queue one visual by database ID; transport payloads never carry arbitrary file paths."""
+
+    init_db(db_path)
+    now = datetime.now(UTC)
+    visual_delivery_id = f"visual_delivery_{uuid4().hex[:16]}"
+    with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT id FROM slack_file_outbox WHERE idempotency_key=?", (idempotency_key,)
+        ).fetchone()
+        if existing:
+            return str(existing["id"])
+        job = conn.execute("SELECT status FROM visual_jobs WHERE id=?", (visual_job_id,)).fetchone()
+        if not job:
+            raise ValueError("visual job not found")
+        asset = conn.execute("SELECT id FROM visual_assets WHERE job_id=?", (visual_job_id,)).fetchone()
+        status = "queued" if job["status"] == "completed" and asset else "waiting_asset"
+        conn.execute(
+            """INSERT INTO slack_file_outbox(
+                 id,visual_job_id,visual_asset_id,binding_id,depends_on_delivery_id,channel_id,thread_id,
+                 idempotency_key,purpose,status,attempts,available_at,expires_at,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)""",
+            (
+                visual_delivery_id,
+                visual_job_id,
+                asset["id"] if asset else None,
+                binding_id,
+                depends_on_delivery_id,
+                channel_id,
+                thread_id,
+                idempotency_key,
+                purpose,
+                status,
+                now.isoformat(),
+                (now + timedelta(hours=expires_in_hours)).isoformat(),
+                now.isoformat(),
+                now.isoformat(),
+            ),
+        )
+    return visual_delivery_id
+
+
+def ready_visual_deliveries(db_path: str | Path, *, limit: int = 10) -> list[dict[str, Any]]:
+    current = datetime.now(UTC)
+    now = current.isoformat()
+    stale = (current - timedelta(minutes=10)).isoformat()
+    with connect(db_path) as conn:
+        conn.execute(
+            """UPDATE slack_file_outbox SET status='unknown',last_error='connector stopped during completion',updated_at=?
+               WHERE status='completing' AND updated_at<?""",
+            (now, stale),
+        )
+        conn.execute(
+            """UPDATE slack_file_outbox SET status='failed',last_error='connector stopped before completion',
+                 available_at=?,updated_at=?
+               WHERE status IN ('ticket_acquiring','ticket_acquired','uploading','bytes_uploaded') AND updated_at<?""",
+            (now, now, stale),
+        )
+        rows = conn.execute(
+            """SELECT f.*,a.path,a.filename,a.mime_type,a.byte_count,a.sha256,a.title,a.caption,a.alt_text,
+                      d.status AS dependency_status,b.status AS binding_status
+               FROM slack_file_outbox f
+               JOIN visual_assets a ON a.id=f.visual_asset_id
+               JOIN delivery_outbox d ON d.id=f.depends_on_delivery_id
+               JOIN transport_bindings b ON b.id=f.binding_id
+               WHERE f.status IN ('queued','failed') AND f.available_at<=?
+                 AND (f.expires_at IS NULL OR f.expires_at>?) AND f.attempts<3
+                 AND d.status='sent' AND b.status='active'
+               ORDER BY f.created_at LIMIT ?""",
+            (now, now, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def claim_visual_delivery(db_path: str | Path, delivery_id: str) -> bool:
+    now = datetime.now(UTC).isoformat()
+    with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        updated = conn.execute(
+            """UPDATE slack_file_outbox SET status='ticket_acquiring',attempts=attempts+1,updated_at=?
+               WHERE id=? AND status IN ('queued','failed') AND available_at<=? AND attempts<3
+                 AND EXISTS(
+                   SELECT 1 FROM delivery_outbox d
+                   WHERE d.id=slack_file_outbox.depends_on_delivery_id AND d.status='sent'
+                 )""",
+            (now, delivery_id, now),
+        )
+    return updated.rowcount == 1
+
+
+def mark_visual_delivery(
+    db_path: str | Path,
+    delivery_id: str,
+    *,
+    status: str,
+    slack_file_id: str | None = None,
+    external_message_id: str | None = None,
+    error: str | None = None,
+) -> None:
+    allowed = {
+        "ticket_acquiring",
+        "ticket_acquired",
+        "uploading",
+        "bytes_uploaded",
+        "completing",
+        "sent",
+        "failed",
+        "unknown",
+        "expired",
+    }
+    if status not in allowed:
+        raise ValueError("invalid visual delivery status")
+    now = datetime.now(UTC)
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT slack_file_id,attempts FROM slack_file_outbox WHERE id=?", (delivery_id,)
+        ).fetchone()
+        if not row:
+            raise KeyError(delivery_id)
+        available = now + timedelta(seconds=min(300, 2 ** max(int(row["attempts"]), 1)))
+        conn.execute(
+            """UPDATE slack_file_outbox SET status=?,available_at=?,slack_file_id=?,external_message_id=?,
+                 last_error=?,updated_at=? WHERE id=?""",
+            (
+                status,
+                available.isoformat(),
+                slack_file_id if slack_file_id is not None else row["slack_file_id"],
                 external_message_id,
                 error[:2_000] if error else None,
                 now.isoformat(),

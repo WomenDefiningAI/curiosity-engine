@@ -6,6 +6,8 @@ Family profiles, events, evidence, curriculum source files, extracted text, inde
 
 Slack tokens live in owner-only `private/setup/slack.env`; non-secret private routes live in `private/setup/brain.json`; provider keys live in owner-only `private/setup/model.env`. Setup reports contain readiness categories only: never credential values, child names, questions, Slack IDs, provider keys, purchased-resource titles/URLs, or licensed excerpts.
 
+Response PNGs use opaque filenames under `private/output/visuals/`, owner-only permissions, stripped metadata, bounded dimensions, and a recorded hash. Uploading a card sends that image, its caption, and alt text to Slack, where Slack retains it under the workspace's policies. The app can write files but cannot read workspace files.
+
 The resource indexer refuses catalogs outside `private/` and requires a catalog declaration of:
 
 - `access.scope = family_private`
@@ -23,6 +25,8 @@ Private resource search has two modes:
 When a provider backend is enabled, any opted-in excerpt in the context is disclosed to every configured provider used for that request. Request storage controls do not mean that no provider processing, safety retention, routing metadata, or downstream-provider handling occurs. Review current terms for direct providers and both OpenRouter plus its selected downstream endpoints.
 
 The first `curiosity brain test --live` sends a fixed synthetic payload with no child, family, Slack, or resource content. Real context is sent only after that check and explicit family-lens/resource choices.
+
+Deterministic response cards are rendered locally. Optional `decorative` mode sends a minimized scene prompt that may reflect the broad question topic, but code rejects known household identities, proper names, personal relationships, and school/home/health details. It never sends the family profile, licensed excerpts, source images, labels, measurements, or exact counts. Its explicit `curiosity visual test --live` probe is billable but synthetic.
 
 ## Epistemic separation
 

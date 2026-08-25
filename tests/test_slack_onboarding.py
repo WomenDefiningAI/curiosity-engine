@@ -416,7 +416,7 @@ def test_doctor_never_echoes_tokens_or_family_content(tmp_path: Path, monkeypatc
 
 def test_manifest_has_only_mvp_scopes():
     manifest = (Path(__file__).parents[1] / "integrations" / "slack" / "manifest.yaml").read_text()
-    for scope in ("app_mentions:read", "chat:write", "im:history"):
+    for scope in ("app_mentions:read", "chat:write", "files:write", "im:history"):
         assert f"- {scope}" in manifest
     for forbidden in ("channels:history", "groups:history", "users:read", "files:read"):
         assert forbidden not in manifest

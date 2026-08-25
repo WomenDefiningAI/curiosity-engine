@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/WomenDefiningAI/curiosity-engine/schemas/visual-spec.schema.json",
+  "title": "Curiosity Engine response visual intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "purpose",
+    "knowledge_role",
+    "title",
+    "pedagogical_value",
+    "caption",
+    "alt_text"
+  ],
+  "properties": {
+    "kind": {
+      "enum": ["comparison_cards", "activity_sequence", "decorative_illustration"]
+    },
+    "purpose": {"enum": ["compare", "sequence", "notice", "imagine"]},
+    "knowledge_role": {"enum": ["decorative", "supportive", "instructional"]},
+    "title": {"type": "string", "minLength": 1, "maxLength": 120},
+    "pedagogical_value": {"type": "string", "minLength": 1, "maxLength": 300},
+    "caption": {"type": "string", "minLength": 1, "maxLength": 280},
+    "alt_text": {"type": "string", "minLength": 12, "maxLength": 1000},
+    "subject": {"type": ["string", "null"], "maxLength": 160},
+    "panels": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "detail", "icon"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 48},
+          "detail": {"type": "string", "minLength": 1, "maxLength": 140},
+          "icon": {
+            "enum": [
+              "height",
+              "weight",
+              "strength",
+              "look",
+              "predict",
+              "try",
+              "go",
+              "stop",
+              "turn",
+              "robot",
+              "question",
+              "idea"
+            ]
+          }
+        }
+      }
+    },
+    "source_refs": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {"type": "string"}
+    },
+    "not_to_scale": {"type": "boolean", "default": false}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"enum": ["comparison_cards", "activity_sequence"]}}},
+      "then": {"properties": {"panels": {"minItems": 2}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "decorative_illustration"}}},
+      "then": {
+        "required": ["subject"],
+        "properties": {
+          "subject": {"type": "string", "minLength": 1, "maxLength": 160},
+          "panels": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "comparison_cards"}}},
+      "then": {"properties": {"not_to_scale": {"const": true}}}
+    }
+  ],
+  "description": "The model may propose this intent; code-owned trust policy decides whether and how it renders. Instructional Tier C response visuals fail closed in v0.1."
+}

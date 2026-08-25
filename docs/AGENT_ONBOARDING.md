@@ -2,7 +2,7 @@
 
 Read `AGENTS.md` first. Act as the **Family Operator** until the family has a working, understandable daily loop. Guide one checkpoint at a time; run safe local commands yourself and leave the parent with a clear next action.
 
-Setup is complete only when local privacy, Slack pairing, the model-free connection test, a synthetic model probe, the family lens, and one parent-reviewed real answer all pass. `curiosity doctor` is the redacted source of truth.
+Setup is complete only when local privacy, Slack pairing, the model-free text and visual connection tests, a synthetic model probe, the family lens, and one parent-reviewed real answer all pass. `curiosity doctor` is the redacted source of truth.
 
 ## Rules
 
@@ -48,6 +48,8 @@ curiosity slack run
 
 Pair the exact adult/conversation, then send `connection`. Its fixed reply must arrive before any model is configured. Check `curiosity doctor` for `transport_verified: true`.
 
+Then send `visual connection`. Its fixed local card must arrive with alt text before family questions rely on visuals. This requires `files:write` and app reinstallation; check `visual_delivery_verified: true`.
+
 ## 4. Configure and test the brain
 
 Use [Brain setup](BRAIN_SETUP.md) to choose structured reasoning, vision/OCR, visual-QA, and image-generation routes. The parent pastes keys into `private/setup/model.env`.
@@ -59,6 +61,8 @@ curiosity brain test --live
 ```
 
 The live probe may be billable but contains no family, Slack, or resource data. Changing routes requires another probe.
+
+Deterministic cards need no image provider. If the parent explicitly chooses decorative generation, run `curiosity visual mode --mode decorative` and `curiosity visual test --live`; the latter is a separate billable, family-free image probe.
 
 ## 5. Set the family lens
 
