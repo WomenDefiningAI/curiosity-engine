@@ -41,7 +41,7 @@ all-providers = [
 dev = [
   "httpx>=0.28,<1",
   "httpx2>=2,<3",
-  "pytest>=8.3,<9",
+  "pytest>=8.3,<10",
   "pytest-cov>=6,<7",
   "ruff>=0.11,<1",
 ]
