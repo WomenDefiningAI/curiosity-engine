@@ -25,6 +25,38 @@ STALE_VISUAL_JOB_MINUTES = 10
 
 PUBLIC_PROPER_NOUNS = {"earth", "mars", "moon", "sun"}
 
+SOCIAL_VISUAL_TERMS = {
+    "bully",
+    "classmate",
+    "friend",
+    "sibling",
+    "teacher",
+}
+
+SOCIAL_INFERENCE_VERBS = {
+    "avoid",
+    "exclude",
+    "hate",
+    "ignore",
+    "invite",
+    "like",
+    "mean",
+    "tease",
+}
+
+ROBOT_ACTIVITY_VERBS = {
+    "build",
+    "craft",
+    "create",
+    "design",
+    "draw",
+    "make",
+    "plan",
+    "play",
+    "pretend",
+    "program",
+}
+
 PALETTE = {
     "cream": "#FFF9EC",
     "ink": "#17324D",
@@ -112,6 +144,8 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
 def render_deterministic_visual(intent: VisualIntent, output_path: str | Path) -> Path:
     if intent.kind not in {"comparison_cards", "activity_sequence"}:
         raise ValueError("deterministic renderer supports comparison and activity cards only")
+    if not _is_curated_deterministic_intent(intent):
+        raise ValueError("deterministic response cards must match a reviewed local template")
     errors = validate_response_visual_intent(intent.model_dump(mode="json"))
     if errors:
         raise ValueError("unsafe response visual: " + "; ".join(errors))
@@ -214,10 +248,112 @@ def _visual_method(intent: VisualIntent, mode: str) -> str | None:
     if mode == "off":
         return None
     if intent.kind in {"comparison_cards", "activity_sequence"}:
+        if not _is_curated_deterministic_intent(intent):
+            raise ValueError("deterministic response cards must match a reviewed local template")
         return "deterministic"
     if intent.kind == "decorative_illustration" and mode == "decorative":
         return "generative"
     return None
+
+
+def _contains_word(text: str, word: str) -> bool:
+    return re.search(rf"\b{re.escape(word)}\b", text) is not None
+
+
+def _contains_any_word(text: str, words: set[str]) -> bool:
+    return any(_contains_word(text, word) for word in words)
+
+
+def _is_social_inference_question(question: str) -> bool:
+    lowered = question.casefold()
+    if _contains_any_word(lowered, SOCIAL_VISUAL_TERMS):
+        return True
+    if any(phrase in lowered for phrase in ("left me out", "mad at me", "mean to me")):
+        return True
+    has_person = _contains_any_word(lowered, {"he", "her", "him", "kid", "person", "she", "someone", "they"})
+    return has_person and _contains_any_word(lowered, SOCIAL_INFERENCE_VERBS)
+
+
+def _robot_comparison_intent() -> VisualIntent:
+    return VisualIntent(
+        kind="comparison_cards",
+        purpose="compare",
+        knowledge_role="supportive",
+        title="What can BIGGEST mean for a robot?",
+        pedagogical_value="Helps an early reader compare meanings of big without implying exact scale.",
+        caption="One robot can be big in one way and not in every way.",
+        alt_text=(
+            "Three colorful cards compare robot height, weight, and strength as different meanings "
+            "of biggest. The cards are not to scale."
+        ),
+        panels=[
+            {"label": "TALLEST", "detail": "Compare height.", "icon": "height"},
+            {"label": "HEAVIEST", "detail": "Compare weight.", "icon": "weight"},
+            {"label": "STRONGEST", "detail": "Compare the job it can do.", "icon": "strength"},
+        ],
+        not_to_scale=True,
+    )
+
+
+def _robot_activity_intent() -> VisualIntent:
+    return VisualIntent(
+        kind="activity_sequence",
+        purpose="sequence",
+        knowledge_role="supportive",
+        title="Give your paper robot a plan",
+        pedagogical_value="Turns an abstract command idea into three visible actions for an early reader.",
+        caption="Point to one card at a time and follow it exactly.",
+        alt_text=(
+            "Three colorful cards show Go with a curved arrow, Stop with a red stop shape, and Turn with "
+            "a turning arrow for a pretend robot game."
+        ),
+        panels=[
+            {"label": "GO", "detail": "Move forward.", "icon": "go"},
+            {"label": "STOP", "detail": "Freeze in place.", "icon": "stop"},
+            {"label": "TURN", "detail": "Change direction.", "icon": "turn"},
+        ],
+    )
+
+
+def infer_safe_response_visual(question: str, output: dict[str, Any]) -> VisualIntent | None:
+    """Provide a small deterministic fallback when a model omits or exceeds the visual boundary.
+
+    The v0.1 fallback is intentionally tiny: one robot-size comparison and one pretend-robot
+    command activity. New templates require code review and tests rather than broad keyword rules.
+    """
+
+    del output
+    lowered = question.casefold()
+    if _is_social_inference_question(question):
+        return None
+
+    is_robot = _contains_word(lowered, "robot") or _contains_word(lowered, "robots")
+    is_size_question = _contains_any_word(lowered, {"biggest", "largest"}) or "how big" in lowered
+    if is_robot and is_size_question:
+        return _robot_comparison_intent()
+    if is_robot and _contains_any_word(lowered, ROBOT_ACTIVITY_VERBS):
+        return _robot_activity_intent()
+    return None
+
+
+def normalize_response_visual(question: str, output: dict[str, Any]) -> VisualIntent | None:
+    """Keep a safe decorative proposal or select one reviewed deterministic template."""
+
+    if _is_social_inference_question(question):
+        return None
+    proposed = output.get("visual")
+    if proposed is not None:
+        try:
+            intent = proposed if isinstance(proposed, VisualIntent) else VisualIntent.model_validate(proposed)
+        except (TypeError, ValueError):
+            intent = None
+        if (
+            intent is not None
+            and intent.kind == "decorative_illustration"
+            and not validate_response_visual_intent(intent.model_dump(mode="json"))
+        ):
+            return intent
+    return infer_safe_response_visual(question, output)
 
 
 def enqueue_response_visual(
@@ -267,6 +403,12 @@ def synthetic_visual_intent() -> VisualIntent:
             {"label": "TRY", "detail": "Check your idea.", "icon": "try"},
         ],
     )
+
+
+def _is_curated_deterministic_intent(intent: VisualIntent) -> bool:
+    """Require exact reviewed content at the final deterministic rendering boundary."""
+
+    return intent in (synthetic_visual_intent(), _robot_comparison_intent(), _robot_activity_intent())
 
 
 def create_synthetic_visual_job(db_path: str | Path, event_id: str) -> str:

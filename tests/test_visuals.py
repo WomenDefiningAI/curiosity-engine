@@ -14,10 +14,12 @@ from pydantic import ValidationError
 from curiosity_engine.contracts import PullThreadOutput, VisualIntent, VisualPanel
 from curiosity_engine.db import connect, init_db, utcnow
 from curiosity_engine.openai_image_backend import OpenAIImageBackend
-from curiosity_engine.reasoning import StubBackend
+from curiosity_engine.reasoning import ReasoningEngine, ReasoningPolicy, StubBackend
 from curiosity_engine.trust import validate_response_visual_intent
 from curiosity_engine.visuals import (
     enqueue_response_visual,
+    infer_safe_response_visual,
+    normalize_response_visual,
     process_visual_jobs,
     render_deterministic_visual,
     synthetic_visual_intent,
@@ -215,6 +217,112 @@ def test_stub_robot_answers_request_the_right_safe_visual():
     build = PullThreadOutput.model_validate(StubBackend._pull_thread("Can we build a robot?"))
     assert build.visual and build.visual.kind == "activity_sequence"
     assert [panel.label for panel in build.visual.panels] == ["GO", "STOP", "TURN"]
+
+
+def test_unsafe_model_robot_visual_is_replaced_with_curated_comparison():
+    unsafe = StubBackend._pull_thread("What are the biggest robots in the world?")
+    unsafe["visual"] = {
+        **unsafe["visual"],
+        "knowledge_role": "instructional",
+        "title": "Model-proposed instructional card",
+        "panels": [
+            {"label": "Walking robot", "detail": "Moves on legs.", "icon": "go"},
+            {"label": "Robot truck", "detail": "Carries rocks.", "icon": "strength"},
+            {"label": "Space arm", "detail": "Reaches and grabs.", "icon": "try"},
+        ],
+    }
+    visual = normalize_response_visual("What are the biggest robots in the world?", unsafe)
+    assert visual and visual.knowledge_role == "supportive"
+    assert [panel.label for panel in visual.panels] == ["TALLEST", "HEAVIEST", "STRONGEST"]
+    assert validate_response_visual_intent(visual.model_dump(mode="json")) == []
+
+
+def test_reasoning_pipeline_normalizes_unsafe_visual_before_persistence():
+    class UnsafeVisualBackend(StubBackend):
+        def complete(self, *, role, system, payload, response_model):
+            candidate = super().complete(
+                role=role,
+                system=system,
+                payload=payload,
+                response_model=response_model,
+            )
+            if response_model is PullThreadOutput:
+                candidate["visual"] = {**candidate["visual"], "knowledge_role": "instructional"}
+            return candidate
+
+    result = ReasoningEngine(UnsafeVisualBackend()).run(
+        policy=ReasoningPolicy("pull_thread", 2),
+        context={},
+        event={"text": "What are the biggest robots in the world?"},
+    )
+    visual = result.output["visual"]
+    assert visual["knowledge_role"] == "supportive"
+    assert [panel["label"] for panel in visual["panels"]] == ["TALLEST", "HEAVIEST", "STRONGEST"]
+
+
+def test_safe_visual_fallbacks_are_narrow_and_exclude_social_inference():
+    activity = infer_safe_response_visual("Can we make a paper robot?", {})
+    assert activity and activity.kind == "activity_sequence"
+    assert [panel.label for panel in activity.panels] == ["GO", "STOP", "TURN"]
+    assert infer_safe_response_visual("Why was my friend mad at me?", {}) is None
+    assert infer_safe_response_visual("Why did she ignore me?", {}) is None
+    assert infer_safe_response_visual("What is the largest number?", {}) is None
+    assert infer_safe_response_visual("How do black holes form?", {}) is None
+    assert infer_safe_response_visual("Are robots alive?", {}) is None
+    assert infer_safe_response_visual("Which country has the most lakes?", {}) is None
+
+
+def test_unreviewed_deterministic_model_content_is_discarded_and_cannot_render(tmp_path: Path):
+    proposed = synthetic_visual_intent().model_copy(
+        update={
+            "title": "Mix household chemicals",
+            "caption": "Try this reaction.",
+            "panels": [
+                VisualPanel(label="BLEACH", detail="Pour it first.", icon="try"),
+                VisualPanel(label="VINEGAR", detail="Add it next.", icon="try"),
+            ],
+        }
+    )
+    assert normalize_response_visual("Can we mix these liquids?", {"visual": proposed}) is None
+    with pytest.raises(ValueError, match="reviewed local template"):
+        render_deterministic_visual(proposed, tmp_path / "unsafe.png")
+
+
+def test_malformed_optional_visual_does_not_reject_a_good_text_answer():
+    class MalformedVisualBackend(StubBackend):
+        def complete(self, *, role, system, payload, response_model):
+            candidate = super().complete(
+                role=role,
+                system=system,
+                payload=payload,
+                response_model=response_model,
+            )
+            if response_model is PullThreadOutput:
+                candidate["visual"] = {"kind": "activity_sequence"}
+            return candidate
+
+    result = ReasoningEngine(MalformedVisualBackend()).run(
+        policy=ReasoningPolicy("pull_thread", 2),
+        context={},
+        event={"text": "Can we build a robot?"},
+    )
+    assert result.output["hook"]
+    assert [panel["label"] for panel in result.output["visual"]["panels"]] == ["GO", "STOP", "TURN"]
+
+
+def test_safe_decorative_visual_proposal_is_retained():
+    proposed = {
+        "kind": "decorative_illustration",
+        "purpose": "imagine",
+        "knowledge_role": "decorative",
+        "title": "Moon garden",
+        "pedagogical_value": "Creates wonder without teaching facts.",
+        "caption": "Imagine a robot garden on the moon.",
+        "alt_text": "A friendly imaginary robot waters a tiny garden on the moon.",
+        "subject": "a friendly imaginary robot watering a tiny garden on the moon",
+    }
+    visual = normalize_response_visual("Imagine a robot garden on the moon", {"visual": proposed})
+    assert visual and visual.kind == "decorative_illustration"
 
 
 def test_visual_policy_rejects_private_decorative_subject():

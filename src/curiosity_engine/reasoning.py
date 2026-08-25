@@ -17,6 +17,7 @@ from .contracts import (
     PullThreadOutput,
     ReasoningEnvelope,
 )
+from .visuals import normalize_response_visual
 
 OutputModel = TypeVar("OutputModel", bound=BaseModel)
 
@@ -458,7 +459,7 @@ class ReasoningEngine:
         validation_repair_rounds = 0
         while True:
             try:
-                parsed = self._validate_candidate(candidate, response_model)
+                parsed = self._validate_and_normalize_candidate(candidate, response_model, event)
                 break
             except ReasoningRejected as exc:
                 if validation_repair_rounds >= policy.max_revision_rounds:
@@ -520,7 +521,7 @@ class ReasoningEngine:
                 },
                 response_model=response_model,
             )
-            parsed = self._validate_candidate(candidate, response_model)
+            parsed = self._validate_and_normalize_candidate(candidate, response_model, event)
         return ReasoningEnvelope(
             workflow=policy.workflow,
             output=parsed.model_dump(mode="json"),
@@ -529,6 +530,23 @@ class ReasoningEngine:
             backend=self.backend.name,
             model=self.backend.model,
         )
+
+    @staticmethod
+    def _validate_and_normalize_candidate(
+        candidate: dict[str, Any],
+        response_model: type[OutputModel],
+        event: dict[str, Any],
+    ) -> OutputModel:
+        if response_model is not PullThreadOutput:
+            return ReasoningEngine._validate_candidate(candidate, response_model)
+        candidate_without_visual = {**candidate, "visual": None}
+        parsed = ReasoningEngine._validate_candidate(candidate_without_visual, response_model)
+        if not isinstance(parsed, PullThreadOutput):  # pragma: no cover - type narrowing guard
+            return parsed
+        output = parsed.model_dump(mode="json")
+        output["visual"] = candidate.get("visual")
+        visual = normalize_response_visual(str(event.get("text") or ""), output)
+        return parsed.model_copy(update={"visual": visual})
 
     @staticmethod
     def _validate_candidate(candidate: dict[str, Any], response_model: type[OutputModel]) -> OutputModel:
