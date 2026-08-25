@@ -11,14 +11,14 @@ Release target: `0.1.0-slack-mvp`
 | Multimodal requirement | Public reasoning, vision/OCR, visual-QA, and image-generation requirements | Configuration checks; broader live evals remain family-local |
 | Public project research | Expiring canonical registry for artifact, OCR, worksheet, education, and game projects with reference/install separation | Schema tests plus explicit metadata-only live audit |
 | Slack parent entry | Socket Mode connector for DMs and explicit mentions | Transport unit tests; live workspace smoke test remains local |
-| Visual Slack response | One policy-governed card per useful K–2 answer; local deterministic default; optional decorative OpenAI route | Renderer, privacy, trust, crash, alt-text, synthetic robot, and live connection gates |
+| Visual Slack response | One policy-governed card per useful K–2 answer; local deterministic default; optional generated imaginary art inside reviewed templates | Renderer, privacy, trust, crash, alt-text, synthetic robot, and live connection gates |
 | Parent authorization | Short-lived pairing code bound to workspace, user, and conversation | Expiry, replay, exact-binding tests |
 | Uncertain attribution | Durable unassigned inbox with explicit assign/dismiss | Inbox and Slack command tests |
 | Durable capture | Immutable event, raw evidence, job, run, response | Unit and regression cases |
 | Exactly-once behavior | Payload hashes, transport receipts, event/action/outbox idempotency | Duplicate and conflict tests |
 | Family context | Depth 0–4, conservative episode grouping, evidence eligibility, append-only parent corrections | Context and episode regression suites |
 | Purchased resources | Generic private catalog and metadata/excerpt gate | Inventory and retrieval tests |
-| Learning response | Strict Pull-the-Thread output and bounded critic/revision policy | Golden, factual, safety suites |
+| Learning response | Strict Pull-the-Thread output, bounded critics, and final from-scratch recovery | Golden, factual, safety suites |
 | Paper extension | Ordinary materials and optional one-page PDF | Contract and PDF validation |
 | Parent control | Parent-selected artifacts, exact-byte approval, printing optional | Browser and tamper tests |
 | Context-driven suggestion | Deliberately disabled by public policy until episode evidence and timing pass shadow-mode evaluation | Scheduler cannot invoke a model while disabled |

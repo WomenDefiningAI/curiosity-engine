@@ -26,7 +26,14 @@ class OpenAIImageBackend:
 
     name = "openai"
 
-    def __init__(self, model: str, *, api_key: str | None = None, client: Any | None = None):
+    def __init__(
+        self,
+        model: str,
+        *,
+        api_key: str | None = None,
+        client: Any | None = None,
+        quality: str = "medium",
+    ):
         if client is None:
             try:
                 from openai import OpenAI
@@ -35,15 +42,18 @@ class OpenAIImageBackend:
             if not api_key or not secret_is_configured("openai", api_key):
                 raise RuntimeError("OpenAI image generation is configured but its API key is unavailable")
             client = OpenAI(api_key=api_key)
+        if quality not in {"low", "medium", "high", "auto"}:
+            raise ValueError("image quality must be low, medium, high, or auto")
         self.client = client
         self.model = model
+        self.quality = quality
 
     def generate(self, prompt: str) -> GeneratedImage:
         result = self.client.images.generate(
             model=self.model,
             prompt=prompt,
             size="1024x1024",
-            quality="low",
+            quality=self.quality,
         )
         entries = getattr(result, "data", None) or []
         encoded = getattr(entries[0], "b64_json", None) if entries else None

@@ -62,7 +62,7 @@ curiosity brain test --live
 
 The live probe may be billable but contains no family, Slack, or resource data. Changing routes requires another probe.
 
-Deterministic cards need no image provider. If the parent explicitly chooses decorative generation, run `curiosity visual mode --mode decorative` and `curiosity visual test --live`; the latter is a separate billable, family-free image probe.
+Deterministic cards need no image provider. If the parent explicitly chooses decorative generation, run `curiosity visual mode --mode decorative` and `curiosity visual test --live`; the latter is a separate billable, family-free hybrid-card probe.
 
 ## 5. Set the family lens
 

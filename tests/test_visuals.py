@@ -102,6 +102,34 @@ def test_visual_job_writes_opaque_validated_asset_beneath_private_output(tmp_pat
     assert "metadata_stripped" in asset["validation_json"]
 
 
+def test_visual_worker_can_claim_only_the_explicit_probe_job(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    output = tmp_path / "private" / "output"
+    add_event(db, "evt_older_visual")
+    older = enqueue_response_visual(
+        db,
+        event_id="evt_older_visual",
+        visual=synthetic_visual_intent(),
+        mode="deterministic",
+    )
+    add_event(db, "evt_explicit_probe")
+    probe = enqueue_response_visual(
+        db,
+        event_id="evt_explicit_probe",
+        visual=synthetic_visual_intent(),
+        mode="deterministic",
+    )
+
+    result = process_visual_jobs(db, output, job_id=probe, limit=1)
+    assert result[0]["job_id"] == probe
+    with connect(db) as conn:
+        statuses = {
+            row["id"]: row["status"]
+            for row in conn.execute("SELECT id,status FROM visual_jobs WHERE id IN (?,?)", (older, probe))
+        }
+    assert statuses == {older: "queued", probe: "completed"}
+
+
 def test_decorative_generation_uses_minimized_prompt_and_strips_metadata(tmp_path: Path):
     db = tmp_path / "private" / "data" / "db.sqlite"
     output = tmp_path / "private" / "output"
@@ -135,14 +163,158 @@ def test_decorative_generation_uses_minimized_prompt_and_strips_metadata(tmp_pat
             image.save(buffer, format="PNG", pnginfo=None)
             return GeneratedImage(buffer.getvalue(), self.model, "request-test")
 
+    class PassingVisualQA:
+        name = "fake-vision"
+        model = "vision-test"
+
+        def complete(self, **_kwargs):
+            return {"verdict": "pass", "reasons": [], "inspected_pages": 1}
+
     backend = FakeImageBackend()
-    assert process_visual_jobs(db, output, image_backend=backend)[0]["status"] == "completed"
+    assert process_visual_jobs(
+        db, output, image_backend=backend, visual_qa_backend=PassingVisualQA()
+    )[0]["status"] == "completed"
     assert "No words, letters, numbers" in backend.prompt
     assert "child_id" not in backend.prompt and "private" not in backend.prompt.casefold()
     with connect(db) as conn:
         asset = conn.execute("SELECT provenance_json FROM visual_assets WHERE job_id=?", (job_id,)).fetchone()
     assert '"private_context_sent":false' in asset["provenance_json"]
     assert '"response_topic_sent":true' in asset["provenance_json"]
+
+
+def test_decorative_mode_embeds_generated_art_inside_reviewed_robot_card(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    output = tmp_path / "private" / "output"
+    add_event(db, "evt_hybrid")
+    intent = infer_safe_response_visual("What are the biggest robots?", {})
+    assert intent and intent.subject
+    job_id = enqueue_response_visual(
+        db,
+        event_id="evt_hybrid",
+        visual=intent,
+        mode="decorative",
+    )
+
+    class FakeImageBackend:
+        name = "fake"
+        model = "image-test"
+
+        def __init__(self):
+            self.prompt = ""
+
+        def generate(self, prompt: str):
+            from curiosity_engine.openai_image_backend import GeneratedImage
+
+            self.prompt = prompt
+            image = Image.new("RGB", (1024, 1024), "#FF88AA")
+            image.paste("#55CCDD", (100, 100, 924, 924))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return GeneratedImage(buffer.getvalue(), self.model, "request-hybrid")
+
+    class PassingVisualQA:
+        name = "fake-vision"
+        model = "vision-test"
+
+        def complete(self, **kwargs):
+            assert kwargs["payload"]["image_data_urls"][0].startswith("data:image/png;base64,")
+            return {"verdict": "pass", "reasons": [], "inspected_pages": 1}
+
+    backend = FakeImageBackend()
+    result = process_visual_jobs(
+        db, output, image_backend=backend, visual_qa_backend=PassingVisualQA()
+    )
+    assert result[0]["status"] == "completed"
+    assert "decorative beside a code-rendered learning card" in backend.prompt
+    assert "No words, letters, numbers" in backend.prompt
+    with connect(db) as conn:
+        asset = conn.execute("SELECT * FROM visual_assets WHERE job_id=?", (job_id,)).fetchone()
+    assert asset["method"] == "generative"
+    assert asset["trust_tier"] == "B"
+    assert asset["renderer_version"].startswith("response-card-v2+fake:")
+    assert '"generated_art_embedded":true' in asset["provenance_json"]
+    assert '"visual_qa":"pass"' in asset["provenance_json"]
+    assert Image.open(asset["path"]).size == (1200, 900)
+
+
+def test_hybrid_visual_falls_back_to_reviewed_card_when_generated_art_is_not_verified(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    output = tmp_path / "private" / "output"
+    add_event(db, "evt_hybrid_fallback")
+    intent = infer_safe_response_visual("Can we make a paper robot?", {})
+    assert intent
+    job_id = enqueue_response_visual(
+        db,
+        event_id="evt_hybrid_fallback",
+        visual=intent,
+        mode="decorative",
+    )
+
+    class FailingImageBackend:
+        name = "fake"
+        model = "image-test"
+
+        def generate(self, _prompt: str):
+            raise TimeoutError("synthetic provider failure")
+
+    result = process_visual_jobs(
+        db,
+        output,
+        image_backend=FailingImageBackend(),
+        visual_qa_backend=None,
+    )
+    assert result[0]["status"] == "completed"
+    with connect(db) as conn:
+        asset = conn.execute("SELECT * FROM visual_assets WHERE job_id=?", (job_id,)).fetchone()
+    assert asset["method"] == "deterministic"
+    assert asset["trust_tier"] == "B"
+    assert asset["renderer_version"] == "response-card-v2"
+    assert '"fallback_from":"generative"' in asset["provenance_json"]
+    assert '"generated_art_embedded":false' in asset["provenance_json"]
+
+
+def test_hybrid_visual_falls_back_when_visual_qa_rejects_generated_art(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    output = tmp_path / "private" / "output"
+    add_event(db, "evt_hybrid_qa_fallback")
+    intent = infer_safe_response_visual("What are the biggest robots?", {})
+    assert intent
+    job_id = enqueue_response_visual(
+        db,
+        event_id="evt_hybrid_qa_fallback",
+        visual=intent,
+        mode="decorative",
+    )
+
+    class ImageBackend:
+        name = "fake"
+        model = "image-test"
+
+        def generate(self, _prompt: str):
+            from curiosity_engine.openai_image_backend import GeneratedImage
+
+            image = Image.new("RGB", (1024, 1024), "#FF88AA")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return GeneratedImage(buffer.getvalue(), self.model, "request-rejected")
+
+    class RejectingVisualQA:
+        name = "fake-vision"
+        model = "vision-test"
+
+        def complete(self, **_kwargs):
+            return {"verdict": "fail", "reasons": ["contains letters"], "inspected_pages": 1}
+
+    assert process_visual_jobs(
+        db,
+        output,
+        image_backend=ImageBackend(),
+        visual_qa_backend=RejectingVisualQA(),
+    )[0]["status"] == "completed"
+    with connect(db) as conn:
+        asset = conn.execute("SELECT method,provenance_json FROM visual_assets WHERE job_id=?", (job_id,)).fetchone()
+    assert asset["method"] == "deterministic"
+    assert '"visual_qa":"not_passed"' in asset["provenance_json"]
 
 
 def test_openai_image_backend_decodes_the_default_base64_response():
@@ -161,7 +333,7 @@ def test_openai_image_backend_decodes_the_default_base64_response():
     backend = OpenAIImageBackend("gpt-image-test", client=SimpleNamespace(images=images))
     generated = backend.generate("synthetic prompt")
     assert generated.data == b"synthetic-image"
-    assert images.kwargs["quality"] == "low" and images.kwargs["size"] == "1024x1024"
+    assert images.kwargs["quality"] == "medium" and images.kwargs["size"] == "1024x1024"
     assert "response_format" not in images.kwargs
 
 

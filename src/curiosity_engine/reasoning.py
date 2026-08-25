@@ -38,11 +38,19 @@ class ModelBackend(Protocol):
 
 class ReasoningRejected(RuntimeError):
     def __init__(
-        self, message: str, *, candidate: dict[str, Any] | None = None, critiques: list[dict[str, Any]] | None = None
+        self,
+        message: str,
+        *,
+        candidate: dict[str, Any] | None = None,
+        critiques: list[dict[str, Any]] | None = None,
+        critique_rounds: list[list[dict[str, Any]]] | None = None,
+        recovery_strategy: str | None = None,
     ):
         super().__init__(message)
         self.candidate = candidate or {}
         self.critiques = critiques or []
+        self.critique_rounds = critique_rounds or []
+        self.recovery_strategy = recovery_strategy
 
 
 class StubBackend:
@@ -384,6 +392,7 @@ class ReasoningPolicy:
     generator_role: str = "reasoning"
     critic_roles: tuple[str, ...] = ()
     max_revision_rounds: int = 0
+    final_recovery: str | None = None
     allowed_tools: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -415,6 +424,7 @@ def load_policies(config: AppConfig | None = None) -> dict[str, ReasoningPolicy]
             generator_role=str(entry["generator_role"]),
             critic_roles=critics,
             max_revision_rounds=int(entry.get("max_revision_rounds", 0)),
+            final_recovery=entry.get("final_recovery"),
             allowed_tools=tuple(entry.get("allowed_tools", [])),
         )
     result.setdefault("interest_signal", ReasoningPolicy("interest_signal", 2, generator_role="structured_extraction"))
@@ -478,7 +488,10 @@ class ReasoningEngine:
                     response_model=response_model,
                 )
         critiques: list[CriticResult] = []
+        critique_rounds: list[list[CriticResult]] = []
+        accumulated_nonpass: list[CriticResult] = []
         semantic_revision_rounds = 0
+        recovery_strategy: str | None = None
         while True:
             critiques = [
                 CriticResult.model_validate(
@@ -491,8 +504,12 @@ class ReasoningEngine:
                 )
                 for critic in policy.critic_roles
             ]
+            critique_rounds.append(critiques)
             if all(review.verdict == CriticVerdict.PASS for review in critiques):
                 break
+            accumulated_nonpass.extend(
+                review for review in critiques if review.verdict != CriticVerdict.PASS
+            )
             if (
                 any(review.verdict == CriticVerdict.REJECT for review in critiques)
                 and semantic_revision_rounds >= policy.max_revision_rounds
@@ -501,32 +518,99 @@ class ReasoningEngine:
                     "candidate rejected by critic",
                     candidate=parsed.model_dump(mode="json"),
                     critiques=[x.model_dump(mode="json") for x in critiques],
+                    critique_rounds=[
+                        [item.model_dump(mode="json") for item in round_items]
+                        for round_items in critique_rounds
+                    ],
+                    recovery_strategy=recovery_strategy,
                 )
             if semantic_revision_rounds >= policy.max_revision_rounds:
                 raise ReasoningRejected(
                     "candidate did not pass critics within revision budget",
                     candidate=parsed.model_dump(mode="json"),
                     critiques=[x.model_dump(mode="json") for x in critiques],
+                    critique_rounds=[
+                        [item.model_dump(mode="json") for item in round_items]
+                        for round_items in critique_rounds
+                    ],
+                    recovery_strategy=recovery_strategy,
                 )
             semantic_revision_rounds += 1
             revision_rounds += 1
+            rebuild_from_scratch = bool(
+                policy.final_recovery == "rebuild_from_scratch"
+                and semantic_revision_rounds == policy.max_revision_rounds
+            )
+            if rebuild_from_scratch:
+                recovery_strategy = "rebuild_from_scratch"
+            revision_payload = {
+                **base_payload,
+                "critiques": [x.model_dump(mode="json") for x in accumulated_nonpass],
+                "required_changes": list(
+                    dict.fromkeys(
+                        change
+                        for critique in accumulated_nonpass
+                        for change in critique.required_changes
+                    )
+                ),
+                "critic_concerns": list(
+                    dict.fromkeys(
+                        concern
+                        for critique in accumulated_nonpass
+                        for concern in critique.concerns
+                    )
+                ),
+                "rebuild_from_scratch": rebuild_from_scratch,
+            }
+            if not rebuild_from_scratch:
+                revision_payload["candidate"] = parsed.model_dump(mode="json")
             candidate = self.backend.complete(
                 role=policy.generator_role,
                 system=self._generator_system(policy)
-                + " Revise the candidate to address every supplied critic concern; do not merely explain the changes.",
-                payload={
-                    **base_payload,
-                    "candidate": parsed.model_dump(mode="json"),
-                    "critiques": [x.model_dump(mode="json") for x in critiques],
-                },
+                + (
+                    " FINAL RECOVERY: discard the prior draft and rebuild a smaller answer from scratch. "
+                    "Treat every required change as a hard constraint. Do not repeat criticized examples, "
+                    "materials, claims, or activity mechanics. Prefer no optional activity or visual over one "
+                    "that conflicts with the context. Return only the new structured answer."
+                    if rebuild_from_scratch
+                    else " Revise the candidate to address every supplied critic concern; do not merely explain the changes."
+                ),
+                payload=revision_payload,
                 response_model=response_model,
             )
-            parsed = self._validate_and_normalize_candidate(candidate, response_model, event)
+            semantic_validation_repairs = 0
+            while True:
+                try:
+                    parsed = self._validate_and_normalize_candidate(candidate, response_model, event)
+                    break
+                except ReasoningRejected as exc:
+                    if semantic_validation_repairs >= 1:
+                        exc.critique_rounds = [
+                            [item.model_dump(mode="json") for item in round_items]
+                            for round_items in critique_rounds
+                        ]
+                        exc.recovery_strategy = recovery_strategy
+                        raise
+                    semantic_validation_repairs += 1
+                    revision_rounds += 1
+                    candidate = self.backend.complete(
+                        role=policy.generator_role,
+                        system=self._generator_system(policy)
+                        + " Repair only the response contract while preserving every supplied critic constraint.",
+                        payload={
+                            **revision_payload,
+                            "candidate": exc.candidate,
+                            "validation_errors": exc.critiques,
+                        },
+                        response_model=response_model,
+                    )
         return ReasoningEnvelope(
             workflow=policy.workflow,
             output=parsed.model_dump(mode="json"),
             critiques=critiques,
+            critique_rounds=critique_rounds,
             revision_rounds=revision_rounds,
+            recovery_strategy=recovery_strategy,
             backend=self.backend.name,
             model=self.backend.model,
         )

@@ -3,25 +3,27 @@ from __future__ import annotations
 import io
 import os
 import re
+from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
-from .contracts import VisualIntent
+from .contracts import VisualIntent, VisualQAResult
 from .db import connect, init_db, jdump, jload, utcnow
 from .openai_image_backend import ImageBackend, configured_image_backend
 from .trust import validate_response_visual_intent
 
-RENDERER_VERSION = "response-card-v1"
+RENDERER_VERSION = "response-card-v2"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MIN_DIMENSION = 600
 MAX_DIMENSION = 2_048
 MAX_VISUAL_JOB_ATTEMPTS = 3
 STALE_VISUAL_JOB_MINUTES = 10
+_AUTO_VISUAL_QA = object()
 
 PUBLIC_PROPER_NOUNS = {"earth", "mars", "moon", "sun"}
 
@@ -141,7 +143,12 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
         draw.text((cx, cy), glyph, font=_font(64, bold=True), fill=accent, anchor="mm")
 
 
-def render_deterministic_visual(intent: VisualIntent, output_path: str | Path) -> Path:
+def render_deterministic_visual(
+    intent: VisualIntent,
+    output_path: str | Path,
+    *,
+    decorative_art: Image.Image | None = None,
+) -> Path:
     if intent.kind not in {"comparison_cards", "activity_sequence"}:
         raise ValueError("deterministic renderer supports comparison and activity cards only")
     if not _is_curated_deterministic_intent(intent):
@@ -153,18 +160,38 @@ def render_deterministic_visual(intent: VisualIntent, output_path: str | Path) -
     image = Image.new("RGB", (1200, 900), PALETTE["cream"])
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((34, 34, 1166, 866), 28, fill=PALETTE["white"], outline=PALETTE["ink"], width=6)
-    draw.text((70, 68), "LOOK  +  COMPARE  +  WONDER", font=_font(24, bold=True), fill=PALETTE["teal"])
-    title_lines = _wrapped(draw, intent.title, _font(48, bold=True), 1_040)[:2]
-    y = 112
-    for line in title_lines:
-        draw.text((70, y), line, font=_font(48, bold=True), fill=PALETTE["ink"])
-        y += 58
+    if decorative_art is not None:
+        tile = ImageOps.fit(decorative_art.convert("RGB"), (450, 258), method=Image.Resampling.LANCZOS)
+        mask = Image.new("L", tile.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, 449, 257), 28, fill=255)
+        image.paste(tile, (70, 62), mask)
+        draw.rounded_rectangle((88, 270, 274, 306), 12, fill=PALETTE["gold"])
+        draw.text((181, 288), "IMAGINARY ART", font=_font(16, bold=True), fill=PALETTE["ink"], anchor="mm")
+        draw.rounded_rectangle((542, 62, 1130, 320), 28, fill=PALETTE["sky"])
+        draw.text((580, 92), "LOOK  +  COMPARE  +  WONDER", font=_font(21, bold=True), fill=PALETTE["teal"])
+        title_font = _font(42, bold=True)
+        title_lines = _wrapped(draw, intent.title, title_font, 510)[:3]
+        y = 137
+        for line in title_lines:
+            draw.text((580, y), line, font=title_font, fill=PALETTE["ink"])
+            y += 51
+        panel_top = 350
+        panel_bottom = 705
+        footer_y = 738
+    else:
+        draw.text((70, 68), "LOOK  +  COMPARE  +  WONDER", font=_font(24, bold=True), fill=PALETTE["teal"])
+        title_lines = _wrapped(draw, intent.title, _font(48, bold=True), 1_040)[:2]
+        y = 112
+        for line in title_lines:
+            draw.text((70, y), line, font=_font(48, bold=True), fill=PALETTE["ink"])
+            y += 58
+        panel_top = max(235, y + 8)
+        panel_bottom = 690
+        footer_y = 724
 
     panels = intent.panels
     gap = 22
     panel_left = 70
-    panel_top = max(235, y + 8)
-    panel_bottom = 690
     panel_width = (1_060 - gap * (len(panels) - 1)) // len(panels)
     fills = (PALETTE["mint"], PALETTE["sky"], "#FFF0E8", "#FFF6D9")
     for index, panel in enumerate(panels):
@@ -187,7 +214,6 @@ def render_deterministic_visual(intent: VisualIntent, output_path: str | Path) -
             draw.text((left + 22, detail_y), line, font=detail_font, fill=PALETTE["ink"])
             detail_y += 33
 
-    footer_y = 724
     caption_lines = _wrapped(draw, intent.caption, _font(25, bold=True), 900)[:3]
     for line in caption_lines:
         draw.text((70, footer_y), line, font=_font(25, bold=True), fill=PALETTE["ink"])
@@ -250,6 +276,8 @@ def _visual_method(intent: VisualIntent, mode: str) -> str | None:
     if intent.kind in {"comparison_cards", "activity_sequence"}:
         if not _is_curated_deterministic_intent(intent):
             raise ValueError("deterministic response cards must match a reviewed local template")
+        if mode == "decorative" and intent.subject:
+            return "generative"
         return "deterministic"
     if intent.kind == "decorative_illustration" and mode == "decorative":
         return "generative"
@@ -283,9 +311,10 @@ def _robot_comparison_intent() -> VisualIntent:
         pedagogical_value="Helps an early reader compare meanings of big without implying exact scale.",
         caption="One robot can be big in one way and not in every way.",
         alt_text=(
-            "Three colorful cards compare robot height, weight, and strength as different meanings "
-            "of biggest. The cards are not to scale."
+            "Playful imaginary robot art decorates three colorful cards comparing height, weight, and strength "
+            "as different meanings of biggest. The cards are not to scale."
         ),
+        subject="a playful group of whimsical imaginary robots posing together like friendly storybook explorers",
         panels=[
             {"label": "TALLEST", "detail": "Compare height.", "icon": "height"},
             {"label": "HEAVIEST", "detail": "Compare weight.", "icon": "weight"},
@@ -304,9 +333,10 @@ def _robot_activity_intent() -> VisualIntent:
         pedagogical_value="Turns an abstract command idea into three visible actions for an early reader.",
         caption="Point to one card at a time and follow it exactly.",
         alt_text=(
-            "Three colorful cards show Go with a curved arrow, Stop with a red stop shape, and Turn with "
-            "a turning arrow for a pretend robot game."
+            "Playful imaginary robot art decorates three colorful cards showing Go with a curved arrow, Stop "
+            "with a red stop shape, and Turn with a turning arrow for a pretend robot game."
         ),
+        subject="a cheerful imaginary storybook robot ready to play a movement game in a colorful paper world",
         panels=[
             {"label": "GO", "detail": "Move forward.", "icon": "go"},
             {"label": "STOP", "detail": "Freeze in place.", "icon": "stop"},
@@ -431,12 +461,55 @@ def _decorative_prompt(intent: VisualIntent) -> str:
     subject = re.sub(r"\s+", " ", str(intent.subject or "")).strip()
     if not subject:
         raise ValueError("decorative illustration subject is empty")
+    hybrid_boundary = (
+        " This art is decorative beside a code-rendered learning card. Keep every robot similar in visual size, "
+        "avoid factual comparisons or real robot designs, and leave the teaching to the separate card."
+        if intent.kind in {"comparison_cards", "activity_sequence"}
+        else ""
+    )
     return (
         "Create one playful, warm children's-book illustration for an elementary learner. "
         f"Scene: {subject}. No words, letters, numbers, captions, labels, diagrams, charts, measurements, "
         "or exact-count teaching. Do not depict a real child, real family, logo, worksheet, or copyrighted character. "
-        "Use simple shapes, cheerful colors, clear focus, and generous empty space."
+        "Use a lively cut-paper collage style, expressive faces, cheerful colors, tactile shapes, clear focus, "
+        "and generous empty space."
+        + hybrid_boundary
     )
+
+
+def _configured_visual_qa_backend() -> Any | None:
+    # Lazy imports avoid coupling the renderer to runtime initialization.
+    from .config import AppConfig
+    from .runtime import configured_backend
+
+    return configured_backend(AppConfig.load(), role="visual_qa")
+
+
+def _review_generated_art(intent: VisualIntent, png_bytes: bytes, backend: Any | None) -> VisualQAResult:
+    if backend is None:
+        raise RuntimeError("generated art requires a configured visual-QA route")
+    result = backend.complete(
+        role="visual_qa",
+        system=(
+            "Inspect this generated decorative region before it can reach an elementary-age child. Fail if it "
+            "contains words, letters, numbers, logos, recognizable copyrighted characters, frightening or unsafe "
+            "imagery, real-person likenesses, factual labels, diagrams, measurements, or an apparent real robot "
+            "design. For a robot learning card, also fail if robot size differences imply a factual comparison."
+        ),
+        payload={
+            "visual_intent": {
+                "kind": intent.kind,
+                "knowledge_role": intent.knowledge_role,
+                "subject": intent.subject,
+            },
+            "image_data_urls": ["data:image/png;base64," + b64encode(png_bytes).decode("ascii")],
+        },
+        response_model=VisualQAResult,
+    )
+    review = VisualQAResult.model_validate(result)
+    if review.verdict != "pass":
+        raise ValueError("generated art did not pass visual QA")
+    return review
 
 
 def _validate_decorative_privacy(db_path: str | Path, event_id: str, intent: VisualIntent) -> None:
@@ -469,9 +542,12 @@ def process_visual_jobs(
     output_dir: str | Path,
     *,
     image_backend: ImageBackend | None = None,
+    visual_qa_backend: Any = _AUTO_VISUAL_QA,
+    job_id: str | None = None,
     limit: int = 4,
 ) -> list[dict[str, str]]:
     init_db(db_path)
+    resolved_visual_qa_backend = visual_qa_backend
     current = datetime.now(UTC)
     now = current.isoformat()
     stale = (current - timedelta(minutes=STALE_VISUAL_JOB_MINUTES)).isoformat()
@@ -503,8 +579,8 @@ def process_visual_jobs(
         )
         rows = conn.execute(
             """SELECT * FROM visual_jobs WHERE status='queued' AND available_at<=?
-                 AND attempts<? ORDER BY created_at LIMIT ?""",
-            (now, MAX_VISUAL_JOB_ATTEMPTS, limit),
+                 AND (? IS NULL OR id=?) AND attempts<? ORDER BY created_at LIMIT ?""",
+            (now, job_id, job_id, MAX_VISUAL_JOB_ATTEMPTS, limit),
         ).fetchall()
     results: list[dict[str, str]] = []
     for raw in rows:
@@ -522,6 +598,7 @@ def process_visual_jobs(
         try:
             intent = VisualIntent.model_validate(jload(row["intent_json"]))
             provenance: dict[str, Any] = {"family_data_sent": False}
+            asset_method = str(row["method"])
             if row["method"] == "deterministic":
                 temporary = Path(output_dir).resolve() / "visuals" / f".render-{uuid4().hex}.png"
                 temporary.parent.mkdir(parents=True, exist_ok=True)
@@ -533,20 +610,66 @@ def process_visual_jobs(
                     temporary.unlink(missing_ok=True)
                 renderer = RENDERER_VERSION
             else:
-                backend = image_backend or configured_image_backend()
-                if backend is None:
-                    raise RuntimeError("decorative image generation is not configured")
-                generated = backend.generate(_decorative_prompt(intent))
-                raw_bytes = generated.data
-                renderer = f"{backend.name}:{generated.model}"
-                provenance = {
-                    "private_context_sent": False,
-                    "response_topic_sent": True,
-                    "provider": backend.name,
-                    "model": generated.model,
-                    "request_id": generated.request_id,
-                    "prompt_policy": "decorative-minimized-v1",
-                }
+                hybrid = intent.kind in {"comparison_cards", "activity_sequence"}
+                try:
+                    backend = image_backend or configured_image_backend()
+                    if backend is None:
+                        raise RuntimeError("decorative image generation is not configured")
+                    generated = backend.generate(_decorative_prompt(intent))
+                    normalized_art, _art_width, _art_height, _art_validation = _validated_png(generated.data)
+                    if resolved_visual_qa_backend is _AUTO_VISUAL_QA:
+                        resolved_visual_qa_backend = _configured_visual_qa_backend()
+                    reviewer = resolved_visual_qa_backend
+                    qa = _review_generated_art(intent, normalized_art, reviewer)
+                    if hybrid:
+                        art = Image.open(io.BytesIO(normalized_art)).convert("RGB")
+                        temporary = Path(output_dir).resolve() / "visuals" / f".render-{uuid4().hex}.png"
+                        temporary.parent.mkdir(parents=True, exist_ok=True)
+                        temporary.parent.chmod(0o700)
+                        try:
+                            render_deterministic_visual(intent, temporary, decorative_art=art)
+                            raw_bytes = temporary.read_bytes()
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                        renderer = f"{RENDERER_VERSION}+{backend.name}:{generated.model}"
+                        prompt_policy = "hybrid-decorative-minimized-v2"
+                    else:
+                        raw_bytes = normalized_art
+                        renderer = f"{backend.name}:{generated.model}"
+                        prompt_policy = "decorative-minimized-v2"
+                    provenance = {
+                        "private_context_sent": False,
+                        "response_topic_sent": True,
+                        "provider": backend.name,
+                        "model": generated.model,
+                        "request_id": generated.request_id,
+                        "prompt_policy": prompt_policy,
+                        "generated_art_embedded": hybrid,
+                        "visual_qa": qa.verdict,
+                        "visual_qa_provider": getattr(reviewer, "name", "unknown"),
+                        "visual_qa_model": getattr(reviewer, "model", None),
+                    }
+                except Exception:
+                    if not hybrid:
+                        raise
+                    temporary = Path(output_dir).resolve() / "visuals" / f".render-{uuid4().hex}.png"
+                    temporary.parent.mkdir(parents=True, exist_ok=True)
+                    temporary.parent.chmod(0o700)
+                    try:
+                        render_deterministic_visual(intent, temporary)
+                        raw_bytes = temporary.read_bytes()
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    asset_method = "deterministic"
+                    renderer = RENDERER_VERSION
+                    provenance = {
+                        "private_context_sent": False,
+                        "response_topic_sent": True,
+                        "fallback_from": "generative",
+                        "fallback_reason": "generated art was unavailable or did not pass visual QA",
+                        "generated_art_embedded": False,
+                        "visual_qa": "not_passed",
+                    }
             path, width, height, validation = _write_private_png(output_dir, raw_bytes)
             asset_id = f"visual_asset_{uuid4().hex[:16]}"
             asset_hash = sha256(path.read_bytes()).hexdigest()
@@ -562,8 +685,12 @@ def process_visual_jobs(
                         asset_id,
                         row["id"],
                         row["event_id"],
-                        row["method"],
-                        "A" if row["method"] == "generative" else "B",
+                        asset_method,
+                        (
+                            "A"
+                            if asset_method == "generative" and intent.kind == "decorative_illustration"
+                            else "B"
+                        ),
                         renderer,
                         str(path),
                         path.name,

@@ -202,7 +202,9 @@ class ReasoningEnvelope(StrictModel):
     workflow: str
     output: dict[str, Any]
     critiques: list[CriticResult] = Field(default_factory=list)
-    revision_rounds: int = Field(default=0, ge=0, le=5)
+    critique_rounds: list[list[CriticResult]] = Field(default_factory=list, max_length=6)
+    revision_rounds: int = Field(default=0, ge=0, le=10)
+    recovery_strategy: Literal["rebuild_from_scratch"] | None = None
     backend: str
     model: str | None = None
 

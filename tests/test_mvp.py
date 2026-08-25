@@ -84,6 +84,9 @@ def test_critic_rejection_never_completes(tmp_path: Path):
         Event(type="child_question", child_id="child-a", text="Why?")
     )
     assert result.status == "rejected"
+    reasoning = result.output["_reasoning"]
+    assert len(reasoning["critic_rounds"]) == 3
+    assert reasoning["recovery_strategy"] == "rebuild_from_scratch"
     with connect(db) as conn:
         assert conn.execute("SELECT status FROM events").fetchone()[0] == "rejected"
         assert conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
@@ -325,6 +328,231 @@ def test_contract_repair_does_not_consume_semantic_revision_budget():
     assert backend.critic_calls == 2
     assert result.revision_rounds == 2
     assert "operated machine may not be a robot" in result.output["nugget"]
+
+
+def test_final_semantic_revision_rebuilds_without_anchoring_on_rejected_draft():
+    class RebuildBackend(StubBackend):
+        name = "rebuild-test"
+        model = "rebuild-test-v1"
+
+        def __init__(self):
+            self.generator_calls = 0
+            self.saw_required_changes = False
+
+        def complete(self, *, role, system, payload, response_model):
+            del role, system
+            if response_model is CriticResult:
+                extension = payload["candidate"].get("physical_extension")
+                if extension:
+                    return {
+                        "verdict": "revise",
+                        "concerns": ["The optional kit requires a purchase."],
+                        "required_changes": ["Remove the purchased kit and use ordinary materials."],
+                    }
+                return {"verdict": "pass", "concerns": [], "required_changes": []}
+
+            self.generator_calls += 1
+            if payload.get("rebuild_from_scratch"):
+                assert "candidate" not in payload
+                self.saw_required_changes = payload["required_changes"] == [
+                    "Remove the purchased kit and use ordinary materials."
+                ]
+                return {
+                    **StubBackend._pull_thread("Can we build a robot?"),
+                    "physical_extension": None,
+                    "visual": None,
+                }
+            return {
+                **StubBackend._pull_thread("Can we build a robot?"),
+                "physical_extension": {
+                    "title": "Use an optional robot kit",
+                    "instructions": ["Ask an adult to assemble the kit."],
+                    "materials": ["purchased robot kit"],
+                    "parent_effort": "medium",
+                },
+            }
+
+    backend = RebuildBackend()
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_parent_effort",),
+            max_revision_rounds=2,
+            final_recovery="rebuild_from_scratch",
+        ),
+        context={"child": {"grade": "1st"}, "family_lens": {"materials": ["paper"]}},
+        event={"type": "child_question", "text": "Can we build a robot?"},
+    )
+
+    assert backend.generator_calls == 3
+    assert backend.saw_required_changes is True
+    assert result.output["physical_extension"] is None
+    assert result.recovery_strategy == "rebuild_from_scratch"
+    assert len(result.critique_rounds) == 3
+
+
+def test_final_recovery_accumulates_constraints_from_every_critic_round():
+    class ChangingConcernBackend(StubBackend):
+        name = "changing-concern-test"
+        model = "changing-concern-v1"
+
+        def __init__(self):
+            self.generator_calls = 0
+            self.final_constraints: list[str] = []
+
+        def complete(self, *, role, system, payload, response_model):
+            del role, system
+            if response_model is CriticResult:
+                title = str((payload["candidate"].get("physical_extension") or {}).get("title") or "")
+                if "kit" in title.casefold():
+                    return {
+                        "verdict": "revise",
+                        "concerns": ["The activity requires a purchase."],
+                        "required_changes": ["Remove the purchased kit."],
+                    }
+                if "sharp" in title.casefold():
+                    return {
+                        "verdict": "revise",
+                        "concerns": ["The activity uses a sharp tool."],
+                        "required_changes": ["Remove the sharp tool."],
+                    }
+                return {"verdict": "pass", "concerns": [], "required_changes": []}
+
+            self.generator_calls += 1
+            if payload.get("rebuild_from_scratch"):
+                self.final_constraints = payload["required_changes"]
+                return {
+                    **StubBackend._pull_thread("Can we build a robot?"),
+                    "physical_extension": None,
+                    "visual": None,
+                }
+            if "candidate" in payload:
+                return {
+                    **StubBackend._pull_thread("Can we build a robot?"),
+                    "physical_extension": {
+                        "title": "Use a sharp tool",
+                        "instructions": ["Ask an adult to help."],
+                        "materials": ["tool"],
+                        "parent_effort": "medium",
+                    },
+                }
+            return {
+                **StubBackend._pull_thread("Can we build a robot?"),
+                "physical_extension": {
+                    "title": "Use a purchased kit",
+                    "instructions": ["Open the kit."],
+                    "materials": ["kit"],
+                    "parent_effort": "medium",
+                },
+            }
+
+    backend = ChangingConcernBackend()
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_parent_effort",),
+            max_revision_rounds=2,
+            final_recovery="rebuild_from_scratch",
+        ),
+        context={"family_lens": {"materials": ["paper"]}},
+        event={"type": "child_question", "text": "Can we build a robot?"},
+    )
+
+    assert backend.final_constraints == ["Remove the purchased kit.", "Remove the sharp tool."]
+    assert result.output["physical_extension"] is None
+    assert [round_items[0].verdict for round_items in result.critique_rounds] == [
+        "revise",
+        "revise",
+        "pass",
+    ]
+
+
+def test_malformed_final_rebuild_gets_one_contract_repair_without_losing_constraints():
+    class MalformedRebuildBackend(StubBackend):
+        name = "malformed-rebuild-test"
+        model = "malformed-rebuild-v1"
+
+        def complete(self, *, role, system, payload, response_model):
+            del role, system
+            if response_model is CriticResult:
+                if payload["candidate"].get("physical_extension"):
+                    return {
+                        "verdict": "revise",
+                        "concerns": ["The activity requires a purchase."],
+                        "required_changes": ["Remove the purchased kit."],
+                    }
+                return {"verdict": "pass", "concerns": [], "required_changes": []}
+            if payload.get("rebuild_from_scratch") and "validation_errors" not in payload:
+                return {"hook": "Malformed final rebuild"}
+            if payload.get("rebuild_from_scratch") and "validation_errors" in payload:
+                assert payload["required_changes"] == ["Remove the purchased kit."]
+                return {
+                    **StubBackend._pull_thread("Can we build a robot?"),
+                    "physical_extension": None,
+                    "visual": None,
+                }
+            return {
+                **StubBackend._pull_thread("Can we build a robot?"),
+                "physical_extension": {
+                    "title": "Use a purchased kit",
+                    "instructions": ["Open the kit."],
+                    "materials": ["kit"],
+                    "parent_effort": "medium",
+                },
+            }
+
+    result = ReasoningEngine(MalformedRebuildBackend()).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_parent_effort",),
+            max_revision_rounds=2,
+            final_recovery="rebuild_from_scratch",
+        ),
+        context={"family_lens": {"materials": ["paper"]}},
+        event={"type": "child_question", "text": "Can we build a robot?"},
+    )
+
+    assert result.output["physical_extension"] is None
+    assert result.revision_rounds == 3
+
+
+def test_other_workflows_do_not_rebuild_without_explicit_policy():
+    class ScopedRecoveryBackend(StubBackend):
+        def __init__(self):
+            self.rebuild_flags: list[bool] = []
+
+        def complete(self, *, role, system, payload, response_model):
+            if response_model is CriticResult:
+                return {
+                    "verdict": "revise" if not self.rebuild_flags else "pass",
+                    "concerns": ["revise once"] if not self.rebuild_flags else [],
+                    "required_changes": ["revise once"] if not self.rebuild_flags else [],
+                }
+            if "critiques" in payload:
+                self.rebuild_flags.append(bool(payload.get("rebuild_from_scratch")))
+                return payload["candidate"]
+            return super().complete(
+                role=role,
+                system=system,
+                payload=payload,
+                response_model=response_model,
+            )
+
+    backend = ScopedRecoveryBackend()
+    ReasoningEngine(backend).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_context",),
+            max_revision_rounds=1,
+        ),
+        context={},
+        event={"type": "child_question", "text": "Why?"},
+    )
+    assert backend.rebuild_flags == [False]
 
 
 def test_anthropic_adapter_uses_native_messages_and_validates_schema():

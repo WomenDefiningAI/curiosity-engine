@@ -9,17 +9,18 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
 from .brain_config import brain_config_fingerprint, brain_status
 from .config import AppConfig, ConfigurationError, configuration_root, repository_root
-from .db import SCHEMA_VERSION, connect, init_db, utcnow
+from .db import SCHEMA_VERSION, connect, init_db, jload, utcnow
 from .interaction import onboarding_checkpoint, onboarding_status, record_onboarding_checkpoint
 from .openai_image_backend import configured_image_backend
 from .runtime import configured_backend
 from .transports.slack import load_slack_tokens
-from .visuals import enqueue_response_visual, process_visual_jobs
+from .visuals import enqueue_response_visual, infer_safe_response_visual, process_visual_jobs
 
 
 class BrainProbeOutput(BaseModel):
@@ -29,11 +30,60 @@ class BrainProbeOutput(BaseModel):
     count: int
 
 
-IMAGE_PROBE_VERSION = "synthetic-image-v2"
+IMAGE_PROBE_VERSION = "synthetic-hybrid-image-v4"
 
 
 def _check(name: str, status: str, detail: str, *, required: bool) -> dict[str, Any]:
     return {"name": name, "status": status, "detail": detail, "required": required}
+
+
+def _answer_quality_summary(db: Path, *, limit: int = 20) -> dict[str, Any]:
+    """Report redacted outcome rates without reading family question or answer text."""
+
+    summary = {
+        "status": "not_enough_data",
+        "terminal_questions": 0,
+        "completed": 0,
+        "rejected": 0,
+        "failed": 0,
+        "rejection_rate": 0.0,
+        "unsuccessful_rate": 0.0,
+        "window": limit,
+    }
+    if not db.is_file():
+        return summary
+    try:
+        with connect(db) as conn:
+            rows = conn.execute(
+                """SELECT status FROM events WHERE type='child_question'
+                     AND status IN ('completed','rejected','failed')
+                     ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+    except sqlite3.DatabaseError:
+        return summary
+    statuses = [str(row["status"]) for row in rows]
+    completed = statuses.count("completed")
+    rejected = statuses.count("rejected")
+    failed = statuses.count("failed")
+    terminal_questions = len(statuses)
+    quality_decisions = completed + rejected
+    rejection_rate = rejected / quality_decisions if quality_decisions else 0.0
+    unsuccessful_rate = (rejected + failed) / terminal_questions if terminal_questions else 0.0
+    if terminal_questions >= 5:
+        status = "attention" if unsuccessful_rate >= 0.2 else "healthy"
+    else:
+        status = "not_enough_data"
+    return {
+        **summary,
+        "status": status,
+        "terminal_questions": terminal_questions,
+        "completed": completed,
+        "rejected": rejected,
+        "failed": failed,
+        "rejection_rate": round(rejection_rate, 3),
+        "unsuccessful_rate": round(unsuccessful_rate, 3),
+    }
 
 
 def doctor(db_path: str | Path) -> dict[str, Any]:
@@ -238,6 +288,7 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         and family_lens_ready
         and bool(state.get("quality_review_accepted"))
     )
+    answer_quality = _answer_quality_summary(db)
     if not required_pass:
         next_action = "fix required local checks"
     elif not configured:
@@ -278,6 +329,7 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         "quality_review_pending": quality_review_pending,
         "end_to_end_ready": end_to_end_ready,
         "answer_ready": slack_ready and brain_verified,
+        "answer_quality": answer_quality,
         "response_mode": response_mode,
         "next_action": next_action,
         "checks": checks,
@@ -346,49 +398,38 @@ def run_image_generation_probe(
         raise RuntimeError("an OpenAI image-generation route is not configured")
     config_hash = brain_config_fingerprint()
     init_db(db_path)
-    event_id = f"evt_image_probe_v2_{config_hash}"
+    event_id = f"evt_image_probe_v4_{config_hash}_{uuid4().hex[:8]}"
     now = utcnow()
     with connect(db_path) as conn:
         conn.execute(
             """INSERT OR IGNORE INTO events(
                  id,type,child_id,text,source,metadata_json,created_at,status,processed_at,result_json
-               ) VALUES(?,'image_generation_probe',NULL,'synthetic decorative image probe','system','{}',
+               ) VALUES(?,'image_generation_probe',NULL,'synthetic hybrid robot card','system','{}',
                         ?,'completed',?,'{}')""",
             (event_id, now, now),
         )
-    visual = {
-        "kind": "decorative_illustration",
-        "purpose": "imagine",
-        "knowledge_role": "decorative",
-        "title": "Synthetic image test",
-        "pedagogical_value": "Tests decorative image delivery without family context.",
-        "caption": "A synthetic decorative image-generation test.",
-        "alt_text": "A playful imaginary robot watering a tiny garden on the Moon.",
-        "subject": "a friendly imaginary robot watering a tiny garden on the moon",
-        "panels": [],
-        "source_refs": [],
-        "not_to_scale": False,
-    }
+    visual = infer_safe_response_visual("Can we make an imaginary paper robot?", {})
+    if visual is None:  # pragma: no cover - fixed public probe always selects the reviewed template
+        raise RuntimeError("could not build the synthetic hybrid visual intent")
     job_id = enqueue_response_visual(db_path, event_id=event_id, visual=visual, mode="decorative")
     if not job_id:
         raise RuntimeError("could not create the image-generation probe")
-    # The probe is an explicit, billable operator action. Permit that action to
-    # retry a previously failed job for the same configuration without creating
-    # duplicate events or assets.
-    with connect(db_path) as conn:
-        conn.execute(
-            """UPDATE visual_jobs SET status='queued',available_at=?,last_error=NULL,updated_at=?
-               WHERE id=? AND status='failed'""",
-            (utcnow(), utcnow(), job_id),
-        )
-    process_visual_jobs(db_path, output_dir, image_backend=backend, limit=1)
+    process_visual_jobs(db_path, output_dir, image_backend=backend, job_id=job_id, limit=1)
     with connect(db_path) as conn:
         row = conn.execute(
-            """SELECT j.status,j.last_error,a.id AS asset_id,a.sha256
+            """SELECT j.status,j.last_error,a.id AS asset_id,a.sha256,a.method,a.provenance_json
                FROM visual_jobs j LEFT JOIN visual_assets a ON a.job_id=j.id WHERE j.id=?""",
             (job_id,),
         ).fetchone()
-    if not row or row["status"] != "completed" or not row["asset_id"]:
+    provenance = jload(row["provenance_json"]) if row and row["provenance_json"] else {}
+    if (
+        not row
+        or row["status"] != "completed"
+        or not row["asset_id"]
+        or row["method"] != "generative"
+        or not provenance.get("generated_art_embedded")
+        or provenance.get("visual_qa") != "pass"
+    ):
         record_onboarding_checkpoint(
             db_path,
             "image_generation_verified",
@@ -414,7 +455,7 @@ def run_image_generation_probe(
         "model": backend.model,
         "asset_id": row["asset_id"],
         "family_data_sent": False,
-        "note": "The paid probe used one fixed synthetic prompt and stored the image only in private output.",
+        "note": "The paid probe used one fixed synthetic hybrid card and stored it only in private output.",
     }
 
 

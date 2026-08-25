@@ -60,9 +60,11 @@ Messages that do not explicitly name a child are saved to `capture_inbox`. The c
 
 Network/model calls occur outside SQLite transactions. Raw evidence is committed before reasoning. Final response, validated graph effects, action proposals, and completion statuses commit together. Duplicate event IDs return the original result; an ID reused with different content fails.
 
+Critics may request bounded revisions. The final revision discards the rejected draft and rebuilds from the original event, bounded context, and flattened required changes so repeated bad examples do not anchor recovery.
+
 Slack events receive an independent payload hash. A confirmed Slack API rejection can be retried with a bound attempt limit. An ambiguous network failure is marked `unknown` instead of automatically risking a duplicate parent message.
 
-Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. In v0.1, model-proposed deterministic cards are replaced by exact reviewed local templates; the available fallbacks cover robot-size comparisons and pretend-robot command activities. Safe decorative proposals may continue through the separate opt-in image route. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. An ambiguous completion is never retried. Deterministic cards are Tier B and explicitly non-scale; Tier C instructional visuals remain disabled.
+Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. Model-proposed deterministic cards become exact reviewed local templates. In opt-in decorative mode, a template may embed privacy-minimized generated art marked **imaginary** only after visual QA; otherwise it falls back to the reviewed local card. Code owns every label and comparison. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. Ambiguous provider or Slack completion is never retried. Tier C instructional visuals remain disabled.
 
 ## Deployment boundary
 
