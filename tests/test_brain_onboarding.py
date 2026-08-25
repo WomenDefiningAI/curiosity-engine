@@ -12,6 +12,7 @@ from curiosity_engine.brain_config import (
     write_brain_config,
 )
 from curiosity_engine.cli import dump
+from curiosity_engine.db import connect, init_db, utcnow
 from curiosity_engine.interaction import configure_family_lens, onboarding_status, record_onboarding_review
 from curiosity_engine.lab import evaluate
 from curiosity_engine.onboarding import doctor, run_brain_probe, run_image_generation_probe
@@ -122,7 +123,8 @@ def test_image_probe_is_explicit_paid_synthetic_and_route_bound(
         model = "image-test"
 
         def generate(self, prompt: str) -> GeneratedImage:
-            assert "friendly imaginary robot" in prompt
+            assert "cheerful imaginary storybook robot" in prompt
+            assert "code-rendered learning card" in prompt
             assert "private resource" not in prompt.casefold()
             image = Image.new("RGB", (1024, 1024), "#AADDCC")
             image.paste("#224466", (100, 100, 900, 900))
@@ -132,6 +134,22 @@ def test_image_probe_is_explicit_paid_synthetic_and_route_bound(
 
     monkeypatch.setattr(
         "curiosity_engine.onboarding.configured_image_backend", lambda: FakeImageBackend()
+    )
+    monkeypatch.setattr(
+        "curiosity_engine.visuals._configured_visual_qa_backend",
+        lambda: type(
+            "PassingVisualQA",
+            (),
+            {
+                "name": "openai",
+                "model": "vision-test",
+                "complete": lambda self, **_kwargs: {
+                    "verdict": "pass",
+                    "reasons": [],
+                    "inspected_pages": 1,
+                },
+            },
+        )(),
     )
     with pytest.raises(ValueError, match="billable"):
         run_image_generation_probe(db, output, live=False)
@@ -192,6 +210,48 @@ def test_doctor_fails_safely_outside_a_protected_checkout(
     assert report["core_ready"] is False
     assert boundary["status"] == "fail"
     assert "cloned repository" in boundary["detail"]
+
+
+def test_doctor_reports_redacted_answer_rejection_rate(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    init_db(db)
+    with connect(db) as conn:
+        for index, status in enumerate(("completed", "rejected", "rejected", "completed", "rejected")):
+            conn.execute(
+                """INSERT INTO events(id,type,text,source,metadata_json,created_at,status)
+                   VALUES(?, 'child_question', ?, 'synthetic', '{}', ?, ?)""",
+                (f"evt_quality_{index}", f"synthetic private wording {index}", utcnow(), status),
+            )
+
+    report = doctor(db)
+    assert report["answer_quality"] == {
+        "status": "attention",
+        "terminal_questions": 5,
+        "completed": 2,
+        "rejected": 3,
+        "failed": 0,
+        "rejection_rate": 0.6,
+        "unsuccessful_rate": 0.6,
+        "window": 20,
+    }
+    assert "synthetic private wording" not in str(report)
+
+
+def test_doctor_treats_runtime_failures_as_unhealthy_answer_quality(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "db.sqlite"
+    init_db(db)
+    with connect(db) as conn:
+        for index, status in enumerate(("completed", "completed", "completed", "failed", "failed")):
+            conn.execute(
+                """INSERT INTO events(id,type,text,source,metadata_json,created_at,status)
+                   VALUES(?, 'child_question', 'synthetic', 'synthetic', '{}', ?, ?)""",
+                (f"evt_failure_rate_{index}", utcnow(), status),
+            )
+
+    quality = doctor(db)["answer_quality"]
+    assert quality["status"] == "attention"
+    assert quality["rejection_rate"] == 0.0
+    assert quality["unsuccessful_rate"] == 0.4
 
 
 def test_legacy_brain_fingerprint_changes_with_non_secret_route(

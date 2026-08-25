@@ -3,6 +3,7 @@
   {"id":"duplicate-id-payload-conflict","kind":"duplicate_conflict"},
   {"id":"child-profile-upsert-preserves-graph","kind":"child_upsert"},
   {"id":"critic-rejection-fails-closed","kind":"critic_rejection"},
+  {"id":"critic-final-rebuild-removes-anchored-draft","kind":"critic_rebuild"},
   {"id":"expired-school-signal-excluded","kind":"expired_school"},
   {"id":"private-excerpts-require-opt-in","kind":"private_opt_in"},
   {"id":"model-action-remains-proposal","kind":"action_proposal"},

@@ -199,6 +199,26 @@ class RejectingBackend(StubBackend):
         return super().complete(role=role, system=system, payload=payload, response_model=response_model)
 
 
+class RebuildRecoveryBackend(StubBackend):
+    def complete(self, *, role, system, payload, response_model):
+        if response_model is CriticResult:
+            if payload["candidate"].get("physical_extension"):
+                return {
+                    "verdict": "revise",
+                    "concerns": ["The optional activity needs unavailable materials."],
+                    "required_changes": ["Remove the optional activity."],
+                }
+            return {"verdict": "pass", "concerns": [], "required_changes": []}
+        if response_model is PullThreadOutput and payload.get("rebuild_from_scratch"):
+            output = super().complete(role=role, system=system, payload=payload, response_model=response_model)
+            output["physical_extension"] = None
+            output["visual"] = None
+            return output
+        if response_model is PullThreadOutput and "candidate" in payload and "critiques" in payload:
+            return payload["candidate"]
+        return super().complete(role=role, system=system, payload=payload, response_model=response_model)
+
+
 class ActionBackend(StubBackend):
     def complete(self, *, role, system, payload, response_model):
         if response_model is PullThreadOutput:
@@ -289,6 +309,20 @@ def _run_regression(case: dict[str, Any]) -> list[str]:
             )
             if result.status != "rejected":
                 failures.append("critic rejection shipped as completed")
+            elif not (result.output.get("_reasoning") or {}).get("critic_rounds"):
+                failures.append("critic rejection lost round history")
+        elif kind == "critic_rebuild":
+            result = CuriosityHarness(db, ReasoningEngine(RebuildRecoveryBackend())).dispatch(
+                Event(type="child_question", child_id="eval-child", text="Can we build a robot?")
+            )
+            if result.status != "completed":
+                failures.append("final from-scratch recovery did not complete")
+            elif (result.output.get("_reasoning") or {}).get("recovery_strategy") != "rebuild_from_scratch":
+                failures.append("completed recovery was not recorded")
+            elif len((result.output.get("_reasoning") or {}).get("critic_rounds") or []) < 2:
+                failures.append("critic-round provenance was not persisted")
+            elif result.output.get("physical_extension") is not None:
+                failures.append("recovery retained the criticized optional activity")
         elif kind == "expired_school":
             add_school_signal(db, "eval-child", "unit", "old topic", expires_at="2000-01-01T00:00:00+00:00")
             context = build_context(db, "eval-child", {"type": "test", "text": "old topic", "metadata": {}}, 2)

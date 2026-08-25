@@ -26,6 +26,8 @@ curiosity onboard status
 
 These commands are redacted except `slack bindings`, which contains private IDs. Do not paste private command output into public issues.
 
+`curiosity doctor` includes a rolling `answer_quality` summary with no question or answer text. `attention` means at least 20% of five or more recent questions were rejected or failed; inspect before asking a parent to retry.
+
 Revoke access with `curiosity slack revoke --binding ID`. If a token may be exposed, rotate it at the provider and update only the owner-readable ignored env file.
 
 ## Jobs and recovery

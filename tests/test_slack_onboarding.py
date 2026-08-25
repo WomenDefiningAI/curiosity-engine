@@ -313,7 +313,8 @@ def test_slack_hides_rejected_model_candidate_details(tmp_path: Path):
     transport = SlackTransport(db, tmp_path / "output", service=RejectingService(db))
     result = transport.handle(incoming("EvRejectedAnswer", "ask kid-a: What is the biggest robot?"))
     assert result.status == "rejected"
-    assert "family-ready quality checks" in result.message
+    assert "reliable answer" in result.message
+    assert "do not need to keep retyping" in result.message
     assert "validation error" not in result.message
     flush_slack_outbox(client, db)
     assert "private draft" not in client.messages[-1]["text"]

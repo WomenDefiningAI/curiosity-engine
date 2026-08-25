@@ -7,6 +7,7 @@
       "generator_role": "reasoning",
       "critics": ["factual", "pedagogy", "context"],
       "max_revision_rounds": 2,
+      "final_recovery": "rebuild_from_scratch",
       "allowed_tools": ["graph_read", "web_search"]
     },
     "artifact_generate": {

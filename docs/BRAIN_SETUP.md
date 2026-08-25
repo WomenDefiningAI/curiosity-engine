@@ -52,14 +52,14 @@ curiosity brain test --live
 
 `brain doctor` is offline and redacted. The explicit live probe may be billable, uses a fixed synthetic payload, and tests only structured reasoning—not OCR, images, or family usefulness.
 
-Visual response cards default to deterministic local rendering. To enable optional decorative generation and test the exact image route:
+Visual response cards default to deterministic local rendering. Decorative mode can add generated, clearly imaginary art beside code-owned labels after the configured vision route approves it; otherwise the reviewed card remains. To enable it and test both routes:
 
 ```bash
 curiosity visual mode --mode decorative
 curiosity visual test --live
 ```
 
-The paid test sends one fixed, family-free scene prompt and stores the result under ignored private output. OpenAI is the maintained image-delivery adapter in this release; another configured image provider is reported as not runtime-ready instead of silently falling back to the reasoning model.
+The paid test sends one fixed, family-free hybrid-card prompt and stores the result under ignored private output. The maintained OpenAI adapter uses medium-quality square output for family-facing art. Another configured image provider is reported as not runtime-ready instead of silently falling back to the reasoning model.
 
 ## Acceptance before recommendation
 

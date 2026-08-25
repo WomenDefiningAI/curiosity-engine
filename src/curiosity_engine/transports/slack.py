@@ -167,8 +167,9 @@ def _format_thread(result: dict[str, Any]) -> str:
 
 def _response_did_not_pass() -> str:
     return (
-        "I made a draft, but it did not pass the family-ready quality checks, so I did not show it. "
-        "Please try the question once more."
+        "I could not produce a reliable answer, so I stopped instead of showing a flawed draft. The diagnostic is "
+        "saved privately on the computer running Curiosity Engine; you do not need to keep retyping the question. "
+        "Run `curiosity doctor` in that computer's terminal to see the redacted answer-quality status."
     )
 
 

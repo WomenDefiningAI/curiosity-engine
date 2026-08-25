@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 from pathlib import Path
@@ -17,6 +18,7 @@ from .reasoning import ModelBackend, ReasoningEngine, ReasoningPolicy, Reasoning
 from .repository import Job, Repository
 
 __all__ = ["CuriosityHarness", "Event", "RunResult"]
+logger = logging.getLogger(__name__)
 
 
 def configured_backend(config: AppConfig, role: str = "reasoning") -> ModelBackend | None:
@@ -154,7 +156,12 @@ class CuriosityHarness:
                 "backend": envelope.backend,
                 "model": envelope.model,
                 "critics": [x.model_dump(mode="json") for x in envelope.critiques],
+                "critic_rounds": [
+                    [item.model_dump(mode="json") for item in round_items]
+                    for round_items in envelope.critique_rounds
+                ],
                 "revision_rounds": envelope.revision_rounds,
+                "recovery_strategy": envelope.recovery_strategy,
                 "policy": policy.to_dict(),
                 "private_resource_mode": context.get("private_resource_mode", "not_used"),
                 "private_resource_matches": len(context.get("private_resources", [])),
@@ -189,12 +196,26 @@ class CuriosityHarness:
                 child_id=event.child_id,
             )
         except ReasoningRejected as exc:
+            logger.warning(
+                "reasoning rejected workflow=%s run_id=%s reason=%s critique_verdicts=%s",
+                policy.workflow,
+                run_id,
+                str(exc),
+                [str(item.get("verdict") or "unknown") for item in exc.critiques],
+            )
             return self.repository.reject_event(
                 event_id=event.id,
                 job_id=job.id,
                 run_id=run_id,
                 workflow=policy.workflow,
-                output={"candidate": exc.candidate, "critiques": exc.critiques},
+                output={
+                    "candidate": exc.candidate,
+                    "critiques": exc.critiques,
+                    "_reasoning": {
+                        "critic_rounds": exc.critique_rounds,
+                        "recovery_strategy": exc.recovery_strategy,
+                    },
+                },
                 reason=str(exc),
             )
         except Exception as exc:
