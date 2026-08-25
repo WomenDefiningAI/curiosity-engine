@@ -1,6 +1,6 @@
 # Testing and evaluation
 
-## Local quality gate
+## Public quality gate
 
 ```bash
 ruff check .
@@ -8,55 +8,29 @@ pytest
 curiosity-lab --repo . --json-out private/eval-report.json
 ```
 
-`pytest` covers contracts, migrations, event idempotency, critic rejection, context expiry, episode grouping, answer repair, diagnostic exclusion, claim independence, parent corrections, disabled proactivity, private resource gating, distinct provider request shapes, PDF/hash approval, the web flow, household setup, staged onboarding, confirmed-delivery review binding, exact Slack pairing, fixed non-model connection handling, replay/conflict handling, unassigned attribution, outbox ambiguity, token redaction, and least-privilege manifest scope.
+Tests cover contracts, migrations, idempotency, retries, context episodes/corrections, disabled proactivity, private-resource gates, provider request shapes, artifact trust, staged onboarding, Slack authorization/delivery, redaction, and the loopback console.
 
-Tests force deterministic mode and ignored empty provider paths. They never inherit a family's `private/setup/brain.json` or `model.env`, and never make billable provider calls.
+Tests force deterministic mode, ignore private provider configuration, and make no billable calls. The Lab runs public behavioral cases for golden behavior, curiosity, context, safety, uncertainty, parent effort, artifact trust, and regressions.
 
-The Lab separately executes 32 public behavioral cases across:
+An offline pass proves orchestration and known invariants—not production-model quality. It records the independent live judge as `not_run`, so model promotion remains ineligible.
 
-- golden behavior;
-- curiosity preservation;
-- context use;
-- harness policy;
-- bounded autonomy;
-- factual uncertainty;
-- parent effort;
-- social safety;
-- artifact trust;
-- permanent regressions.
+## Live checks
 
-The regression suite includes duplicate-event effects, conflicting idempotency keys, graph-preserving child updates, failed critics, expired school state, private excerpt opt-in, action proposal boundaries, print approvals, one-page PDFs, Tier C fail-closed behavior, claim evidence thresholds, Director bounds, and migration backups. Deterministic episode invariants live in `tests/test_context_episodes.py`; they are release-blocking even though they are not model-scored Lab cases.
+Run live verification locally and in this order:
 
-Credential-gated live verification is local-only and ordered: paired Slack `connection`; family-data-free provider probe; synthetic vision/OCR/image checklist; then one real question with parent review. Tokens, Slack IDs, family messages, images, and responses never belong in CI artifacts.
+1. paired Slack `connection`;
+2. family-data-free provider probe;
+3. synthetic vision/OCR/image checks;
+4. one real question with parent review.
 
-The curated public-project catalog is schema-validated offline. `curiosity ecosystem check --live` is a separate explicit public-metadata alarm: it must never clone, install, import, execute, or send private data to an upstream project. A passing metadata check does not promote a project or replace the manual gate in `PUBLIC_PROJECTS.md`.
-
-## What an offline pass means
-
-Offline mode runs deterministic workflows and executable invariants. It verifies orchestration and known semantic properties, but it is not an independent assessment of a production model. The report therefore records the live judge as `not_run` and sets `promotion_eligible=false`.
-
-## Live semantic judge
+Private messages, files, responses, keys, Slack IDs, and licensed excerpts never belong in CI artifacts. Live Lab judging uses only public fixtures:
 
 ```bash
-export OPENAI_API_KEY='...'
-export CURIOSITY_EVAL_LIVE=1
-curiosity-lab --repo . --live-judge --json-out private/live-eval-report.json
+CURIOSITY_EVAL_LIVE=1 curiosity-lab \
+  --repo . --live-judge \
+  --json-out private/live-eval-report.json
 ```
 
-Only public eval inputs and candidate outputs are sent. Private family rows and licensed excerpts never enter the Lab. The judge uses the case’s `must` / `must_not` rubric and independently fails factual, safety, curiosity, context, or parent-effort misses.
+Behavior promotion requires all deterministic suites, the minimum case count, an independent live judge, no factual/safety/golden regression, and operator approval. Convert real failures to de-identified public regressions only when privacy and licensing allow.
 
-## Promotion discipline
-
-The Lab compares release metadata and refuses automatic promotion. A viable promotion requires:
-
-1. no required suite missing;
-2. every deterministic case passing;
-3. at least the configured minimum case count;
-4. the live judge passing;
-5. deliberate operator approval.
-
-Any production miss becomes a public, de-identified regression fixture whenever licensing and privacy permit. Copyrighted resource excerpts and family-identifying material belong only in ignored local audits, never the public suite.
-
-## CI
-
-GitHub Actions installs the editable package with dev dependencies, runs Ruff, runs pytest, executes the Lab, and uploads the JSON report. No model key is required in pull-request CI.
+CI runs Ruff, pytest, the offline Lab, and CodeQL without provider keys. `curiosity ecosystem check --live` is a separate metadata alarm and never approves an integration.
