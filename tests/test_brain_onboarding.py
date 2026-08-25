@@ -11,6 +11,7 @@ from curiosity_engine.brain_config import (
     ensure_model_env_template,
     write_brain_config,
 )
+from curiosity_engine.cli import dump
 from curiosity_engine.interaction import configure_family_lens, onboarding_status, record_onboarding_review
 from curiosity_engine.lab import evaluate
 from curiosity_engine.onboarding import doctor, run_brain_probe
@@ -38,6 +39,40 @@ def test_private_brain_stack_requires_reasoning_vision_ocr_image_and_credentials
     assert status["configured"] is True
     assert status["multimodal_stack_configured"] is True
     assert status["providers"] == ["openai"]
+
+
+def test_brain_template_never_rewrites_existing_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    model_path = tmp_path / "private" / "setup" / "model.env"
+    monkeypatch.setenv("CURIOSITY_MODEL_ENV", str(model_path))
+    model_path.parent.mkdir(parents=True)
+    model_path.write_text("OPENAI_API_KEY=sk-private-example-key-123456789\n", encoding="utf-8")
+    model_path.chmod(0o600)
+
+    ensure_model_env_template({"openai", "anthropic"})
+
+    rendered = model_path.read_text(encoding="utf-8")
+    assert rendered.count("OPENAI_API_KEY=") == 1
+    assert "OPENAI_API_KEY=sk-private-example-key-123456789" in rendered
+    assert rendered.count("ANTHROPIC_API_KEY=REPLACE_ME") == 1
+    assert model_path.stat().st_mode & 0o077 == 0
+
+
+def test_cli_json_redacts_provider_and_transport_credentials(capsys: pytest.CaptureFixture[str]):
+    dump(
+        {
+            "status": "configured",
+            "OPENAI_API_KEY": "sk-private-example-key-123456789",
+            "nested": {"SLACK_APP_TOKEN": "xapp-private-example-token-123456789"},
+            "accidental_value": "provider error included xoxb-private-example-token-123456789 in text",
+        }
+    )
+    rendered = capsys.readouterr().out
+    assert rendered.count("[redacted]") == 3
+    assert "sk-private" not in rendered
+    assert "xapp-private" not in rendered
+    assert "xoxb-private" not in rendered
 
 
 def test_brain_probe_is_synthetic_and_records_only_sanitized_evidence(

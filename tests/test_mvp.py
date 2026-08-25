@@ -416,12 +416,14 @@ def test_web_onboarding_question_and_csrf(tmp_path: Path):
         follow_redirects=False,
     )
     assert response.status_code == 303
+    assert response.headers["location"] == "/?child=child-a"
     response = client.post(
         "/ask",
         data={"csrf": token, "child_id": "child-a", "question": "Why does the Moon follow us?"},
         follow_redirects=False,
     )
     assert response.status_code == 303
+    assert response.headers["location"] == "/?child=child-a#responses"
     page = client.get("/?child=child-a")
     assert "Nearby objects slide" in page.text
     assert page.headers["cache-control"] == "no-store"
@@ -440,6 +442,14 @@ def test_web_onboarding_question_and_csrf(tmp_path: Path):
     )
     with connect(tmp_path / "db.sqlite") as conn:
         assert conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
+        artifact_id = conn.execute("SELECT id FROM artifacts").fetchone()[0]
+    response = client.post(
+        f"/artifacts/{artifact_id}/approve",
+        data={"csrf": token, "child_id": "//outside.example"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/#artifacts"
 
 
 def test_migration_backup_and_schema_version(tmp_path: Path):

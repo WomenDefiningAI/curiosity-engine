@@ -4,6 +4,7 @@ import os
 import secrets
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -62,6 +63,17 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             },
         )
 
+    def redirect_home(child_id: str | None = None, *, anchor: str | None = None) -> RedirectResponse:
+        """Redirect only to a fixed local path with a database-owned child identifier."""
+
+        known_child = next((child["id"] for child in service.children() if child["id"] == child_id), None)
+        destination = "/"
+        if known_child:
+            destination += "?" + urlencode({"child": known_child})
+        if anchor:
+            destination += f"#{anchor}"
+        return RedirectResponse(destination, status_code=303)
+
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request, child: str | None = None):
         return render_home(request, child=child)
@@ -90,7 +102,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.add_child(child_id.strip(), name.strip(), birth_year, grade or None)
         except Exception as exc:
             return render_home(request, error=str(exc))
-        return RedirectResponse(f"/?child={child_id}", status_code=303)
+        return redirect_home(child_id)
 
     @app.post("/ask")
     def ask(
@@ -111,7 +123,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             )
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id}#responses", status_code=303)
+        return redirect_home(child_id, anchor="responses")
 
     @app.post("/inbox/{inbox_id}/assign")
     def assign_inbox(
@@ -125,7 +137,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.assign_inbox(inbox_id, child_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id}#responses", status_code=303)
+        return redirect_home(child_id, anchor="responses")
 
     @app.post("/inbox/{inbox_id}/dismiss")
     def dismiss_inbox(
@@ -139,7 +151,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.dismiss_inbox(inbox_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id}#inbox", status_code=303)
+        return redirect_home(child_id, anchor="inbox")
 
     @app.post("/reflect")
     def reflect(request: Request, child_id: Annotated[str, Form()], csrf: Annotated[str, Form()] = ""):
@@ -148,7 +160,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.reflect(child_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id}#opportunities", status_code=303)
+        return redirect_home(child_id, anchor="opportunities")
 
     @app.post("/opportunities/{opportunity_id}")
     def opportunity_decision(
@@ -163,7 +175,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.respond_to_opportunity(opportunity_id, decision)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id or ''}#opportunities", status_code=303)
+        return redirect_home(child_id, anchor="opportunities")
 
     @app.post("/feedback")
     def feedback(
@@ -218,7 +230,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.execute_action(action_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id or ''}#artifacts", status_code=303)
+        return redirect_home(child_id, anchor="artifacts")
 
     @app.post("/responses/{event_id}/artifact")
     def response_artifact(
@@ -232,7 +244,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.create_artifact_from_response(event_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id or ''}#artifacts", status_code=303)
+        return redirect_home(child_id, anchor="artifacts")
 
     @app.get("/artifacts/{artifact_id}/file")
     def artifact_file(artifact_id: str):
@@ -277,7 +289,7 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             service.approve_artifact(artifact_id)
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
-        return RedirectResponse(f"/?child={child_id or ''}#artifacts", status_code=303)
+        return redirect_home(child_id, anchor="artifacts")
 
     @app.post("/artifacts/{artifact_id}/print")
     def print_one(

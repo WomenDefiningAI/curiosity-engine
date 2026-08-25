@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +44,31 @@ from .runtime import CuriosityHarness
 from .service import CuriosityService
 from .trust import trust_summary
 
+TERMINAL_SECRET_KEY_SUFFIXES = ("_api_key", "_token", "_password", "_secret")
+TERMINAL_SECRET_PATTERN = re.compile(r"(?<![A-Za-z0-9])(?:sk-|xapp-|xoxb-)[A-Za-z0-9._-]{12,}")
+
+
+def _redact_terminal_secrets(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {
+            key: (
+                "[redacted]"
+                if str(key).casefold().endswith(TERMINAL_SECRET_KEY_SUFFIXES)
+                else _redact_terminal_secrets(value)
+            )
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_terminal_secrets(value) for value in obj]
+    if isinstance(obj, tuple):
+        return tuple(_redact_terminal_secrets(value) for value in obj)
+    if isinstance(obj, str):
+        return TERMINAL_SECRET_PATTERN.sub("[redacted]", obj)
+    return obj
+
 
 def dump(obj: Any) -> None:
-    print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+    print(json.dumps(_redact_terminal_secrets(obj), indent=2, ensure_ascii=False, default=str))
 
 
 def _default_db() -> str:

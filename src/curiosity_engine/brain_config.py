@@ -207,21 +207,29 @@ def ensure_model_env_template(providers: set[str], root: str | Path | None = Non
     path = model_env_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.chmod(0o700)
-    existing: dict[str, str] = {}
+    existing_keys: set[str] = set()
     if path.is_file():
         _require_owner_only(path)
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             if "=" in raw_line and not raw_line.lstrip().startswith("#"):
-                key, value = raw_line.split("=", 1)
-                existing[key.strip()] = value
-    lines = [
-        "# Curiosity Engine provider credentials. This file is ignored by Git.",
-        "# Paste keys here directly; never paste them into coding-agent chat.",
-    ]
-    for provider in sorted(providers):
-        key = SECRET_KEYS[provider]
-        lines.append(f"{key}={existing.get(key, 'REPLACE_ME')}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                key, _separator, _ignored_value = raw_line.partition("=")
+                existing_keys.add(key.strip())
+    missing_keys = [SECRET_KEYS[provider] for provider in sorted(providers) if SECRET_KEYS[provider] not in existing_keys]
+    placeholders = [f"{key}=REPLACE_ME" for key in missing_keys]
+    if not path.exists():
+        lines = [
+            "# Curiosity Engine provider credentials. This file is ignored by Git.",
+            "# Paste keys here directly; never paste them into coding-agent chat.",
+            *placeholders,
+        ]
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write("\n".join(lines) + "\n")
+    elif placeholders:
+        # Never rewrite an existing credential file: append only missing placeholders so a
+        # crash cannot truncate a family's already-configured provider keys.
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + "\n".join(placeholders) + "\n")
     path.chmod(0o600)
     return path
 
