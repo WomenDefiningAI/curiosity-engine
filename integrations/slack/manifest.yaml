@@ -16,6 +16,7 @@ oauth_config:
       - app_mentions:read
       - chat:write
       - files:write
+      - files:read
       - im:history
 settings:
   interactivity:

@@ -7,7 +7,7 @@
       "description": "Understand ordinary parent conversation in a learning thread and choose a bounded next action.",
       "output_kinds": ["answer", "interaction"],
       "skill_ids": ["parent-revision", "visual-selection-k2"],
-      "tool_names": ["continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
+      "tool_names": ["record_thread_context", "continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
       "approval": "none",
       "expected_latency": "short"
     },

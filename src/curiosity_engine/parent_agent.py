@@ -15,7 +15,7 @@ from .reasoning import ModelBackend
 from .sessions import SessionStore
 from .tooling import ToolPolicy, ToolRegistry
 
-PARENT_AGENT_POLICY_VERSION = "parent-agent-v1"
+PARENT_AGENT_POLICY_VERSION = "parent-agent-v2"
 
 
 class ParentAgentRuntime:
@@ -44,6 +44,7 @@ class ParentAgentRuntime:
         child: dict[str, Any] | None,
         latest_event_id: str | None,
         origin: str = "slack",
+        current_attachment_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         history = self.sessions.history(session_id, limit=16)
         capability = self.capabilities.capability("parent_chat")
@@ -51,10 +52,16 @@ class ParentAgentRuntime:
         request = {
             "session": {"id": session_id, "child": child, "latest_event_id": latest_event_id},
             "history": [
-                {"role": item["role"], "kind": item["kind"], "content": item["content"]}
+                {
+                    "role": item["role"],
+                    "kind": item["kind"],
+                    "content": item["content"],
+                    "attachment_context": (item.get("metadata") or {}).get("attachment_context") or [],
+                }
                 for item in history
             ],
             "message": user_message,
+            "current_attachment_context": current_attachment_context or [],
             "capabilities": self.capabilities.capability_cards(),
             "skills": self.capabilities.skill_cards(set(capability.skill_ids)),
             "tools": self.tools.specs(allowed_tools),
@@ -107,18 +114,25 @@ class ParentAgentRuntime:
 
     def _plan(self, request: dict[str, Any], allowed_tools: set[str]) -> ParentAgentTurn:
         if self.backend.name == "deterministic":
-            return self._fallback_plan(str(request["message"]))
+            return self._fallback_plan(
+                str(request["message"]), bool(request.get("current_attachment_context"))
+            )
         system = (
             "You are the parent-conversation planner inside Curiosity Engine. Parents speak naturally; never require "
             "commands or perfectly structured questions. Read the thread history. Choose the smallest useful next "
-            "step and call only reviewed tools shown in the payload. Use continue_learning_thread for a genuine "
-            "follow-up question, revise_learning_thread when the parent critiques or tunes prior output, "
+            "step and call only reviewed tools shown in the payload. A parent turn is not automatically a lesson. "
+            "Use record_thread_context when the parent shares a photo, observation, or play context without asking "
+            "for an output. Use continue_learning_thread for a genuine child-learning follow-up question, "
+            "revise_learning_thread when the parent asks to change a prior answer, activity, or visual, "
             "create_learning_artifact when they ask for a worksheet/activity/challenge/printable, and "
-            "propose_weekly_checkin for recurring check-ins. Do not repeat a prior activity. A model-written message "
-            "A critique of a printable, worksheet, activity sheet, or challenge artifact must call "
+            "propose_weekly_checkin for recurring check-ins. If the parent asks why the engine behaved a certain "
+            "way, corrects what it received, or asks about its capabilities, answer directly in one to four sentences "
+            "with no tool unless a local record is needed. Never generate a lesson or visual merely to apologize or "
+            "explain the interface. Do not repeat a prior activity. A critique of a printable, worksheet, activity "
+            "sheet, or challenge artifact must call "
             "create_learning_artifact again with the full parent wording in revision; revise_learning_thread is only "
-            "for the conversational answer or its generated image. "
-            "may acknowledge briefly, but learning work must use a tool. Block-style interactions are optional "
+            "for the conversational answer or its generated image. A model-written message may acknowledge briefly, "
+            "but learning work must use a tool. Block-style interactions are optional "
             "shortcuts and free-form chat must remain allowed. Never invent child IDs, permissions, or tool names.\n\n"
             + self.capabilities.instructions_for("parent_chat")
         )
@@ -129,11 +143,40 @@ class ParentAgentRuntime:
             response_model=ParentAgentTurn,
         )
         parsed = ParentAgentTurn.model_validate(candidate)
+        parsed = self._normalize_context_capture(parsed, request)
         parsed = self._normalize_artifact_revision(parsed, request)
         invalid = [call.name for call in parsed.tool_calls if call.name not in allowed_tools]
         if invalid:
             raise ValueError(f"parent agent proposed unavailable tools: {', '.join(invalid)}")
         return parsed
+
+    @staticmethod
+    def _normalize_context_capture(
+        turn: ParentAgentTurn, request: dict[str, Any]
+    ) -> ParentAgentTurn:
+        """A plain photo/context share must not turn into an unsolicited mini-lesson."""
+
+        if not request.get("current_attachment_context"):
+            return turn
+        message = str(request.get("message") or "").strip().casefold()
+        requests_output = bool(
+            "?" in message
+            or re.search(
+                r"\b(?:why|how|what|when|where|who|can|could|would|should|explain|help|ideas?|make|create|show|tell|give|suggest)\b",
+                message,
+            )
+        )
+        if requests_output:
+            return turn
+        return ParentAgentTurn(
+            tool_calls=[
+                ParentAgentToolCall(
+                    name="record_thread_context",
+                    arguments={"note": str(request.get("message") or "")},
+                    rationale="The parent shared photo context without requesting a learning output.",
+                )
+            ]
+        )
 
     def _normalize_artifact_revision(
         self,
@@ -181,8 +224,24 @@ class ParentAgentRuntime:
         return turn.model_copy(update={"tool_calls": calls})
 
     @staticmethod
-    def _fallback_plan(message: str) -> ParentAgentTurn:
+    def _fallback_plan(message: str, has_current_attachments: bool = False) -> ParentAgentTurn:
         lowered = message.casefold()
+        if has_current_attachments and not (
+            "?" in message
+            or re.search(
+                r"\b(?:why|how|what|when|where|who|can|could|would|should|explain|help|ideas?|make|create|show|tell|give|suggest)\b",
+                lowered,
+            )
+        ):
+            return ParentAgentTurn(
+                tool_calls=[
+                    ParentAgentToolCall(
+                        name="record_thread_context",
+                        arguments={"note": message},
+                        rationale="The parent shared photo context without asking for an output.",
+                    )
+                ]
+            )
         artifact = next((kind for kind in ("worksheet", "activity", "challenge") if kind in lowered), None)
         if artifact or "printable" in lowered:
             return ParentAgentTurn(

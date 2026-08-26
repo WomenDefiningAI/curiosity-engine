@@ -422,6 +422,15 @@ class ParentAgentTurn(StrictModel):
         return self
 
 
+class ImageContextOutput(StrictModel):
+    """Bounded evidence extracted from one parent-shared image."""
+
+    summary: str = Field(min_length=1, max_length=700)
+    visible_details: list[str] = Field(default_factory=list, max_length=10)
+    possible_play_threads: list[str] = Field(default_factory=list, max_length=5)
+    uncertainties: list[str] = Field(default_factory=list, max_length=6)
+
+
 class WorksheetTask(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,39}$")
     kind: Literal["match", "sort", "sequence", "circle", "label", "draw", "predict", "measure", "record", "short_response"]

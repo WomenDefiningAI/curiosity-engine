@@ -11,6 +11,8 @@ All notable public changes will be recorded here. The project follows semantic v
 - Added explicitly confirmed weekly parent check-ins, durable schedule runs, and restartable Linux user services.
 - Added a no-clone installer and private Codex/Claude Code setup handoff under `~/.curiosity-engine`.
 - Improved thread-aware revisions, playful output guidance, visual delivery resilience, and malformed graph-update recovery.
+- Added paired Slack photo context with bounded vision inspection, durable private thread memory, and proportionate
+  parent replies that do not force a full lesson or visual for every turn.
 
 ## 0.1.0 — initial Slack MVP
 

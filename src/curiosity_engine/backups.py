@@ -514,7 +514,7 @@ def _rebase_restored_database(database: Path, manifest: dict[str, Any], target_p
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        for table in ("artifacts", "visual_assets"):
+        for table in ("artifacts", "visual_assets", "inbound_assets"):
             if table not in tables:
                 continue
             rows = connection.execute(f"SELECT id,path FROM {table}").fetchall()

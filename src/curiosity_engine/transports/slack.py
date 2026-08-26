@@ -7,14 +7,24 @@ import threading
 import urllib.request
 from collections.abc import Callable
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlparse
+
+from PIL import Image, UnidentifiedImageError
 
 from ..artifact_delivery import (
     claim_artifact_delivery,
     enqueue_artifact_delivery,
     mark_artifact_delivery,
     ready_artifact_deliveries,
+)
+from ..attachments import (
+    attachments_for_inbox,
+    discard_inbox_attachments,
+    link_event_attachments,
+    persist_inbound_attachments,
 )
 from ..contracts import InteractionEvent, InteractionOption, InteractionPlan
 from ..db import connect, jload
@@ -50,7 +60,7 @@ from ..presentation import format_learning_thread, response_did_not_pass
 from ..service import CuriosityService
 from ..sessions import SessionStore
 from ..visuals import create_synthetic_visual_job, process_visual_jobs
-from .contracts import InboundMessage, OutboundMessage, TransportResult
+from .contracts import InboundAttachment, InboundMessage, OutboundMessage, TransportResult
 
 PAIR_RE = re.compile(r"^pair\s+([A-Z2-9]{8})$", re.IGNORECASE)
 ASK_RE = re.compile(r"^ask\s+([A-Za-z0-9_-]{1,120})\s*:\s*(.+)$", re.IGNORECASE | re.DOTALL)
@@ -79,6 +89,13 @@ INBOX_DISMISS_ACTION = "curiosity_inbox_dismiss"
 RESPONSE_HELPFUL_ACTION = "curiosity_response_helpful"
 RESPONSE_NOT_HELPFUL_ACTION = "curiosity_response_not_helpful"
 RESPONSE_RETRY_ACTION = "curiosity_response_retry"
+
+MAX_INBOUND_IMAGE_BYTES = 10_000_000
+INBOUND_IMAGE_TYPES = {
+    "image/jpeg": ("JPEG", ".jpg"),
+    "image/png": ("PNG", ".png"),
+    "image/webp": ("WEBP", ".webp"),
+}
 
 
 def _command_text(text: str) -> str:
@@ -349,6 +366,98 @@ def load_slack_tokens() -> dict[str, str]:
     return tokens
 
 
+def _download_slack_bytes(url: str, token: str, *, max_bytes: int = MAX_INBOUND_IMAGE_BYTES) -> bytes:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    if parsed.scheme != "https" or not (hostname == "slack.com" or hostname.endswith(".slack.com")):
+        raise ValueError("Slack attachment URL is outside the Slack file host")
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - exact Slack hosts only
+        data = response.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("Slack attachment exceeds the private image limit")
+    return data
+
+
+def _validate_image_bytes(data: bytes, media_type: str) -> None:
+    expected_format = INBOUND_IMAGE_TYPES[media_type][0]
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if image.format != expected_format:
+                raise ValueError("Slack attachment bytes do not match the declared image type")
+            width, height = image.size
+            if width < 1 or height < 1 or width * height > 30_000_000:
+                raise ValueError("Slack image dimensions are outside the supported limit")
+            image.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Slack attachment is not a readable image") from exc
+
+
+def _receive_slack_images(
+    transport: SlackTransport,
+    event: dict[str, Any],
+    client: Any,
+    *,
+    downloader: Callable[[str, str], bytes] | None = None,
+) -> list[InboundAttachment]:
+    """Download only paired, explicitly delivered image files into private storage."""
+
+    files = event.get("files") or []
+    if not isinstance(files, list):
+        return []
+    token = str(getattr(client, "token", "") or load_slack_tokens().get("SLACK_BOT_TOKEN") or "")
+    inbound_root = (transport.output_dir / "inbound").resolve()
+    inbound_root.mkdir(parents=True, exist_ok=True)
+    inbound_root.chmod(0o700)
+    receive_bytes = downloader or (lambda url, bearer: _download_slack_bytes(url, bearer))
+    received: list[InboundAttachment] = []
+    for raw in files[:3]:
+        if not isinstance(raw, dict):
+            continue
+        external_id = str(raw.get("id") or "")
+        if not external_id:
+            continue
+        ref_hash = sha256(external_id.encode()).hexdigest()
+        media_type = str(raw.get("mimetype") or "").casefold()
+        if media_type not in INBOUND_IMAGE_TYPES:
+            continue
+        declared_size = int(raw.get("size") or 0)
+        if declared_size < 0 or declared_size > MAX_INBOUND_IMAGE_BYTES:
+            received.append(InboundAttachment(external_ref_hash=ref_hash, status="unavailable"))
+            continue
+        try:
+            url = str(raw.get("url_private_download") or raw.get("url_private") or "")
+            if not url:
+                detail = client.files_info(file=external_id)
+                info = detail.get("file") or {}
+                url = str(info.get("url_private_download") or info.get("url_private") or "")
+            if not token or not url:
+                raise PermissionError("Slack file access is not configured")
+            data = receive_bytes(url, token)
+            _validate_image_bytes(data, media_type)
+            digest = sha256(data).hexdigest()
+            path = inbound_root / f"{digest}{INBOUND_IMAGE_TYPES[media_type][1]}"
+            if not path.exists():
+                path.write_bytes(data)
+                path.chmod(0o600)
+            received.append(
+                InboundAttachment(
+                    external_ref_hash=ref_hash,
+                    status="ready",
+                    media_type=media_type,
+                    byte_count=len(data),
+                    sha256=digest,
+                    private_path=str(path),
+                )
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Slack image attachment was unavailable (%s)", exc.__class__.__name__
+            )
+            received.append(InboundAttachment(external_ref_hash=ref_hash, status="unavailable"))
+    return received
+
+
 class CuriosityServiceLike(Protocol):
     def children(self) -> list[dict[str, Any]]: ...
 
@@ -362,6 +471,7 @@ class CuriosityServiceLike(Protocol):
         include_private_excerpts: bool = False,
         event_id: str | None = None,
         context_metadata: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]: ...
 
     def feedback(self, payload: dict[str, Any]) -> int: ...
@@ -385,6 +495,8 @@ class CuriosityServiceLike(Protocol):
         child_id: str,
         user_text: str,
         result: dict[str, Any],
+        attachment_ids: list[str] | None = None,
+        attachment_context: list[dict[str, Any]] | None = None,
     ) -> str: ...
 
     def chat(
@@ -396,6 +508,8 @@ class CuriosityServiceLike(Protocol):
         thread_id: str,
         text: str,
         include_private_excerpts: bool = False,
+        child_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]: ...
 
     def handle_interaction_choice(
@@ -436,6 +550,7 @@ def _help_text() -> str:
         "• `visual connection` — prove an accessible picture can reach this conversation\n"
         "• `children` — show child IDs\n"
         "• `ask CHILD_ID: Why does ice float?` — get a response now\n"
+        "• Attach a photo to a mention or DM — save it as private thread context after choosing a child\n"
         "• Learning threads include Helpful, Not for us, and Try another controls\n"
         "• Send any other note — choose a child or dismiss it with the buttons I show\n"
         "• `assign INBOX_ID CHILD_ID` — attach a saved question and answer it\n"
@@ -554,6 +669,12 @@ class SlackTransport:
         artifact_to_deliver: dict[str, Any] | None = None
         session_id: str | None = None
         try:
+            event_attachments = persist_inbound_attachments(
+                self.db_path,
+                self.output_dir,
+                binding_id=binding_id,
+                message=message,
+            )
             if pair:
                 reply = "This conversation is already paired. Use `help` to see what I can do."
                 purpose = "already-paired"
@@ -636,7 +757,9 @@ class SlackTransport:
                 reply = (
                     "Slack processes the messages and replies you send here. Curiosity Engine stores its durable "
                     "family record in the ignored `private/` directory on the computer running it. A configured "
-                    "model provider processes only the bounded context selected for that request. Deterministic "
+                    "model provider processes only the bounded context selected for that request. A photo explicitly "
+                    "sent to the bot is inspected once by the configured vision provider; the private bytes and a "
+                    "bounded observation are then kept locally for thread follow-ups. Deterministic "
                     "visual cards are created locally; any card uploaded here is then stored by Slack under this "
                     "workspace's policies. Opt-in decorative generation sends a minimized generic scene prompt "
                     "derived from the broad topic, while code rejects known identities and private-context categories. "
@@ -742,6 +865,7 @@ class SlackTransport:
                     include_private_excerpts=include_private_excerpts,
                     event_id=event_id,
                     context_metadata=_episode_metadata(message),
+                    attachments=event_attachments,
                 )
                 if response.get("status") == "completed":
                     reply = _format_thread(response)
@@ -754,6 +878,14 @@ class SlackTransport:
                             child_id=child_id,
                             user_text=question.strip(),
                             result=response,
+                            attachment_ids=[str(item["id"]) for item in event_attachments],
+                            attachment_context=response.get("attachment_context"),
+                        )
+                        link_event_attachments(
+                            self.db_path,
+                            binding_id=binding_id,
+                            external_event_id=message.external_event_id,
+                            session_id=session_id,
                         )
                     reply_blocks = (
                         _semantic_response_blocks(
@@ -786,18 +918,37 @@ class SlackTransport:
                 if not row or row["parent_id"] != binding["parent_id"]:
                     raise ValueError("unassigned note not found for this parent")
                 event_id = _engine_event_id(message, f"assign:{inbox_id}:{child_id}")
-                response = self.service.ask(
-                    child_id=child_id,
-                    text=str(row["text"]),
-                    source="slack_parent_report",
-                    include_private_excerpts=include_private_excerpts,
-                    event_id=event_id,
-                    context_metadata=_episode_metadata(message),
-                )
+                captured_attachments = attachments_for_inbox(self.db_path, inbox_id)
+                if captured_attachments and message.thread_id:
+                    response = self.service.chat(
+                        binding_id=binding_id,
+                        team_id=message.team_id,
+                        channel_id=message.channel_id,
+                        thread_id=message.thread_id,
+                        text=str(row["text"]),
+                        include_private_excerpts=include_private_excerpts,
+                        child_id=child_id,
+                        attachments=captured_attachments,
+                    )
+                else:
+                    response = self.service.ask(
+                        child_id=child_id,
+                        text=str(row["text"]),
+                        source="slack_parent_report",
+                        include_private_excerpts=include_private_excerpts,
+                        event_id=event_id,
+                        context_metadata=_episode_metadata(message),
+                        attachments=captured_attachments,
+                    )
                 if response.get("status") == "completed":
                     resolve_inbox(self.db_path, inbox_id, child_id=child_id)
-                    reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
-                    if message.thread_id:
+                    if captured_attachments and message.thread_id:
+                        reply = str(response.get("message") or "I saved that photo context for this thread.")
+                        session_id = str(response["session_id"])
+                        event_id = response.get("event_id")
+                    else:
+                        reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
+                    if message.thread_id and not session_id:
                         session_id = self.service.record_thread_response(
                             binding_id=binding_id,
                             team_id=message.team_id,
@@ -806,6 +957,8 @@ class SlackTransport:
                             child_id=child_id,
                             user_text=str(row["text"]),
                             result=response,
+                            attachment_ids=[str(item["id"]) for item in captured_attachments],
+                            attachment_context=response.get("attachment_context"),
                         )
                     reply_blocks = (
                         _semantic_response_blocks(
@@ -815,8 +968,11 @@ class SlackTransport:
                             event_id=event_id,
                             text=reply,
                         )
-                        if session_id
-                        else _response_blocks(reply, event_id)
+                        if session_id and event_id
+                        else [
+                            {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                            for section in _mrkdwn_sections(reply)
+                        ]
                     )
                     visual_job_id = response.get("visual_job_id")
                     purpose = "assign"
@@ -834,6 +990,7 @@ class SlackTransport:
                 if not row or row["parent_id"] != binding["parent_id"]:
                     raise ValueError("unassigned note not found for this parent")
                 resolve_inbox(self.db_path, inbox_id, child_id=None, dismiss=True)
+                discard_inbox_attachments(self.db_path, inbox_id)
                 reply = f"Dismissed `{inbox_id}`."
                 purpose = "dismiss"
                 result_status = "completed"
@@ -847,6 +1004,7 @@ class SlackTransport:
                     thread_id=message.thread_id,
                     text=text,
                     include_private_excerpts=resource_mode == "selected_excerpts",
+                    attachments=event_attachments,
                 )
                 reply = str(response.get("message") or "I followed that thread.")
                 session_id = str(response["session_id"])
@@ -878,6 +1036,12 @@ class SlackTransport:
             else:
                 capture = create_unassigned_capture(self.db_path, message, str(binding["parent_id"]))
                 inbox_id = str(capture["inbox_id"])
+                link_event_attachments(
+                    self.db_path,
+                    binding_id=binding_id,
+                    external_event_id=message.external_event_id,
+                    inbox_id=inbox_id,
+                )
                 children = self.service.children()
                 reply = (
                     f"Saved as `{inbox_id}` without choosing a child.\n\n"
@@ -1188,14 +1352,17 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
     # Slack Bolt discovers injectable arguments from positional parameter names.
     # These must not be keyword-only even though Bolt invokes the listener with kwargs.
     def receive(body: dict[str, Any], event: dict[str, Any], client: Any, **_: Any) -> None:
-        if event.get("bot_id") or event.get("subtype"):
+        if event.get("bot_id") or (event.get("subtype") and event.get("subtype") != "file_share"):
             return
         event_type = str(event.get("type", ""))
         if event_type == "message" and event.get("channel_type") != "im":
             return
         text = re.sub(r"<@[A-Z0-9]+>", "", str(event.get("text", ""))).strip()
-        if not text:
+        has_files = bool(event.get("files"))
+        if not text and not has_files:
             return
+        if not text:
+            text = "Shared a photo."
         thread_id = str(event.get("thread_ts") or "") or None
         if not thread_id and event_type == "app_mention":
             # Keep public-family-channel conversations compact: the parent's
@@ -1211,6 +1378,13 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
             thread_id=thread_id,
             occurred_at=str(event.get("event_ts")) if event.get("event_ts") else None,
         )
+        # Do not fetch bytes for an unpaired identity or conversation. Slack
+        # metadata is normalized first; only an exact active binding unlocks
+        # the bounded private download.
+        if has_files and active_binding(db_path, incoming):
+            incoming = incoming.model_copy(
+                update={"attachments": _receive_slack_images(transport, event, client)}
+            )
         result = transport.handle(incoming)
         if result.status == "rejected" and not result.binding_id:
             direct: dict[str, Any] = {"channel": incoming.channel_id, "text": result.message}

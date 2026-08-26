@@ -11,6 +11,19 @@ ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 DEFAULT_TOOL_SPECS = (
     ToolSpec(
+        name="record_thread_context",
+        version="1",
+        description=(
+            "Acknowledge and retain parent-shared text or photo context without creating child evidence, a lesson, "
+            "an activity, or a visual."
+        ),
+        risk="low",
+        side_effect="local_write",
+        data_classes=["thread_history", "parent_context", "private_image_observation"],
+        origins=["slack", "cli"],
+        timeout_seconds=30,
+    ),
+    ToolSpec(
         name="continue_learning_thread",
         version="1",
         description="Answer or deepen the current child learning thread using bounded context and prior thread releases.",

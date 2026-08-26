@@ -8,7 +8,9 @@ Family profiles, events, evidence, curriculum source files, extracted text, inde
 
 Slack tokens live in owner-only `private/setup/slack.env`; non-secret private routes live in `private/setup/brain.json`; provider keys live in owner-only `private/setup/model.env`. Setup reports contain readiness categories only: never credential values, child names, questions, Slack IDs, provider keys, purchased-resource titles/URLs, or licensed excerpts.
 
-Response PNGs use opaque filenames under `private/output/visuals/`, owner-only permissions, stripped metadata, bounded dimensions, and a recorded hash. Uploading a card sends that image, its caption, and alt text to Slack, where Slack retains it under the workspace's policies. The app can write files but cannot read workspace files.
+Response PNGs use opaque filenames under `private/output/visuals/`, owner-only permissions, stripped metadata, bounded dimensions, and a recorded hash. Uploading a card sends that image, its caption, and alt text to Slack, where Slack retains it under the workspace's policies.
+
+The Slack app can read only files explicitly delivered to it in a paired DM or mention. Supported images are size-, type-, host-, hash-, and pixel-bounded before owner-only storage under `private/output/inbound/`. The configured vision provider inspects a photo once; the engine stores a bounded evidence summary locally for threaded follow-ups instead of resending the source image on every turn. Visible image text is treated as untrusted content, never as an instruction. A photo is not automatically child-interest or mastery evidence. Dismissing an unassigned photo removes its local copy when no other record references it.
 
 The resource indexer refuses catalogs outside `private/` and requires a catalog declaration of:
 
@@ -40,7 +42,7 @@ A single observation may create an observation or hypothesis. `established_patte
 
 The web app binds to loopback and rejects non-loopback clients. Mutating forms use a per-process CSRF token and responses are `no-store` with a restrictive Content Security Policy.
 
-The Slack connector uses an outbound Socket Mode connection. It accepts only direct messages or explicit mentions and then requires a local pairing for the exact Slack workspace, adult user, and conversation. The app manifest requests no user scopes and no ambient channel-history scopes. Slack still processes the messages and replies sent through the Slack service; do not treat Slack itself as local storage.
+The Slack connector uses an outbound Socket Mode connection. It accepts only direct messages or explicit mentions and then requires a local pairing for the exact Slack workspace, adult user, and conversation. The app manifest requests no user scopes and no ambient channel-history scopes. It requests `files:read` only for photos explicitly sent to the paired bot. Slack still processes the messages, files, and replies sent through the Slack service; do not treat Slack itself as local storage.
 
 New households never opt into licensed-resource excerpts automatically. An owner may enable the setting locally with `curiosity resource mode --mode selected_excerpts`. A future transport must preserve the same authorization and disclosure behavior.
 
