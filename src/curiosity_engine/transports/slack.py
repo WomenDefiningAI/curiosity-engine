@@ -90,6 +90,7 @@ RESPONSE_HELPFUL_ACTION = "curiosity_response_helpful"
 RESPONSE_NOT_HELPFUL_ACTION = "curiosity_response_not_helpful"
 RESPONSE_RETRY_ACTION = "curiosity_response_retry"
 PROCESSING_REACTION = "eyes"
+PROCESSING_COMPLETE_REACTION = "white_check_mark"
 
 MAX_INBOUND_IMAGE_BYTES = 10_000_000
 INBOUND_IMAGE_TYPES = {
@@ -1421,6 +1422,17 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
             flush_slack_outbox(client, db_path)
         finally:
             if reaction_added:
+                try:
+                    client.reactions_add(
+                        channel=incoming.channel_id,
+                        timestamp=source_message_ts,
+                        name=PROCESSING_COMPLETE_REACTION,
+                    )
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Slack completion reaction was unavailable (%s)",
+                        exc.__class__.__name__,
+                    )
                 try:
                     client.reactions_remove(
                         channel=incoming.channel_id,

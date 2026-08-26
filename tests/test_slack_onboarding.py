@@ -248,14 +248,15 @@ def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
         },
         client,
     )
-    expected = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "eyes"}
-    assert client.reactions_added == [expected]
-    assert client.reactions_removed == [expected]
-    assert client.calls == ["reaction_add", "message", "reaction_remove"]
+    working = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "eyes"}
+    done = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "white_check_mark"}
+    assert client.reactions_added == [working, done]
+    assert client.reactions_removed == [working]
+    assert client.calls == ["reaction_add", "message", "reaction_add", "reaction_remove"]
     assert client.messages[0]["thread_ts"] == "100.2"
 
 
-def test_paired_message_shows_processing_reaction_until_reply(tmp_path: Path):
+def test_paired_message_changes_processing_reaction_to_done_after_reply(tmp_path: Path):
     db, transport, _fake, client, _code = paired_transport(tmp_path)
     client.calls.clear()
     client.messages.clear()
@@ -275,10 +276,11 @@ def test_paired_message_shows_processing_reaction_until_reply(tmp_path: Path):
         client,
     )
 
-    expected = {"channel": "D_PARENT", "timestamp": "200.1", "name": "eyes"}
-    assert client.reactions_added == [expected]
-    assert client.reactions_removed == [expected]
-    assert client.calls == ["reaction_add", "message", "reaction_remove"]
+    working = {"channel": "D_PARENT", "timestamp": "200.1", "name": "eyes"}
+    done = {"channel": "D_PARENT", "timestamp": "200.1", "name": "white_check_mark"}
+    assert client.reactions_added == [working, done]
+    assert client.reactions_removed == [working]
+    assert client.calls == ["reaction_add", "message", "reaction_add", "reaction_remove"]
     assert client.messages[0]["text"].startswith("Slack connection works")
 
 

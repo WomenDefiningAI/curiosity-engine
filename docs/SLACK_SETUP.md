@@ -14,7 +14,7 @@ Slack is an interaction surface, not the durable record. Messages sent through i
 2. Select **From an app manifest** and the family workspace.
 3. Paste `integrations/slack/manifest.yaml` as YAML and create the app.
 
-The manifest requests `chat:write`, `files:write`, `files:read`, `im:history`, `app_mentions:read`, and `reactions:write`, subscribes only to `message.im` and `app_mention`, and enables Block Kit interactions for parent controls. It does not request ambient channel history, users, or user-token scopes. `files:write` delivers response visuals; `files:read` lets the bot inspect only photos a paired parent explicitly sends to it; `reactions:write` provides the temporary `:eyes:` working indicator.
+The manifest requests `chat:write`, `files:write`, `files:read`, `im:history`, `app_mentions:read`, and `reactions:write`, subscribes only to `message.im` and `app_mention`, and enables Block Kit interactions for parent controls. It does not request ambient channel history, users, or user-token scopes. `files:write` delivers response visuals; `files:read` lets the bot inspect only photos a paired parent explicitly sends to it; `reactions:write` provides the working and completion indicators.
 
 ## 3. Install and save both tokens
 
@@ -75,7 +75,7 @@ This creates a fixed card locally and uploads it with alt text. It uses no model
 
 Every unassigned note includes a child dropdown and Dismiss button. Completed learning threads include Helpful, Not for us, and Try another controls. These actions remain restricted to the paired parent and conversation; retries stay in the same learning episode instead of becoming new interest evidence.
 
-For a paired parent message, the bot adds an `:eyes:` reaction before photo or model work begins and removes it after the first response is delivered. If the reaction permission is unavailable, the reply still proceeds normally.
+For a paired parent message, the bot adds an `:eyes:` reaction before photo or model work begins. After the first response is delivered, it replaces the eyes with a persistent `:white_check_mark:`. If the reaction permission is unavailable, the reply still proceeds normally.
 
 A photo explicitly attached to a bot mention or DM is downloaded only after the exact parent and conversation binding passes. The selected vision provider inspects it once; a bounded observation and the private image stay local so threaded follow-ups can use the context. Dismissing an unassigned photo removes its local input when nothing else references it. Photos are clues, not proof of a child's thoughts, interests, or mastery.
 
