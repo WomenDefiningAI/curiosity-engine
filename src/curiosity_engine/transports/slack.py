@@ -89,6 +89,7 @@ INBOX_DISMISS_ACTION = "curiosity_inbox_dismiss"
 RESPONSE_HELPFUL_ACTION = "curiosity_response_helpful"
 RESPONSE_NOT_HELPFUL_ACTION = "curiosity_response_not_helpful"
 RESPONSE_RETRY_ACTION = "curiosity_response_retry"
+PROCESSING_REACTION = "eyes"
 
 MAX_INBOUND_IMAGE_BYTES = 10_000_000
 INBOUND_IMAGE_TYPES = {
@@ -1387,20 +1388,50 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
             thread_id=thread_id,
             occurred_at=str(event.get("event_ts")) if event.get("event_ts") else None,
         )
-        # Do not fetch bytes for an unpaired identity or conversation. Slack
-        # metadata is normalized first; only an exact active binding unlocks
-        # the bounded private download.
-        if has_files and active_binding(db_path, incoming):
-            incoming = incoming.model_copy(
-                update={"attachments": _receive_slack_images(transport, event, client)}
-            )
-        result = transport.handle(incoming)
-        if result.status == "rejected" and not result.binding_id:
-            direct: dict[str, Any] = {"channel": incoming.channel_id, "text": result.message}
-            if incoming.thread_id:
-                direct["thread_ts"] = incoming.thread_id
-            client.chat_postMessage(**direct)
-        flush_slack_outbox(client, db_path)
+        binding = active_binding(db_path, incoming)
+        source_message_ts = str(event.get("ts") or event.get("event_ts") or "")
+        reaction_added = False
+        if binding and source_message_ts:
+            try:
+                client.reactions_add(
+                    channel=incoming.channel_id,
+                    timestamp=source_message_ts,
+                    name=PROCESSING_REACTION,
+                )
+                reaction_added = True
+            except Exception as exc:
+                # A missing optional Slack scope must never block the actual reply.
+                logging.getLogger(__name__).warning(
+                    "Slack processing reaction was unavailable (%s)", exc.__class__.__name__
+                )
+        try:
+            # Do not fetch bytes for an unpaired identity or conversation. Slack
+            # metadata is normalized first; only an exact active binding unlocks
+            # the bounded private download.
+            if has_files and binding:
+                incoming = incoming.model_copy(
+                    update={"attachments": _receive_slack_images(transport, event, client)}
+                )
+            result = transport.handle(incoming)
+            if result.status == "rejected" and not result.binding_id:
+                direct: dict[str, Any] = {"channel": incoming.channel_id, "text": result.message}
+                if incoming.thread_id:
+                    direct["thread_ts"] = incoming.thread_id
+                client.chat_postMessage(**direct)
+            flush_slack_outbox(client, db_path)
+        finally:
+            if reaction_added:
+                try:
+                    client.reactions_remove(
+                        channel=incoming.channel_id,
+                        timestamp=source_message_ts,
+                        name=PROCESSING_REACTION,
+                    )
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "Slack processing reaction cleanup was unavailable (%s)",
+                        exc.__class__.__name__,
+                    )
 
     return receive
 

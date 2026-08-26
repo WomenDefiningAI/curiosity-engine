@@ -13,6 +13,7 @@ All notable public changes will be recorded here. The project follows semantic v
 - Improved thread-aware revisions, playful output guidance, visual delivery resilience, and malformed graph-update recovery.
 - Added paired Slack photo context with bounded vision inspection, durable private thread memory, and proportionate
   parent replies that do not force a full lesson or visual for every turn.
+- Added a temporary Slack `:eyes:` reaction so parents can see when a threaded reply is being processed.
 
 ## 0.1.0 — initial Slack MVP
 

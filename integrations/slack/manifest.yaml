@@ -18,6 +18,7 @@ oauth_config:
       - files:write
       - files:read
       - im:history
+      - reactions:write
 settings:
   interactivity:
     is_enabled: true
