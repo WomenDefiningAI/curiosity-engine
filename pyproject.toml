@@ -66,6 +66,8 @@ curiosity_engine = ["templates/*.html", "static/*.css"]
 "share/curiosity-engine/configs" = ["configs/*.json"]
 "share/curiosity-engine/prompts" = ["prompts/*.md"]
 "share/curiosity-engine/schemas" = ["schemas/*.json"]
+"share/curiosity-engine/capabilities" = ["capabilities/catalog.json"]
+"share/curiosity-engine/capabilities/skills" = ["capabilities/skills/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

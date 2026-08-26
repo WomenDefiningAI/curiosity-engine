@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -13,13 +14,16 @@ from .contracts import (
     DirectorOutput,
     FeedbackOutput,
     GenericOutput,
+    GraphMutation,
     InterestSignalOutput,
     PullThreadOutput,
     ReasoningEnvelope,
 )
-from .visuals import normalize_response_visual
+from .visuals import normalize_response_visual, should_attempt_decorative_visual
 
 OutputModel = TypeVar("OutputModel", bound=BaseModel)
+
+logger = logging.getLogger(__name__)
 
 
 class ModelBackend(Protocol):
@@ -604,6 +608,14 @@ class ReasoningEngine:
                         },
                         response_model=response_model,
                     )
+        if isinstance(parsed, PullThreadOutput):
+            parsed = self._complete_missing_visual(
+                policy=policy,
+                context=context,
+                event=event,
+                parsed=parsed,
+            )
+
         return ReasoningEnvelope(
             workflow=policy.workflow,
             output=parsed.model_dump(mode="json"),
@@ -615,12 +627,61 @@ class ReasoningEngine:
             model=self.backend.model,
         )
 
+    def _complete_missing_visual(
+        self,
+        *,
+        policy: ReasoningPolicy,
+        context: dict[str, Any],
+        event: dict[str, Any],
+        parsed: PullThreadOutput,
+    ) -> PullThreadOutput:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        mode = str(metadata.get("response_visual_mode") or "")
+        question = str(event.get("text") or "")
+        if parsed.visual is not None or not should_attempt_decorative_visual(question, mode):
+            return parsed
+
+        child = context.get("child") if isinstance(context.get("child"), dict) else {}
+        try:
+            candidate = self.backend.complete(
+                role=policy.generator_role,
+                system=self._generator_system(policy)
+                + (
+                    " VISUAL COMPLETION PASS: Copy the supplied structured answer, but add exactly one "
+                    "decorative_illustration visual. The scene may evoke only the broad public topic; it must "
+                    "not teach facts, labels, counts, scale, sequence, anatomy, or a scientific mechanism. Use "
+                    "lowercase generic nouns in subject and exclude names, relationships, private resources, "
+                    "school, home, health, URLs, brands, and copyrighted characters."
+                ),
+                payload={
+                    "candidate": parsed.model_dump(mode="json"),
+                    "context": {"child": {"grade": child.get("grade")}},
+                    "event": {"type": event.get("type"), "text": question},
+                    "visual_completion": {
+                        "mode": mode,
+                        "preserve_reviewed_text": True,
+                        "accepted_kind": "decorative_illustration",
+                    },
+                },
+                response_model=PullThreadOutput,
+            )
+            completed = self._validate_and_normalize_candidate(candidate, PullThreadOutput, event)
+        except Exception as exc:
+            logger.warning("optional visual completion failed error_type=%s", exc.__class__.__name__)
+            return parsed
+        if not isinstance(completed, PullThreadOutput) or completed.visual is None:
+            logger.warning("optional visual completion returned no safe visual")
+            return parsed
+        logger.info("completed missing decorative visual")
+        return parsed.model_copy(update={"visual": completed.visual})
+
     @staticmethod
     def _validate_and_normalize_candidate(
         candidate: dict[str, Any],
         response_model: type[OutputModel],
         event: dict[str, Any],
     ) -> OutputModel:
+        candidate = ReasoningEngine._without_invalid_graph_updates(candidate)
         if response_model is not PullThreadOutput:
             return ReasoningEngine._validate_candidate(candidate, response_model)
         candidate_without_visual = {**candidate, "visual": None}
@@ -631,6 +692,27 @@ class ReasoningEngine:
         output["visual"] = candidate.get("visual")
         visual = normalize_response_visual(str(event.get("text") or ""), output)
         return parsed.model_copy(update={"visual": visual})
+
+    @staticmethod
+    def _without_invalid_graph_updates(candidate: dict[str, Any]) -> dict[str, Any]:
+        updates = candidate.get("graph_updates")
+        if not isinstance(updates, list):
+            return candidate
+        valid_updates: list[Any] = []
+        for index, update in enumerate(updates):
+            try:
+                GraphMutation.model_validate(update)
+            except ValidationError as exc:
+                logger.warning(
+                    "discarded invalid optional graph update index=%s validation_types=%s",
+                    index,
+                    [item["type"] for item in exc.errors()],
+                )
+                continue
+            valid_updates.append(update)
+        if len(valid_updates) == len(updates):
+            return candidate
+        return {**candidate, "graph_updates": valid_updates}
 
     @staticmethod
     def _validate_candidate(candidate: dict[str, Any], response_model: type[OutputModel]) -> OutputModel:

@@ -10,7 +10,7 @@
   },
   "components": {
     "context_builder": {"version": "3", "default_pull_thread_depth": 2, "default_weekly_depth": 4, "episode_aware": true},
-    "pull_thread": {"workflow_version": "6", "model_role": "reasoning", "critics": ["critic_factual", "critic_pedagogy", "critic_context"], "visual_intent": true, "final_recovery": "rebuild_from_scratch"},
+    "pull_thread": {"workflow_version": "7", "model_role": "reasoning", "critics": ["critic_factual", "critic_pedagogy", "critic_context"], "visual_intent": true, "final_recovery": "rebuild_from_scratch"},
     "weekly_reflection": {"workflow_version": "2", "enabled": false, "model_role": "reasoning", "critics": ["critic_pedagogy", "critic_context", "critic_parent_effort", "critic_factual"]},
     "artifact_validator": {"version": "2", "model_role": "visual_qa"},
     "school_context": {"workflow_version": "2", "model_role": "structured_extraction"},
@@ -18,7 +18,7 @@
     "jobs": {"version": "1", "durable": true, "max_attempts": 3},
     "paper_artifacts": {"version": "2", "approval_required": true, "hash_bound": true, "printing_optional": true},
     "slack_transport": {"version": "2", "pairing_required": true, "socket_mode": true, "durable_visual_uploads": true},
-    "response_visuals": {"version": "4", "one_per_response": true, "tier_c_enabled": false, "deterministic_default": true, "safe_fallbacks": true, "hybrid_decorative_art": true, "generated_art_visual_qa": true}
+    "response_visuals": {"version": "5", "one_per_response": true, "tier_c_enabled": false, "deterministic_default": true, "safe_fallbacks": true, "hybrid_decorative_art": true, "generated_art_visual_qa": true, "missing_visual_completion": true}
   },
   "models": {
     "reasoning": {"capabilities": ["structured_output"]},

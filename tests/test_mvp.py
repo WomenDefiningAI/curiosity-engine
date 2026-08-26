@@ -5,11 +5,12 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from curiosity_engine.artifacts import ArtifactService, render_pdf
 from curiosity_engine.context_builder import build_context
-from curiosity_engine.contracts import CriticResult, Event, GenericOutput, PullThreadOutput
+from curiosity_engine.contracts import CriticResult, Event, GenericOutput, GraphMutation, PullThreadOutput
 from curiosity_engine.db import SCHEMA_VERSION, connect, init_db
 from curiosity_engine.graph import add_child, add_school_signal, capture_question
 from curiosity_engine.openai_backend import OpenAIBackend
@@ -267,6 +268,75 @@ def test_openai_candidate_with_overlong_hook_uses_reasoning_repair_round():
     assert responses.calls == 2
     assert result.revision_rounds == 1
     assert result.output["hook"] == valid["hook"]
+
+
+def test_graph_mutation_requires_kind_specific_fields():
+    with pytest.raises(ValidationError, match="set_knowledge_state requires node_id and knowledge_state"):
+        GraphMutation.model_validate({"kind": "set_knowledge_state"})
+
+
+class IncompleteGraphUpdateBackend(StubBackend):
+    def complete(self, *, role, system, payload, response_model):
+        result = super().complete(
+            role=role,
+            system=system,
+            payload=payload,
+            response_model=response_model,
+        )
+        if response_model is PullThreadOutput:
+            result["graph_updates"] = [{"kind": "set_knowledge_state"}]
+        return result
+
+
+def test_invalid_optional_graph_shape_does_not_drop_response():
+    result = ReasoningEngine(IncompleteGraphUpdateBackend()).run(
+        policy=ReasoningPolicy("pull_thread", 2),
+        context={"child": {"grade": "1st"}},
+        event={"type": "child_question", "text": "How does electricity work?"},
+    )
+
+    assert result.output["hook"]
+    assert result.output["graph_updates"] == []
+
+
+class MissingGraphTargetBackend(StubBackend):
+    def complete(self, *, role, system, payload, response_model):
+        result = super().complete(
+            role=role,
+            system=system,
+            payload=payload,
+            response_model=response_model,
+        )
+        if response_model is PullThreadOutput:
+            result["graph_updates"] = [
+                {
+                    "kind": "set_knowledge_state",
+                    "node_id": 999_999,
+                    "knowledge_state": "exposed",
+                }
+            ]
+        return result
+
+
+def test_missing_optional_graph_target_does_not_drop_response(tmp_path: Path):
+    db = tmp_path / "db.sqlite"
+    init_db(db)
+    add_child(db, "child-a", "Demo Child", 2020, "1st")
+    harness = CuriosityHarness(
+        db,
+        reasoning_engine=ReasoningEngine(MissingGraphTargetBackend()),
+    )
+
+    result = harness.dispatch(
+        Event(type="child_question", child_id="child-a", text="How does electricity work?")
+    )
+
+    assert result.status == "completed"
+    assert result.output["hook"]
+    assert any(update["status"] == "skipped_invalid" for update in result.graph_updates)
+    with connect(db) as conn:
+        failed = conn.execute("SELECT COUNT(*) FROM graph_effects WHERE status='failed'").fetchone()[0]
+        assert failed == 1
 
 
 def test_contract_repair_does_not_consume_semantic_revision_budget():

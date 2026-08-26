@@ -1,34 +1,30 @@
 # Roadmap
 
-The Slack MVP is implemented; see [MVP status](docs/MVP_STATUS.md). This roadmap lists only unfinished work.
-
 ## Next
 
-- parent-controlled paper-page requests from Slack;
-- background connector startup for supported home computers;
-- local export and deletion walkthroughs;
-- topic entity resolution and visible curiosity ladders;
-- trusted current-resource research with provenance;
-- de-identified regressions from parent corrections;
-- broader factual, context, safety, OCR, visual-QA, image-edit, latency, and cost evals;
-- enough repeated family evaluation to recommend a reasoning/vision/image stack;
-- shadow-mode evaluation of episode evidence and suggestion timing.
+- visible, parent-correctable child context and curiosity ladders;
+- richer worksheet mechanics and evaluated knowledge-bearing diagrams;
+- de-identified regression proposals from recurring parent feedback patterns;
+- broader factual, age-fit, OCR, visual-QA, image-edit, latency, and cost evals;
+- enough repeated family evaluation to recommend a model stack;
+- macOS always-on service support and smoother upgrade/rollback commands.
 
 ## Later integrations
 
 - Telegram through the existing transport contract;
 - parent-authorized school email and calendar context;
-- easier conventional-printer discovery and queues;
+- conventional-printer discovery and queues;
 - hosted or multi-parent operation under a separate threat model.
 
-Every integration needs explicit consent, least-privilege access, provenance, expiry, and tests. Gmail, calendars, Telegram, and printer automation are not active in v1.
+Every integration needs explicit consent, least privilege, provenance, expiry, and tests.
 
 ## Context research
 
-Possible future work includes embedding-assisted retrieval, an optional graph database, probabilistic mastery, and evidence-gated proactive suggestions. None belongs in v1.
-
-This work starts only after episode grouping and parent corrections are trustworthy. It must preserve uncertainty, distinguish retries from independent interest, support local inspection, and evaluate with family-free data before opt-in family shadowing. `do_nothing` remains valid; unsolicited delivery never becomes an implicit default.
+Possible future work includes embedding-assisted retrieval, an optional graph database, probabilistic mastery, and
+evidence-gated proactive suggestions. None belongs in v1. Research must preserve uncertainty, separate retries from
+independent interest, and keep `do_nothing` valid.
 
 ## Out of scope
 
-WhatsApp, child-facing accounts, autonomous purchasing, automatic outbound campaigns, automatic release promotion, and specialized fabrication are outside the current plan.
+WhatsApp, child accounts, autonomous purchasing, automatic campaigns or release promotion, and specialized
+fabrication are outside the current plan.

@@ -312,6 +312,12 @@ def _is_social_inference_question(question: str) -> bool:
     return has_person and _contains_any_word(lowered, SOCIAL_INFERENCE_VERBS)
 
 
+def should_attempt_decorative_visual(question: str, mode: str) -> bool:
+    """Ask for one privacy-minimized decorative visual when the household opted in."""
+
+    return mode == "decorative" and bool(question.strip()) and not _is_social_inference_question(question)
+
+
 def _robot_comparison_intent() -> VisualIntent:
     return VisualIntent(
         kind="comparison_cards",

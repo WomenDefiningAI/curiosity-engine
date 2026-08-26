@@ -34,6 +34,19 @@ The Director architecture may sense, reflect, generate candidates, research publ
 
 The Director may not silently promote releases, purchase materials, auto-print by default, spam parents, or make high-impact child-profile changes from weak evidence.
 
+## Capability and interaction kernel
+
+Parents may speak naturally in an established learning thread. Do not require command syntax or perfectly structured
+questions. The parent-chat planner may choose only reviewed capabilities and typed tools. Tools are deny-by-default;
+there is no general shell, browser, or computer-control tool in the family runtime. External writes and recurring
+schedules require explicit, scoped parent confirmation.
+
+Models produce semantic `InteractionPlan` choices, never Slack JSON. Code compiles Block Kit with opaque, binding-bound,
+expiring, one-use tokens. Buttons are optional shortcuts; free-form parent chat must always remain available.
+
+Persist agent turns, tool calls, capability/skill versions, and ordered release units. Text, interactions, visuals, and
+artifacts may deliver as independent ready units, but they must retain the same session and source-event lineage.
+
 ## Artifacts
 
 Trusted facts → artifact trust tier → asset strategy → deterministic layout → machine validation → visual QA → parent-approved paper print.
@@ -50,17 +63,25 @@ Every behavioral change must run relevant eval suites and the global golden/regr
 
 Read `docs/PUBLIC_PROJECTS.md` before recommending, cloning, installing, importing, or executing an external repository. `configs/public-projects.json` is the reviewed catalog; a project being public, popular, recently updated, or listed there does not by itself authorize execution.
 
-Default to canonical documentation and stable-release references. Never run upstream `main`, beta/RC code, gists, remote install scripts, plugins, models, or examples during family onboarding. Only `integrated` projects may execute in the normal MVP, and only at the reviewed release constraint. An `approved_reference` may be studied but not installed. An `evaluation_candidate` must be tested without family data in an isolated environment. `watch_only` is never executable.
+Default to canonical documentation and stable-release references. Never run a third-party upstream `main`, beta/RC
+code, gist, remote install script, plugin, model, or example during family onboarding. Only `integrated` projects may
+execute in the normal MVP, and only at the reviewed release constraint. An `approved_reference` may be studied but not
+installed. An `evaluation_candidate` must be tested without family data in an isolated environment. `watch_only` is
+never executable.
 
 Before integration, verify publisher identity, exact license and asset/content/model licenses, maintenance, security reporting, release provenance, dependencies, install scripts, network/data behavior, accessibility, and elementary-age fit. Pin the release and immutable hash, scan dependencies, add malicious-input and public pedagogical evals, and require normal code review. Stars and OpenSSF scores are signals, not approval. Never send family or purchased-resource data to an upstream project or its demos.
 
 ## New-family onboarding
 
-Assume a parent has cloned this repository and pointed a coding agent at it. Guide them in plain language; do not assume they know Python, Slack app administration, environment variables, databases, or model terminology.
+Assume a parent used the no-clone installer and opened the private coding-agent handoff, or deliberately cloned a source
+checkout to contribute. Guide them in plain language; do not assume they know Python, Slack app administration,
+environment variables, databases, or model terminology.
 
 Before changing private state, read `docs/AGENT_ONBOARDING.md` completely and follow its checkpoints. Use the deterministic setup commands instead of editing SQLite or private configuration by hand. Explain what stays local and what a selected messaging/model provider will process before asking for credentials or family context.
 
-Never copy family details, licensed resources, tokens, private evals, or generated artifacts into tracked files, public issue text, terminal transcripts intended for sharing, or coding-agent instruction files. Store family-specific setup output only beneath ignored `private/` paths.
+Never copy family details, licensed resources, tokens, private evals, or generated artifacts into tracked files, public
+issue text, terminal transcripts intended for sharing, or public coding-agent instruction files. Installed family state
+belongs beneath `~/.curiosity-engine/private/`; source-checkout family state belongs beneath ignored `private/` paths.
 
 ## Two operating personas
 

@@ -2,6 +2,16 @@
 
 All notable public changes will be recorded here. The project follows semantic versioning after the first stable release.
 
+## Unreleased
+
+- Added durable parent-chat sessions, reviewed capability/skill loading, typed policy-checked tools, and semantic Block
+  Kit interactions with bound one-use choices.
+- Added distinct worksheet, hands-on activity, and mystery-challenge contracts with one-page rendering, preview, QA,
+  and ordered Slack PDF delivery.
+- Added explicitly confirmed weekly parent check-ins, durable schedule runs, and restartable Linux user services.
+- Added a no-clone installer and private Codex/Claude Code setup handoff under `~/.curiosity-engine`.
+- Improved thread-aware revisions, playful output guidance, visual delivery resilience, and malformed graph-update recovery.
+
 ## 0.1.0 — initial Slack MVP
 
 - Added local-first household setup, exact Slack pairing, fixed transport proof, unassigned capture, and durable delivery handling.

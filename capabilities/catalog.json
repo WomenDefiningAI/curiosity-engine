@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "id": "parent_chat",
+      "version": "1",
+      "description": "Understand ordinary parent conversation in a learning thread and choose a bounded next action.",
+      "output_kinds": ["answer", "interaction"],
+      "skill_ids": ["parent-revision", "visual-selection-k2"],
+      "tool_names": ["continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
+      "approval": "none",
+      "expected_latency": "short"
+    },
+    {
+      "id": "artifact_worksheet",
+      "version": "1",
+      "description": "Create a real one-page elementary worksheet with typed tasks and usable answer spaces.",
+      "output_kinds": ["artifact", "visual"],
+      "skill_ids": ["worksheet-k2", "visual-selection-k2"],
+      "tool_names": ["create_learning_artifact"],
+      "approval": "none",
+      "expected_latency": "background"
+    },
+    {
+      "id": "artifact_activity",
+      "version": "1",
+      "description": "Create a playable hands-on activity using ordinary household materials.",
+      "output_kinds": ["artifact", "visual"],
+      "skill_ids": ["hands-on-activity-k2", "visual-selection-k2"],
+      "tool_names": ["create_learning_artifact"],
+      "approval": "none",
+      "expected_latency": "background"
+    },
+    {
+      "id": "artifact_challenge",
+      "version": "1",
+      "description": "Create a story-led elementary challenge with constraints, multiple paths, and graduated hints.",
+      "output_kinds": ["artifact", "visual"],
+      "skill_ids": ["mystery-challenge-k2", "visual-selection-k2"],
+      "tool_names": ["create_learning_artifact"],
+      "approval": "none",
+      "expected_latency": "background"
+    },
+    {
+      "id": "weekly_parent_checkin",
+      "version": "1",
+      "description": "Run an explicitly scheduled, lightweight parent reflection without treating the check-in as child evidence.",
+      "output_kinds": ["interaction"],
+      "skill_ids": ["weekly-parent-checkin"],
+      "tool_names": ["propose_weekly_checkin"],
+      "approval": "per_call",
+      "expected_latency": "instant"
+    }
+  ],
+  "skills": [
+    {"id": "parent-revision", "version": "1", "description": "Interpret natural parent feedback and revise only the requested components.", "instructions_path": "capabilities/skills/parent-revision.md", "required_tools": ["continue_learning_thread", "revise_learning_thread", "create_learning_artifact"]},
+    {"id": "worksheet-k2", "version": "1", "description": "Design a child-usable K–2 worksheet rather than prose arranged on a page.", "instructions_path": "capabilities/skills/worksheet-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "hands-on-activity-k2", "version": "1", "description": "Design a fast-starting activity with a playful observation loop.", "instructions_path": "capabilities/skills/hands-on-activity-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "mystery-challenge-k2", "version": "1", "description": "Design a story, mission, constraints, and hints that preserve child agency.", "instructions_path": "capabilities/skills/mystery-challenge-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "visual-selection-k2", "version": "1", "description": "Choose comparison, sequence, parts, observation target, or decorative story art based on learning value.", "instructions_path": "capabilities/skills/visual-selection-k2.md", "required_tools": []},
+    {"id": "weekly-parent-checkin", "version": "1", "description": "Collect low-effort weekly reflection without inflating the child context graph.", "instructions_path": "capabilities/skills/weekly-parent-checkin.md", "required_tools": ["propose_weekly_checkin"]}
+  ]
+}

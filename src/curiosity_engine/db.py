@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -368,6 +368,8 @@ CREATE TABLE IF NOT EXISTS household_settings (
     CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts')),
   visual_mode TEXT NOT NULL DEFAULT 'deterministic'
     CHECK(visual_mode IN ('off', 'deterministic', 'decorative')),
+  weekly_checkins_enabled INTEGER NOT NULL DEFAULT 0
+    CHECK(weekly_checkins_enabled IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -637,6 +639,192 @@ CREATE TRIGGER IF NOT EXISTS resource_chunks_au AFTER UPDATE ON resource_chunks 
   VALUES ('delete', old.id, old.content, old.heading);
   INSERT INTO resource_chunks_fts(rowid, content, heading) VALUES (new.id, new.content, new.heading);
 END;
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  origin TEXT NOT NULL CHECK(origin IN ('slack','schedule','cli')),
+  transport TEXT,
+  binding_id TEXT,
+  conversation_ref TEXT NOT NULL,
+  thread_ref TEXT NOT NULL,
+  child_id TEXT,
+  capability_id TEXT NOT NULL DEFAULT 'parent_chat',
+  state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','waiting','completed','failed')),
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(origin,binding_id,conversation_ref,thread_ref),
+  FOREIGN KEY(binding_id) REFERENCES transport_bindings(id) ON DELETE SET NULL,
+  FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('user','assistant','tool','system')),
+  kind TEXT NOT NULL DEFAULT 'message',
+  content TEXT NOT NULL,
+  event_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id,ordinal),
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_turns (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  provider TEXT,
+  model TEXT,
+  status TEXT NOT NULL CHECK(status IN ('running','waiting','completed','failed')),
+  request_hash TEXT NOT NULL,
+  response_json TEXT NOT NULL DEFAULT '{}',
+  usage_json TEXT NOT NULL DEFAULT '{}',
+  policy_hash TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE(session_id,ordinal),
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  tool_name TEXT NOT NULL,
+  tool_version TEXT NOT NULL,
+  argument_hash TEXT NOT NULL,
+  arguments_json TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('allowed','awaiting_approval','denied')),
+  status TEXT NOT NULL CHECK(status IN ('proposed','awaiting_approval','running','succeeded','failed','unknown','denied','expired')),
+  result_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(session_id,turn_id,ordinal),
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(turn_id) REFERENCES agent_turns(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+  id TEXT PRIMARY KEY,
+  tool_call_id TEXT NOT NULL UNIQUE,
+  scope_hash TEXT NOT NULL,
+  decision TEXT NOT NULL DEFAULT 'pending' CHECK(decision IN ('pending','approved','denied','expired')),
+  actor_parent_id TEXT,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(tool_call_id) REFERENCES tool_calls(id) ON DELETE CASCADE,
+  FOREIGN KEY(actor_parent_id) REFERENCES parent_principals(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS capability_runs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  capability_id TEXT NOT NULL,
+  capability_version TEXT NOT NULL,
+  skill_versions_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','rejected')),
+  source_event_id TEXT,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(source_event_id) REFERENCES events(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS release_units (
+  id TEXT PRIMARY KEY,
+  capability_run_id TEXT NOT NULL,
+  parent_release_unit_id TEXT,
+  unit_type TEXT NOT NULL CHECK(unit_type IN ('answer','interaction','artifact','visual','status')),
+  ordinal INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('draft','reviewed','queued','delivered','failed','superseded')),
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(capability_run_id,ordinal),
+  FOREIGN KEY(capability_run_id) REFERENCES capability_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(parent_release_unit_id) REFERENCES release_units(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS interaction_instances (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  binding_id TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  options_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','expired','cancelled')),
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(binding_id) REFERENCES transport_bindings(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS interaction_events (
+  id TEXT PRIMARY KEY,
+  interaction_id TEXT NOT NULL,
+  option_token_hash TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  actor_parent_id TEXT,
+  external_event_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(interaction_id,external_event_id),
+  FOREIGN KEY(interaction_id) REFERENCES interaction_instances(id) ON DELETE CASCADE,
+  FOREIGN KEY(actor_parent_id) REFERENCES parent_principals(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS schedule_runs (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','skipped')),
+  session_id TEXT,
+  lease_owner TEXT,
+  leased_at TEXT,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(schedule_id,due_at),
+  FOREIGN KEY(schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifact_file_outbox (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  depends_on_delivery_id TEXT,
+  channel_id TEXT NOT NULL,
+  thread_id TEXT,
+  path TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime_type TEXT NOT NULL CHECK(mime_type IN ('application/pdf','image/png')),
+  byte_count INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  title TEXT NOT NULL,
+  comment TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','ticket_acquiring','ticket_acquired','uploading','bytes_uploaded','completing','sent','failed','unknown','expired')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TEXT NOT NULL,
+  slack_file_id TEXT,
+  external_message_id TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+  FOREIGN KEY(binding_id) REFERENCES transport_bindings(id) ON DELETE CASCADE,
+  FOREIGN KEY(depends_on_delivery_id) REFERENCES delivery_outbox(id) ON DELETE SET NULL
+);
 """
 
 
@@ -669,6 +857,7 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
     "household_settings": {
         "resource_context_mode": "TEXT NOT NULL DEFAULT 'metadata_only' CHECK(resource_context_mode IN ('metadata_only', 'selected_excerpts'))",
         "visual_mode": "TEXT NOT NULL DEFAULT 'deterministic' CHECK(visual_mode IN ('off', 'deterministic', 'decorative'))",
+        "weekly_checkins_enabled": "INTEGER NOT NULL DEFAULT 0 CHECK(weekly_checkins_enabled IN (0, 1))",
     },
     "onboarding_reviews": {
         "brain_config_hash": "TEXT NOT NULL DEFAULT 'legacy'",
@@ -794,6 +983,12 @@ def init_db(db_path: str | Path) -> Path | None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_reviews_event ON onboarding_reviews(event_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id,created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_thread ON agent_sessions(binding_id,conversation_ref,thread_ref,updated_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id,ordinal)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id,created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_status ON interaction_instances(binding_id,status,expires_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_runs_status ON schedule_runs(status,created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_files_ready ON artifact_file_outbox(status,available_at,created_at)")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     path.chmod(0o600)
     if backup:

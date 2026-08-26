@@ -10,6 +10,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..artifact_delivery import (
+    claim_artifact_delivery,
+    enqueue_artifact_delivery,
+    mark_artifact_delivery,
+    ready_artifact_deliveries,
+)
+from ..contracts import InteractionEvent, InteractionOption, InteractionPlan
+from ..db import connect, jload
 from ..interaction import (
     TransportConflict,
     active_binding,
@@ -31,7 +39,16 @@ from ..interaction import (
     record_onboarding_checkpoint,
     resolve_inbox,
 )
+from ..interactions import (
+    SLACK_INTERACTION_BUTTON,
+    SLACK_INTERACTION_SELECT,
+    create_interaction,
+    interaction_blocks,
+    resolve_interaction,
+)
+from ..presentation import format_learning_thread, response_did_not_pass
 from ..service import CuriosityService
+from ..sessions import SessionStore
 from ..visuals import create_synthetic_visual_job, process_visual_jobs
 from .contracts import InboundMessage, OutboundMessage, TransportResult
 
@@ -212,6 +229,97 @@ def _response_blocks(text: str, event_id: str, *, retry_only: bool = False) -> l
     ]
 
 
+def _semantic_response_blocks(
+    db_path: str | Path,
+    *,
+    binding_id: str,
+    session_id: str,
+    event_id: str,
+    text: str,
+) -> list[dict[str, Any]]:
+    plan = InteractionPlan(
+        kind="rate_output",
+        title="What next?",
+        prompt="Use a shortcut, or just tell me naturally what you want changed.",
+        options=[
+            InteractionOption(label="👍 Helpful", intent="rate_response", payload={"event_id": event_id, "rating": "helpful"}),
+            InteractionOption(label="👎 Not for us", intent="rate_response", payload={"event_id": event_id, "rating": "not_helpful"}),
+            InteractionOption(label="✨ Try another", intent="retry_response", payload={"event_id": event_id}),
+            InteractionOption(label="🕵️ Make a challenge", intent="create_artifact", payload={"event_id": event_id, "artifact_type": "challenge"}),
+        ],
+    )
+    presented = create_interaction(
+        db_path,
+        binding_id=binding_id,
+        session_id=session_id,
+        plan=plan,
+    )
+    return [
+        *[
+            {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+            for section in _mrkdwn_sections(text)
+        ],
+        *interaction_blocks(presented),
+    ]
+
+
+def _existing_thread_session(db_path: str | Path, message: InboundMessage, binding_id: str) -> dict[str, Any] | None:
+    if not message.thread_id:
+        return None
+    conversation_ref = sha256(f"{message.team_id}:{message.channel_id}".encode()).hexdigest()[:20]
+    thread_ref = sha256(f"{message.team_id}:{message.channel_id}:{message.thread_id}".encode()).hexdigest()[:20]
+    store = SessionStore(db_path)
+    existing = store.find(
+        origin="slack",
+        binding_id=binding_id,
+        conversation_ref=conversation_ref,
+        thread_ref=thread_ref,
+    )
+    if existing:
+        return existing
+    # Upgrade older delivered learning threads lazily. Exact binding plus the
+    # hashed conversation/thread lineage prevents cross-channel attribution.
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT e.id AS event_id,e.child_id,e.text,r.output_json
+               FROM events e JOIN responses r ON r.event_id=e.id
+               JOIN transport_receipts t ON t.event_id=e.id AND t.binding_id=? AND t.status='completed'
+               WHERE e.type='child_question' AND e.child_id IS NOT NULL AND r.status='completed'
+                 AND json_extract(e.metadata_json,'$.conversation_ref')=?
+                 AND json_extract(e.metadata_json,'$.thread_ref')=?
+               ORDER BY e.created_at DESC LIMIT 1""",
+            (binding_id, conversation_ref, thread_ref),
+        ).fetchone()
+    if not row:
+        return None
+    recovered = store.get_or_create(
+        origin="slack",
+        transport="slack",
+        binding_id=binding_id,
+        conversation_ref=conversation_ref,
+        thread_ref=thread_ref,
+        child_id=str(row["child_id"]),
+    )
+    output = jload(row["output_json"])
+    store.append_message(
+        str(recovered["id"]),
+        role="user",
+        content=str(row["text"]),
+        kind="recovered_child_question_report",
+        event_id=str(row["event_id"]),
+    )
+    store.append_message(
+        str(recovered["id"]),
+        role="assistant",
+        content=format_learning_thread(
+            {"status": "completed", "event_id": row["event_id"], "output": output}
+        ),
+        kind="recovered_learning_thread",
+        event_id=str(row["event_id"]),
+    )
+    return recovered
+
+
 def load_slack_tokens() -> dict[str, str]:
     """Read tokens from the process or the ignored owner-only setup file."""
 
@@ -223,9 +331,9 @@ def load_slack_tokens() -> dict[str, str]:
     }
     if all(tokens.values()):
         return tokens
-    from ..config import repository_root
+    from ..config import private_root
 
-    token_file = repository_root() / "private" / "setup" / "slack.env"
+    token_file = private_root() / "setup" / "slack.env"
     if not token_file.is_file():
         return tokens
     mode = stat.S_IMODE(token_file.stat().st_mode)
@@ -265,6 +373,37 @@ class CuriosityServiceLike(Protocol):
         event_id: str,
         include_private_excerpts: bool = False,
         context_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def record_thread_response(
+        self,
+        *,
+        binding_id: str,
+        team_id: str,
+        channel_id: str,
+        thread_id: str,
+        child_id: str,
+        user_text: str,
+        result: dict[str, Any],
+    ) -> str: ...
+
+    def chat(
+        self,
+        *,
+        binding_id: str,
+        team_id: str,
+        channel_id: str,
+        thread_id: str,
+        text: str,
+        include_private_excerpts: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def handle_interaction_choice(
+        self,
+        *,
+        resolved: dict[str, Any],
+        binding_id: str,
+        channel_id: str,
     ) -> dict[str, Any]: ...
 
 
@@ -310,42 +449,11 @@ def _help_text() -> str:
 
 
 def _format_thread(result: dict[str, Any]) -> str:
-    output = result.get("output") or {}
-    extension = output.get("physical_extension") or {}
-    reasoning = output.get("_reasoning") or {}
-    parts = [
-        f"*Start here*\n{output.get('hook', 'Follow the question together.')}",
-        f"*Show*\n{output.get('show', 'Notice what you can observe together.')}",
-        f"*Ask*\n{output.get('ask', 'What do you notice?')}",
-        f"*Tiny explanation*\n{output.get('nugget', 'Keep the explanation small and follow the next question.')}",
-    ]
-    if extension:
-        materials = extension.get("materials") or []
-        instructions = extension.get("instructions") or []
-        physical = [f"*Try it: {extension.get('title', 'A quick investigation')}*"]
-        if materials:
-            physical.append("Materials: " + ", ".join(str(item) for item in materials))
-        physical.extend(f"{index}. {step}" for index, step in enumerate(instructions, start=1))
-        parts.append("\n".join(physical))
-    public_sources = [str(item) for item in output.get("resource_refs") or [] if str(item).startswith(("https://", "http://"))]
-    if public_sources:
-        parts.append("*Sources*\n" + "\n".join(f"• <{url}>" for url in public_sources[:3]))
-    if reasoning.get("backend") == "deterministic":
-        parts.insert(
-            0,
-            "_Offline demo response — connect a reasoning provider for tailored answers to arbitrary questions._",
-        )
-    if result.get("visual_job_id"):
-        parts.append("_A visual card is being prepared and will follow this answer._")
-    return "\n\n".join(parts)[:4_000]
+    return format_learning_thread(result)
 
 
 def _response_did_not_pass() -> str:
-    return (
-        "I could not produce a reliable answer, so I stopped instead of showing a flawed draft. The diagnostic is "
-        "saved privately on the computer running Curiosity Engine; you do not need to keep retyping the question. "
-        "Run `curiosity doctor` in that computer's terminal to see the redacted answer-quality status."
-    )
+    return response_did_not_pass()
 
 
 def _parent_safe_error(exc: Exception) -> str:
@@ -443,6 +551,8 @@ class SlackTransport:
         visual_job_id: str | None = None
         visual_purpose = "response_visual"
         reply_blocks: list[dict[str, Any]] = []
+        artifact_to_deliver: dict[str, Any] | None = None
+        session_id: str | None = None
         try:
             if pair:
                 reply = "This conversation is already paired. Use `help` to see what I can do."
@@ -635,7 +745,27 @@ class SlackTransport:
                 )
                 if response.get("status") == "completed":
                     reply = _format_thread(response)
-                    reply_blocks = _response_blocks(reply, event_id)
+                    if message.thread_id:
+                        session_id = self.service.record_thread_response(
+                            binding_id=binding_id,
+                            team_id=message.team_id,
+                            channel_id=message.channel_id,
+                            thread_id=message.thread_id,
+                            child_id=child_id,
+                            user_text=question.strip(),
+                            result=response,
+                        )
+                    reply_blocks = (
+                        _semantic_response_blocks(
+                            self.db_path,
+                            binding_id=binding_id,
+                            session_id=session_id,
+                            event_id=event_id,
+                            text=reply,
+                        )
+                        if session_id
+                        else _response_blocks(reply, event_id)
+                    )
                     visual_job_id = response.get("visual_job_id")
                     purpose = "answer"
                     result_status = "completed"
@@ -667,7 +797,27 @@ class SlackTransport:
                 if response.get("status") == "completed":
                     resolve_inbox(self.db_path, inbox_id, child_id=child_id)
                     reply = f"Assigned `{inbox_id}` to `{child_id}`.\n\n" + _format_thread(response)
-                    reply_blocks = _response_blocks(reply, event_id)
+                    if message.thread_id:
+                        session_id = self.service.record_thread_response(
+                            binding_id=binding_id,
+                            team_id=message.team_id,
+                            channel_id=message.channel_id,
+                            thread_id=message.thread_id,
+                            child_id=child_id,
+                            user_text=str(row["text"]),
+                            result=response,
+                        )
+                    reply_blocks = (
+                        _semantic_response_blocks(
+                            self.db_path,
+                            binding_id=binding_id,
+                            session_id=session_id,
+                            event_id=event_id,
+                            text=reply,
+                        )
+                        if session_id
+                        else _response_blocks(reply, event_id)
+                    )
                     visual_job_id = response.get("visual_job_id")
                     purpose = "assign"
                     result_status = "completed"
@@ -688,6 +838,43 @@ class SlackTransport:
                 purpose = "dismiss"
                 result_status = "completed"
                 event_id = None
+            elif message.thread_id and _existing_thread_session(self.db_path, message, binding_id):
+                resource_mode = household_resource_context_mode(self.db_path)
+                response = self.service.chat(
+                    binding_id=binding_id,
+                    team_id=message.team_id,
+                    channel_id=message.channel_id,
+                    thread_id=message.thread_id,
+                    text=text,
+                    include_private_excerpts=resource_mode == "selected_excerpts",
+                )
+                reply = str(response.get("message") or "I followed that thread.")
+                session_id = str(response["session_id"])
+                event_id = response.get("event_id")
+                visual_job_id = response.get("visual_job_id")
+                artifact_to_deliver = response.get("artifact")
+                if response.get("interaction"):
+                    presented = create_interaction(
+                        self.db_path,
+                        binding_id=binding_id,
+                        session_id=session_id,
+                        plan=InteractionPlan.model_validate(response["interaction"]),
+                    )
+                    reply_blocks = [
+                        *[
+                            {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                            for section in _mrkdwn_sections(reply)
+                        ],
+                        *interaction_blocks(presented),
+                    ]
+                else:
+                    reply_blocks = [
+                        {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                        for section in _mrkdwn_sections(reply)
+                    ]
+                purpose = "parent-chat"
+                result_status = "completed"
+                inbox_id = None
             else:
                 capture = create_unassigned_capture(self.db_path, message, str(binding["parent_id"]))
                 inbox_id = str(capture["inbox_id"])
@@ -718,6 +905,16 @@ class SlackTransport:
                     thread_id=message.thread_id,
                     idempotency_key=f"slack:{message.external_event_id}:{purpose}:visual",
                     purpose=visual_purpose,
+                )
+            if artifact_to_deliver:
+                enqueue_artifact_delivery(
+                    self.db_path,
+                    artifact=artifact_to_deliver,
+                    binding_id=binding_id,
+                    depends_on_delivery_id=outbound_id,
+                    channel_id=message.channel_id,
+                    thread_id=message.thread_id,
+                    idempotency_key=f"slack:{message.external_event_id}:{purpose}:artifact:{artifact_to_deliver['artifact_id']}",
                 )
             finish_receipt(self.db_path, message, status="completed", event_id=event_id)
             return TransportResult(
@@ -909,11 +1106,79 @@ def flush_slack_file_outbox(
     return results
 
 
+def flush_slack_artifact_outbox(
+    client: Any,
+    db_path: str | Path,
+    output_dir: str | Path,
+    *,
+    uploader: Callable[[str, bytes], None] | None = None,
+) -> list[dict[str, str]]:
+    """Upload reviewed printable PDFs after their explanatory Slack message."""
+
+    results: list[dict[str, str]] = []
+    allowed_root = (Path(output_dir).resolve() / "artifacts").resolve()
+    upload = uploader or _upload_bytes
+    for row in ready_artifact_deliveries(db_path):
+        delivery_id = str(row["id"])
+        if not claim_artifact_delivery(db_path, delivery_id):
+            continue
+        stage = "ticket_acquiring"
+        try:
+            path = Path(str(row["path"])).resolve()
+            if not path.is_relative_to(allowed_root) or not path.is_file():
+                raise ValueError("artifact path is outside the private artifact root")
+            data = path.read_bytes()
+            if len(data) != int(row["byte_count"]) or sha256(data).hexdigest() != row["sha256"]:
+                raise ValueError("artifact bytes changed after validation")
+            if row["mime_type"] != "application/pdf" or not data.startswith(b"%PDF-"):
+                raise ValueError("artifact is not a validated PDF")
+            ticket = client.files_getUploadURLExternal(filename=row["filename"], length=len(data))
+            upload_url = str(ticket.get("upload_url") or "")
+            file_id = str(ticket.get("file_id") or "")
+            if not upload_url.startswith("https://") or not file_id:
+                raise RuntimeError("Slack did not return a valid artifact upload ticket")
+            stage = "ticket_acquired"
+            mark_artifact_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            stage = "uploading"
+            mark_artifact_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            upload(upload_url, data)
+            stage = "bytes_uploaded"
+            mark_artifact_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            stage = "completing"
+            mark_artifact_delivery(db_path, delivery_id, status=stage, slack_file_id=file_id)
+            kwargs: dict[str, Any] = {
+                "files": [{"id": file_id, "title": row["title"]}],
+                "channel_id": row["channel_id"],
+                "initial_comment": row["comment"],
+            }
+            if row.get("thread_id"):
+                kwargs["thread_ts"] = row["thread_id"]
+            response = client.files_completeUploadExternal(**kwargs)
+            response_files = response.get("files") or []
+            external_id = str(response_files[0].get("id") or file_id) if response_files else file_id
+            mark_artifact_delivery(
+                db_path,
+                delivery_id,
+                status="sent",
+                slack_file_id=file_id,
+                external_message_id=external_id,
+            )
+            results.append({"delivery_id": delivery_id, "status": "sent"})
+        except Exception as exc:
+            slack_rejection = exc.__class__.__name__ == "SlackApiError"
+            status = "unknown" if stage == "completing" and not slack_rejection else "expired" if slack_rejection or isinstance(exc, ValueError) else "failed"
+            mark_artifact_delivery(db_path, delivery_id, status=status, error=exc.__class__.__name__)
+            results.append({"delivery_id": delivery_id, "status": status})
+    return results
+
+
 def _run_visual_worker(client: Any, db_path: str | Path, output_dir: str | Path, stop: threading.Event) -> None:
     while not stop.is_set():
         try:
+            flush_slack_outbox(client, db_path)
             process_visual_jobs(db_path, output_dir)
             flush_slack_file_outbox(client, db_path, output_dir)
+            flush_slack_artifact_outbox(client, db_path, output_dir)
         except Exception:
             logging.getLogger(__name__).exception("visual worker iteration failed")
         stop.wait(1.0)
@@ -1222,6 +1487,142 @@ def _make_slack_response_action_receiver(
     return receive
 
 
+def _make_semantic_interaction_receiver(
+    transport: SlackTransport,
+    db_path: str | Path,
+) -> Any:
+    def receive(ack: Any, body: dict[str, Any], action: dict[str, Any], client: Any) -> None:
+        ack()
+        try:
+            block_id = str(action.get("block_id") or "")
+            match = re.fullmatch(r"curiosity_interaction:(ix_[a-f0-9]{20})", block_id)
+            if not match:
+                raise ValueError("invalid semantic interaction context")
+            interaction_id = match.group(1)
+            selected = action.get("selected_option") or {}
+            token = str(selected.get("value") or action.get("value") or "")
+            team = body.get("team") or {}
+            user = body.get("user") or {}
+            channel = body.get("channel") or {}
+            container = body.get("container") or {}
+            source_message = body.get("message") or {}
+            team_id = str(team.get("id") or body.get("team_id") or "")
+            user_id = str(user.get("id") or body.get("user_id") or "")
+            channel_id = str(channel.get("id") or container.get("channel_id") or "")
+            thread_id = str(source_message.get("thread_ts") or source_message.get("ts") or "") or None
+            external_event_id = "ix_slack_" + sha256(
+                ":".join(
+                    (
+                        str(body.get("trigger_id") or ""),
+                        str(action.get("action_ts") or ""),
+                        interaction_id,
+                        user_id,
+                        channel_id,
+                    )
+                ).encode()
+            ).hexdigest()[:24]
+            incoming = InboundMessage(
+                external_event_id=external_event_id,
+                team_id=team_id,
+                user_id=user_id,
+                channel_id=channel_id,
+                text="semantic interaction",
+                thread_id=thread_id,
+            )
+            binding = active_binding(db_path, incoming)
+            if not binding:
+                raise ValueError("paired parent binding not found")
+            resolved = resolve_interaction(
+                db_path,
+                InteractionEvent(
+                    interaction_id=interaction_id,
+                    option_token=token,
+                    team_id=team_id,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    external_event_id=external_event_id,
+                ),
+                binding_id=str(binding["id"]),
+                parent_id=str(binding["parent_id"]),
+            )
+            if resolved.get("duplicate"):
+                return
+            result = transport.service.handle_interaction_choice(
+                resolved=resolved,
+                binding_id=str(binding["id"]),
+                channel_id=channel_id,
+            )
+            reply = str(result.get("message") or "Done.")
+            blocks: list[dict[str, Any]] = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                for section in _mrkdwn_sections(reply)
+            ]
+            if result.get("interaction"):
+                presented = create_interaction(
+                    db_path,
+                    binding_id=str(binding["id"]),
+                    session_id=resolved.get("session_id"),
+                    plan=InteractionPlan.model_validate(result["interaction"]),
+                )
+                blocks.extend(interaction_blocks(presented))
+            outbound_id = transport._queue(
+                incoming,
+                str(binding["id"]),
+                reply,
+                purpose=f"interaction:{interaction_id}",
+                blocks=blocks,
+            )
+            if resolved.get("session_id") and reply:
+                SessionStore(db_path).append_message(
+                    str(resolved["session_id"]),
+                    role="assistant",
+                    content=reply,
+                    kind="interaction_result",
+                    event_id=result.get("event_id"),
+                )
+            if result.get("visual_job_id"):
+                enqueue_visual_delivery(
+                    db_path,
+                    visual_job_id=str(result["visual_job_id"]),
+                    binding_id=str(binding["id"]),
+                    depends_on_delivery_id=outbound_id,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    idempotency_key=f"slack:{external_event_id}:visual",
+                    purpose="response_visual",
+                )
+            if result.get("artifact"):
+                enqueue_artifact_delivery(
+                    db_path,
+                    artifact=result["artifact"],
+                    binding_id=str(binding["id"]),
+                    depends_on_delivery_id=outbound_id,
+                    channel_id=channel_id,
+                    thread_id=thread_id,
+                    idempotency_key=f"slack:{external_event_id}:artifact:{result['artifact']['artifact_id']}",
+                )
+            message_ts = str(source_message.get("ts") or container.get("message_ts") or "")
+            if message_ts:
+                original_blocks = [
+                    block for block in source_message.get("blocks") or [] if block.get("block_id") != block_id
+                ]
+                client.chat_update(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text=str(source_message.get("text") or reply),
+                    blocks=[
+                        *original_blocks,
+                        {"type": "context", "elements": [{"type": "mrkdwn", "text": ":white_check_mark: Choice received."}]},
+                    ],
+                )
+            flush_slack_outbox(client, db_path)
+        except Exception:
+            logging.getLogger(__name__).exception("Slack semantic interaction failed")
+
+    return receive
+
+
 def build_slack_app(db_path: str | Path, output_dir: str | Path) -> Any:
     try:
         from slack_bolt import App
@@ -1255,6 +1656,9 @@ def build_slack_app(db_path: str | Path, output_dir: str | Path) -> Any:
                 action_id=response_action,
             )
         )
+    semantic_receiver = _make_semantic_interaction_receiver(transport, db_path)
+    app.action(re.compile(rf"^{re.escape(SLACK_INTERACTION_BUTTON)}_[0-4]$"))(semantic_receiver)
+    app.action(SLACK_INTERACTION_SELECT)(semantic_receiver)
     return app
 
 

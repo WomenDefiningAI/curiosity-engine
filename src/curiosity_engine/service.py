@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .actions import execute_action, list_actions
 from .artifacts import ArtifactService
-from .config import AppConfig, repository_root
+from .config import AppConfig, private_root
 from .contracts import Event, FeedbackInput
-from .db import connect, init_db, jload
+from .db import connect, init_db, jdump, jload, utcnow
 from .director import AutonomousDirector, list_opportunities
 from .feedback import record_feedback
 from .graph import add_child, child_context
 from .interaction import household_visual_mode, list_inbox, onboarding_status, resolve_inbox
+from .learning_artifacts import LearningArtifactService
+from .parent_agent import ParentAgentRuntime
+from .presentation import format_learning_thread
 from .printer import approve_artifact, print_artifact
+from .reasoning import StubBackend
 from .resources import index_collection, resource_inventory, search_resources
 from .runtime import CuriosityHarness, configured_backend
+from .scheduler import SchedulerService
+from .sessions import SessionStore
+from .tooling import ToolRegistry
 from .visuals import enqueue_response_visual
 
 
@@ -28,9 +38,9 @@ class CuriosityService:
         output_existed = self.output_dir.exists()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        private_root = repository_root() / "private"
-        db_is_private = self.db_path.is_relative_to(private_root)
-        output_is_private = self.output_dir.is_relative_to(private_root)
+        household_private = private_root()
+        db_is_private = self.db_path.is_relative_to(household_private)
+        output_is_private = self.output_dir.is_relative_to(household_private)
         if not db_parent_existed or db_is_private:
             self.db_path.parent.chmod(0o700)
         if not output_existed or output_is_private:
@@ -56,7 +66,9 @@ class CuriosityService:
         event_id: str | None = None,
         context_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        visual_mode = household_visual_mode(self.db_path)
         metadata: dict[str, Any] = {"topics": topics or [], **(context_metadata or {})}
+        metadata["response_visual_mode"] = visual_mode
         if include_private_excerpts:
             metadata["private_resource_mode"] = "selected_excerpts"
         payload: dict[str, Any] = {
@@ -76,7 +88,7 @@ class CuriosityService:
                     self.db_path,
                     event_id=str(response["event_id"]),
                     visual=(response.get("output") or {}).get("visual"),
-                    mode=household_visual_mode(self.db_path),
+                    mode=visual_mode,
                 )
             except (ValueError, RuntimeError):
                 # A useful text answer must survive an unsafe or malformed visual proposal.
@@ -132,6 +144,378 @@ class CuriosityService:
             event_id=event_id,
             context_metadata=retry_metadata,
         )
+
+    def revise_response(
+        self,
+        *,
+        source_event_id: str,
+        revision: str,
+        event_id: str,
+        include_private_excerpts: bool = False,
+        thread_history: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Target a parent-requested change without treating it as fresh child evidence."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT e.child_id,e.text,r.output_json,r.status FROM events e
+                   JOIN responses r ON r.event_id=e.id WHERE e.id=?""",
+                (source_event_id,),
+            ).fetchone()
+        if not row or not row["child_id"] or row["status"] != "completed":
+            raise ValueError("completed response not found")
+        previous = jload(row["output_json"])
+        metadata = {
+            "episode_relation": "retry",
+            "retry_of_event_id": source_event_id,
+            "learning_scope": "diagnostic",
+            "response_revision": {
+                "parent_request": revision,
+                "preserve_unmentioned_components": True,
+                "previous_reviewed_response": {
+                    key: previous.get(key)
+                    for key in ("hook", "show", "ask", "nugget", "physical_extension", "visual")
+                },
+                "thread_history": (thread_history or [])[-10:],
+            },
+        }
+        return self.ask(
+            child_id=str(row["child_id"]),
+            text=str(row["text"]),
+            source="slack_parent_revision",
+            include_private_excerpts=include_private_excerpts,
+            event_id=event_id,
+            context_metadata=metadata,
+        )
+
+    def record_thread_response(
+        self,
+        *,
+        binding_id: str,
+        team_id: str,
+        channel_id: str,
+        thread_id: str,
+        child_id: str,
+        user_text: str,
+        result: dict[str, Any],
+    ) -> str:
+        store = SessionStore(self.db_path)
+        conversation_ref = sha256(f"{team_id}:{channel_id}".encode()).hexdigest()[:20]
+        thread_ref = sha256(f"{team_id}:{channel_id}:{thread_id}".encode()).hexdigest()[:20]
+        session = store.get_or_create(
+            origin="slack",
+            transport="slack",
+            binding_id=binding_id,
+            conversation_ref=conversation_ref,
+            thread_ref=thread_ref,
+            child_id=child_id,
+        )
+        history = store.history(str(session["id"]), limit=4)
+        if not any(item["event_id"] == result.get("event_id") and item["role"] == "user" for item in history):
+            store.append_message(
+                str(session["id"]),
+                role="user",
+                content=user_text,
+                kind="child_question_report",
+                event_id=result.get("event_id"),
+            )
+            store.append_message(
+                str(session["id"]),
+                role="assistant",
+                content=format_learning_thread(result),
+                kind="learning_thread",
+                event_id=result.get("event_id"),
+            )
+        return str(session["id"])
+
+    def chat(
+        self,
+        *,
+        binding_id: str,
+        team_id: str,
+        channel_id: str,
+        thread_id: str,
+        text: str,
+        include_private_excerpts: bool = False,
+    ) -> dict[str, Any]:
+        """Handle unstructured parent conversation inside an established learning thread."""
+
+        store = SessionStore(self.db_path)
+        conversation_ref = sha256(f"{team_id}:{channel_id}".encode()).hexdigest()[:20]
+        thread_ref = sha256(f"{team_id}:{channel_id}:{thread_id}".encode()).hexdigest()[:20]
+        session = store.get_or_create(
+            origin="slack",
+            transport="slack",
+            binding_id=binding_id,
+            conversation_ref=conversation_ref,
+            thread_ref=thread_ref,
+        )
+        if not session.get("child_id"):
+            raise ValueError("this thread has not been attributed to a child yet")
+        child = next((item for item in self.children() if item["id"] == session["child_id"]), None)
+        if not child:
+            raise ValueError("child not found")
+        store.append_message(str(session["id"]), role="user", content=text, kind="parent_chat")
+        latest_event_id = store.latest_event_id(str(session["id"]))
+        backend = configured_backend(self.config) or StubBackend()
+        tools = ToolRegistry()
+
+        def continue_thread(arguments: dict[str, Any]) -> dict[str, Any]:
+            question = str(arguments.get("message") or text).strip()
+            event_id = f"evt_chat_{uuid4().hex[:20]}"
+            response = self.ask(
+                child_id=str(child["id"]),
+                text=question,
+                source="slack_parent_followup",
+                include_private_excerpts=include_private_excerpts,
+                event_id=event_id,
+                context_metadata={
+                    "episode_relation": "deepening",
+                    "related_event_id": latest_event_id,
+                    "thread_history": [
+                        {"role": item["role"], "content": item["content"]}
+                        for item in store.history(str(session["id"]), limit=12)
+                    ],
+                    "instruction": "Build on the thread. Do not repeat prior activities, examples, or explanations.",
+                },
+            )
+            return {
+                "status": response["status"],
+                "message": format_learning_thread(response),
+                "event_id": response.get("event_id"),
+                "visual_job_id": response.get("visual_job_id"),
+            }
+
+        def revise_thread(arguments: dict[str, Any]) -> dict[str, Any]:
+            if not latest_event_id:
+                raise ValueError("there is no reviewed response to revise")
+            response = self.revise_response(
+                source_event_id=latest_event_id,
+                revision=str(arguments.get("revision") or text),
+                event_id=f"evt_revision_{uuid4().hex[:20]}",
+                include_private_excerpts=include_private_excerpts,
+                thread_history=store.history(str(session["id"]), limit=12),
+            )
+            return {
+                "status": response["status"],
+                "message": format_learning_thread(response),
+                "event_id": response.get("event_id"),
+                "visual_job_id": response.get("visual_job_id"),
+            }
+
+        def create_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
+            if not latest_event_id:
+                raise ValueError("there is no reviewed learning thread to turn into an artifact")
+            artifact_type = str(arguments.get("artifact_type") or "challenge").casefold()
+            artifact = LearningArtifactService(
+                self.db_path,
+                self.output_dir,
+                backend=backend,
+            ).create_from_event(
+                event_id=latest_event_id,
+                artifact_type=artifact_type,
+                # The model chooses the reviewed tool and artifact kind. The parent's
+                # exact wording remains the authoritative revision brief.
+                revision=text,
+            )
+            return {
+                "status": "completed",
+                "message": (
+                    f"I made a real *{artifact['artifact_type']}*: *{artifact['title']}*. "
+                    "The printable will arrive next in this thread."
+                ),
+                "artifact": artifact,
+                "interaction": {
+                    "kind": "artifact_preview",
+                    "title": "Tune this printable",
+                    "prompt": "Use a shortcut or tell me naturally what you want changed.",
+                    "options": [
+                        {"label": "Make it easier", "intent": "revise_artifact", "payload": {"artifact_type": artifact_type, "revision": "Make it easier and reduce reading load."}},
+                        {"label": "Make it harder", "intent": "revise_artifact", "payload": {"artifact_type": artifact_type, "revision": "Add productive challenge without adding a lecture."}},
+                        {"label": "Another version", "intent": "revise_artifact", "payload": {"artifact_type": artifact_type, "revision": "Create a genuinely different mechanic and story."}},
+                        {"label": "Change the visual", "intent": "revise_artifact", "payload": {"artifact_type": artifact_type, "revision": "Use a more useful visual structure."}}
+                    ],
+                    "allow_free_text": True,
+                },
+            }
+
+        def schedule_checkin(arguments: dict[str, Any]) -> dict[str, Any]:
+            proposal = SchedulerService(self.db_path).proposal_from_request(
+                request=str(arguments.get("request") or text),
+                binding_id=binding_id,
+                channel_id=channel_id,
+                child_id=str(child["id"]),
+            )
+            return {"status": "proposal", "schedule_proposal": proposal.model_dump(mode="json")}
+
+        def record_response_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
+            outcome = str(arguments.get("outcome") or "not_helpful")
+            self.feedback(
+                {
+                    "child_id": str(child["id"]),
+                    "event_id": latest_event_id,
+                    "outcome": outcome,
+                    "note": str(arguments.get("note") or text),
+                    "source": "slack_parent_chat",
+                }
+            )
+            return {"status": "completed", "message": "Thanks—I saved that as output feedback, not as a claim about your child."}
+
+        tools.register("continue_learning_thread", continue_thread)
+        tools.register("revise_learning_thread", revise_thread)
+        tools.register("create_learning_artifact", create_artifact)
+        tools.register("propose_weekly_checkin", schedule_checkin)
+        tools.register("record_response_feedback", record_response_feedback)
+        return ParentAgentRuntime(self.db_path, backend=backend, tools=tools).run(
+            session_id=str(session["id"]),
+            user_message=text,
+            child=child,
+            latest_event_id=latest_event_id,
+        )
+
+    def handle_interaction_choice(
+        self,
+        *,
+        resolved: dict[str, Any],
+        binding_id: str,
+        channel_id: str,
+    ) -> dict[str, Any]:
+        intent = str(resolved["intent"])
+        payload = dict(resolved.get("payload") or {})
+        session_id = resolved.get("session_id")
+        session = SessionStore(self.db_path).session(str(session_id)) if session_id else None
+        if intent == "cancel_tool_call":
+            tool_call_id = payload.get("tool_call_id")
+            if tool_call_id:
+                with connect(self.db_path) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(
+                        """UPDATE approval_requests SET decision='denied',decided_at=?
+                           WHERE tool_call_id=? AND decision='pending'""",
+                        (utcnow(), str(tool_call_id)),
+                    )
+                    conn.execute(
+                        "UPDATE tool_calls SET decision='denied',status='denied',updated_at=? WHERE id=?",
+                        (utcnow(), str(tool_call_id)),
+                    )
+            return {"status": "completed", "message": "Okay—nothing was scheduled."}
+        if intent == "rate_response":
+            event_id = str(payload["event_id"])
+            with connect(self.db_path) as conn:
+                row = conn.execute("SELECT child_id FROM events WHERE id=?", (event_id,)).fetchone()
+            if not row or not row["child_id"]:
+                raise ValueError("response not found")
+            self.feedback(
+                {
+                    "child_id": str(row["child_id"]),
+                    "event_id": event_id,
+                    "outcome": str(payload.get("rating") or "helpful"),
+                    "note": "Parent rated this Slack learning release.",
+                    "source": "slack_interaction",
+                }
+            )
+            return {
+                "status": "completed",
+                "message": "Thanks—saved as output feedback, separate from the child context graph.",
+            }
+        if intent == "retry_response":
+            event_id = str(payload["event_id"])
+            response = self.retry_response(
+                source_event_id=event_id,
+                event_id=f"evt_retry_{uuid4().hex[:20]}",
+            )
+            return {
+                "status": response["status"],
+                "message": format_learning_thread(response),
+                "event_id": response.get("event_id"),
+                "visual_job_id": response.get("visual_job_id"),
+            }
+        if intent == "create_artifact":
+            event_id = str(payload["event_id"])
+            backend = configured_backend(self.config) or StubBackend()
+            artifact = LearningArtifactService(self.db_path, self.output_dir, backend=backend).create_from_event(
+                event_id=event_id,
+                artifact_type=str(payload.get("artifact_type") or "challenge"),
+                revision="Create a playful, child-ready printable that extends this thread without repeating it.",
+            )
+            return {
+                "status": "completed",
+                "message": f"I made a *{artifact['artifact_type']}*. The printable will follow here.",
+                "artifact": artifact,
+            }
+        if intent == "approve_tool_call":
+            tool_call_id = str(payload.get("tool_call_id") or "")
+            with connect(self.db_path) as conn:
+                row = conn.execute(
+                    """SELECT t.*,a.decision AS approval_decision,a.expires_at,s.binding_id,p.parent_id
+                       FROM tool_calls t JOIN approval_requests a ON a.tool_call_id=t.id
+                       JOIN agent_sessions s ON s.id=t.session_id
+                       JOIN transport_bindings p ON p.id=s.binding_id
+                       WHERE t.id=? AND s.binding_id=?""",
+                    (tool_call_id, binding_id),
+                ).fetchone()
+            if not row or row["tool_name"] != "propose_weekly_checkin":
+                raise ValueError("approved tool call is unavailable for this parent")
+            if row["approval_decision"] != "pending" or datetime.fromisoformat(row["expires_at"]) <= datetime.now(UTC):
+                raise ValueError("approval is no longer active")
+            arguments = dict(jload(row["arguments_json"]))
+            proposal = SchedulerService(self.db_path).proposal_from_request(
+                request=str(arguments.get("request") or "weekly check-in Sunday at 6 pm"),
+                binding_id=binding_id,
+                channel_id=channel_id,
+                child_id=str(session["child_id"]) if session and session.get("child_id") else None,
+            )
+            schedule = SchedulerService(self.db_path).create_weekly_checkin(proposal)
+            with connect(self.db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    """UPDATE approval_requests SET decision='approved',actor_parent_id=?,decided_at=?
+                       WHERE tool_call_id=? AND decision='pending'""",
+                    (row["parent_id"], utcnow(), tool_call_id),
+                )
+                conn.execute(
+                    """UPDATE tool_calls SET decision='allowed',status='succeeded',result_json=?,updated_at=?
+                       WHERE id=?""",
+                    (jdump({"schedule": schedule}), utcnow(), tool_call_id),
+                )
+            return {
+                "status": "completed",
+                "message": (
+                    f"Scheduled for {schedule['weekday'].title()} at {schedule['local_time']} "
+                    f"({schedule['timezone']}). You can pause it from any check-in."
+                ),
+                "schedule": schedule,
+            }
+        if intent == "pause_schedule":
+            paused = SchedulerService(self.db_path).pause(str(payload["schedule_id"]))
+            return {"status": "completed", "message": "Paused weekly check-ins.", "schedule": paused}
+        if intent == "weekly_feedback":
+            if session and session.get("child_id"):
+                self.feedback(
+                    {
+                        "child_id": str(session["child_id"]),
+                        "outcome": str(payload.get("outcome") or "neutral"),
+                        "note": "Parent weekly check-in shortcut.",
+                        "source": "weekly_parent_checkin",
+                    }
+                )
+            return {"status": "completed", "message": "Got it. Want to tell me more, or ask for one easy next idea?"}
+        if intent == "revise_artifact":
+            if not session:
+                raise ValueError("artifact session not found")
+            latest_event_id = SessionStore(self.db_path).latest_event_id(str(session["id"]))
+            if not latest_event_id:
+                raise ValueError("source learning thread not found")
+            backend = configured_backend(self.config) or StubBackend()
+            artifact = LearningArtifactService(self.db_path, self.output_dir, backend=backend).create_from_event(
+                event_id=latest_event_id,
+                artifact_type=str(payload.get("artifact_type") or "challenge"),
+                revision=str(payload.get("revision") or "Create another version."),
+            )
+            return {"status": "completed", "message": "I made the revised printable; it will follow here.", "artifact": artifact}
+        if intent == "weekly_next_thread":
+            return {"status": "completed", "message": "Tell me one question or moment from this week, and I’ll turn it into one easy next thread."}
+        raise ValueError("unsupported interaction intent")
 
     def event_result(self, event_id: str) -> dict[str, Any] | None:
         result = CuriosityHarness(self.db_path).repository.get_response(event_id)

@@ -219,6 +219,13 @@ class CuriosityHarness:
                 reason=str(exc),
             )
         except Exception as exc:
+            logger.exception(
+                "workflow failed event_id=%s job_id=%s run_id=%s workflow=%s",
+                event.id,
+                job.id,
+                run_id,
+                policy.workflow,
+            )
             self.repository.fail_job(job.id, event.id, run_id, exc)
             raise
 

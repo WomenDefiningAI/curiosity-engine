@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import __version__
-from .config import repository_root
+from .config import family_home, repository_root
 
 BACKUP_FORMAT = "curiosity-family-backup"
 BACKUP_FORMAT_VERSION = 1
@@ -42,8 +42,8 @@ def default_backup_root(repo_root: str | Path | None = None) -> Path:
     configured = os.environ.get("CURIOSITY_BACKUP_DIR")
     if configured:
         return Path(configured).expanduser().resolve()
-    repo = Path(repo_root).resolve() if repo_root else repository_root()
-    return repo.parent / f"{repo.name}-family-backups"
+    root = Path(repo_root).resolve() if repo_root else family_home()
+    return root.parent / f"{root.name}-family-backups"
 
 
 def _is_within(path: Path, parent: Path) -> bool:

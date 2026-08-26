@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,14 @@ from .brain_config import (
     ensure_model_env_template,
     write_brain_config,
 )
-from .config import repository_root
+from .config import private_root, repository_root
 from .contracts import Event, FeedbackInput
 from .db import init_db
 from .director import AutonomousDirector
 from .episodes import apply_episode_correction
 from .feedback import record_feedback
 from .graph import add_child, add_observation, add_school_signal, capture_question, child_context, upsert_node
+from .host import host_status, install_user_services
 from .interaction import (
     add_parent,
     configure_family_lens,
@@ -43,7 +45,9 @@ from .printer import approve_artifact, print_artifact
 from .public_projects import audit_public_projects, public_project, public_project_catalog, registry_status
 from .resources import discover_private_catalogs, index_collection, resource_inventory, search_resources
 from .runtime import CuriosityHarness
+from .scheduler import SchedulerService
 from .service import CuriosityService
+from .setup_agent import launch_setup_agent, prepare_agent_setup
 from .trust import trust_summary
 
 TERMINAL_SECRET_KEY_SUFFIXES = ("_api_key", "_token", "_password", "_secret")
@@ -74,15 +78,15 @@ def dump(obj: Any) -> None:
 
 
 def _default_db() -> str:
-    return os.environ.get("CURIOSITY_DB") or str(repository_root() / "private" / "data" / "curiosity.db")
+    return os.environ.get("CURIOSITY_DB") or str(private_root() / "data" / "curiosity.db")
 
 
 def _default_output() -> str:
-    return os.environ.get("CURIOSITY_OUTPUT") or str(repository_root() / "private" / "output")
+    return os.environ.get("CURIOSITY_OUTPUT") or str(private_root() / "output")
 
 
 def _default_private() -> str:
-    return str(repository_root() / "private")
+    return str(private_root())
 
 
 def add_db(parser: argparse.ArgumentParser) -> None:
@@ -180,10 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
     command = family_lens_sub.add_parser("status")
     add_db(command)
 
-    command = sub.add_parser("setup", help="Configure the first parent and household defaults")
+    command = sub.add_parser("setup", help="Open guided setup, or configure household defaults non-interactively")
     add_db(command)
-    command.add_argument("--owner-name", required=True)
-    command.add_argument("--timezone", required=True, help="IANA timezone, such as America/New_York")
+    command.add_argument("--owner-name")
+    command.add_argument("--timezone", help="IANA timezone, such as America/New_York")
     command.add_argument("--quiet-start", default="20:00")
     command.add_argument("--quiet-end", default="07:00")
     command.add_argument(
@@ -197,6 +201,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="metadata_only",
         help="Whether bounded licensed excerpts may enter hosted-model requests",
     )
+    command.add_argument("--agent", choices=["auto", "codex", "claude"], default="auto")
+    command.add_argument("--workspace", help="Private setup workspace; defaults under CURIOSITY_HOME")
+    command.add_argument("--no-launch", action="store_true", help="Prepare the coding-agent handoff without opening it")
 
     parent = sub.add_parser("parent")
     parent_sub = parent.add_subparsers(dest="parent_cmd", required=True)
@@ -386,6 +393,14 @@ def build_parser() -> argparse.ArgumentParser:
     command = sub.add_parser("worker")
     add_db(command)
     command.add_argument("--drain", action="store_true", help="Process every currently ready job")
+    command.add_argument("--forever", action="store_true", help="Continuously materialize schedules and drain jobs")
+    command.add_argument("--interval", type=float, default=2.0, help="Worker polling interval in seconds")
+
+    host = sub.add_parser("host", help="Install or inspect always-on local Linux services")
+    host_sub = host.add_subparsers(dest="host_cmd", required=True)
+    command = host_sub.add_parser("install", help="Install owner-level Slack and scheduler services")
+    command.add_argument("--no-start", action="store_true")
+    host_sub.add_parser("status")
 
     command = sub.add_parser("serve")
     add_db(command)
@@ -528,17 +543,25 @@ def main(argv: list[str] | None = None) -> int:
         state = onboarding_status(args.db)
         dump({"configured": state["family_lens_configured"], "private": True})
     elif args.cmd == "setup":
-        result = setup_household(
-            args.db,
-            owner_name=args.owner_name,
-            timezone=args.timezone,
-            quiet_start=args.quiet_start,
-            quiet_end=args.quiet_end,
-            proactive_enabled=args.enable_weekly,
-            resource_context_mode=args.resource_context_mode,
-        )
-        result["report_path"] = str(write_setup_report(args.db))
-        dump(result)
+        if bool(args.owner_name) != bool(args.timezone):
+            raise ValueError("--owner-name and --timezone must be provided together")
+        if args.owner_name and args.timezone:
+            result = setup_household(
+                args.db,
+                owner_name=args.owner_name,
+                timezone=args.timezone,
+                quiet_start=args.quiet_start,
+                quiet_end=args.quiet_end,
+                proactive_enabled=args.enable_weekly,
+                resource_context_mode=args.resource_context_mode,
+            )
+            result["report_path"] = str(write_setup_report(args.db))
+            dump(result)
+        else:
+            result = prepare_agent_setup(preference=args.agent, workspace=args.workspace)
+            dump(result)
+            if result["agent"] and not args.no_launch:
+                launch_setup_agent(str(result["agent"]), str(result["workspace"]))
     elif args.cmd == "parent" and args.parent_cmd == "add":
         dump(add_parent(args.db, args.name))
     elif args.cmd == "parent" and args.parent_cmd == "list":
@@ -691,17 +714,39 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "reflect":
         dump(AutonomousDirector(args.db).reflect_for_child(args.child))
     elif args.cmd == "worker":
+        if args.interval < 0.25 or args.interval > 300:
+            raise ValueError("worker interval must be between 0.25 and 300 seconds")
         harness = CuriosityHarness(args.db)
-        scheduled = AutonomousDirector(args.db).run_due()
-        results = []
-        while True:
-            result = harness.process_next()
-            if result is None:
-                break
-            results.append(result.model_dump(mode="json"))
-            if not args.drain:
-                break
-        dump({"scheduled_reflections": scheduled, "processed": len(results), "results": results})
+        if args.forever:
+            while True:
+                SchedulerService(args.db).run_due()
+                AutonomousDirector(args.db).run_due()
+                while harness.process_next() is not None:
+                    pass
+                time.sleep(args.interval)
+        else:
+            checkins = SchedulerService(args.db).run_due()
+            scheduled = AutonomousDirector(args.db).run_due()
+            results = []
+            while True:
+                result = harness.process_next()
+                if result is None:
+                    break
+                results.append(result.model_dump(mode="json"))
+                if not args.drain:
+                    break
+            dump(
+                {
+                    "scheduled_checkins": checkins,
+                    "scheduled_reflections": scheduled,
+                    "processed": len(results),
+                    "results": results,
+                }
+            )
+    elif args.cmd == "host" and args.host_cmd == "install":
+        dump(install_user_services(start=not args.no_start))
+    elif args.cmd == "host" and args.host_cmd == "status":
+        dump(host_status())
     elif args.cmd == "serve":
         import uvicorn
 

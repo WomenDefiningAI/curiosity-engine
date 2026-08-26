@@ -22,12 +22,12 @@ Tell the parent:
 
 Provider APIs are the supported brain. An authenticated coding-agent session can help operate or customize the repo while attended, but it stops when the terminal or login stops; see [coding-agent runtime](CODING_AGENT_RUNTIME.md).
 
-## 2. Install and create private state
+## 2. Create private state
+
+The no-clone installer has already created the runtime and opened this private setup workspace. Confirm the paths in
+`SETUP_HANDOFF.md`, then run:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev,slack,all-providers]'
 curiosity doctor
 curiosity setup --owner-name "OWNER" --timezone "AREA/CITY"
 curiosity child add --id kid-a --name "PRIVATE NAME" --grade "OPTIONAL"
@@ -38,10 +38,11 @@ Do not replace an existing database. Summarize readiness without repeating priva
 
 ## 3. Connect Slack
 
-Follow [Slack setup](SLACK_SETUP.md). The parent pastes both tokens into `private/setup/slack.env`.
+Follow [Slack setup](SLACK_SETUP.md). The parent pastes both tokens into
+`~/.curiosity-engine/private/setup/slack.env` (or the private path shown in the handoff).
 
 ```bash
-chmod 600 private/setup/slack.env
+chmod 600 ~/.curiosity-engine/private/setup/slack.env
 curiosity slack pair-code
 curiosity slack run
 ```
@@ -55,7 +56,7 @@ Then send `visual connection`. Its fixed local card must arrive with alt text be
 Use [Brain setup](BRAIN_SETUP.md) to choose structured reasoning, vision/OCR, visual-QA, and image-generation routes. The parent pastes keys into `private/setup/model.env`.
 
 ```bash
-chmod 600 private/setup/brain.json private/setup/model.env
+chmod 600 ~/.curiosity-engine/private/setup/brain.json ~/.curiosity-engine/private/setup/model.env
 curiosity brain doctor
 curiosity brain test --live
 ```
@@ -74,15 +75,18 @@ curiosity family-lens configure
 
 Ask only for useful constraints such as grade/readiness, activity length, parent effort, materials, themes, and boundaries. See [Family lens](FAMILY_LENS.md).
 
-Purchased material stays in `private/resources/`. Default to metadata only. Enable bounded relevant excerpts only with explicit permission:
+Purchased material stays in `~/.curiosity-engine/private/resources/` (or the private path in the handoff). Default to
+metadata only. Enable bounded relevant excerpts only with explicit permission:
 
 ```bash
 curiosity resource mode --mode selected_excerpts
 ```
 
-## 6. Review one real answer
+## 6. Review the real family loop
 
-Ask a real question in paired Slack, then review factuality, grade fit, curiosity value, and parent effort:
+Ask a real question in paired Slack. In its thread, naturally request one revision and one worksheet, activity, or
+challenge. Confirm that text arrives first, the useful visual follows, the printable is genuinely usable, and prior
+ideas are not repeated. Then review factuality, grade fit, curiosity value, and parent effort:
 
 ```bash
 curiosity onboard pending
@@ -100,13 +104,15 @@ Privately inspect context with `curiosity context --child kid-a`. Explain that r
 ## 7. Hand off daily operation
 
 ```bash
-source .venv/bin/activate
-curiosity slack run       # leave running
+curiosity host install    # Linux: restartable Slack + scheduler user services
+curiosity host status
 curiosity doctor          # redacted status
 curiosity inbox list      # unattributed notes
 ```
 
-Control-C, closing the terminal, sleep, or shutdown stops Slack replies. Explain token rotation, binding revocation, backups, and private output locations; see [Operations](OPERATIONS.md).
+Shutdown or sleep still stops replies. On systems without supported host services, keep `curiosity slack run` and
+`curiosity worker --forever` running. Explain token rotation, binding revocation, backups, and private output locations;
+see [Operations](OPERATIONS.md).
 
 Create and verify the first family snapshot:
 

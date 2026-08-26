@@ -3,11 +3,13 @@
 ## Start and stop
 
 ```bash
-source .venv/bin/activate
-curiosity slack run       # leave in foreground
+curiosity host install
+curiosity host status
 ```
 
-Control-C, terminal closure, sleep, shutdown, or lost networking stops replies. The optional local console is loopback-only:
+On Linux, this installs restartable owner-level Slack and scheduler services. Sleep, shutdown, or lost networking still
+stops replies. Without systemd, run `curiosity slack run` and `curiosity worker --forever` in supervised terminals.
+The optional local console is loopback-only:
 
 ```bash
 curiosity serve --host 127.0.0.1 --port 8766
@@ -39,7 +41,10 @@ curiosity backup verify                    # latest snapshot
 curiosity backup restore                   # separate recovery copy
 ```
 
-Snapshots default to `curiosity-engine-family-backups/` beside the repository. Set `CURIOSITY_BACKUP_DIR` or pass `--destination` to use another location. Each snapshot contains the SQLite database, private resources, generated output, and non-secret setup state. It excludes Slack/model credentials, uses owner-only permissions, and has file checksums plus a SQLite integrity check.
+Snapshots default to a sibling of the family home, normally `~/.curiosity-engine-family-backups/`. Set
+`CURIOSITY_BACKUP_DIR` or pass `--destination` to use another location. Each snapshot contains the SQLite database,
+private resources, generated output, and non-secret setup state. It excludes Slack/model credentials, uses owner-only
+permissions, and has file checksums plus a SQLite integrity check.
 
 Restore verifies first, rebases stored resource/output paths for the new location, and never overwrites an existing path. By default it creates `private/restores/SNAPSHOT_ID`; use `--target-private NEW_PATH` for a different new path. To recover an empty clone directly, pass its not-yet-created `private/` path, then re-enter credentials and run `curiosity doctor`.
 

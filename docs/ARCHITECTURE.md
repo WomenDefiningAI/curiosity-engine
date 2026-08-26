@@ -1,73 +1,57 @@
 # Architecture
 
 ```text
-parent in Slack ─► Socket Mode shell ─► normalized InboundMessage
-                                              │
-local console / CLI ──────────────────────────┤
-                                              ▼
-                                  shared CuriosityService
-                                              │
-                 pairing • receipts • inbox • immutable Event
-                                              ▼
-┌──────────────────────── SQLite boundary ───────────────────────┐
-│ private family graph • jobs/runs • responses • durable outbox  │
-└─────────────────────────────┬───────────────────────────────────┘
-                              ▼
-             bounded context builder (depth + relevance)
-       family evidence • active school state • private metadata
-                              │
-                              ▼
-          generator → adversarial critics → bounded revision
-                              │
-                    strict local validation
-                              ▼
-                 allowlisted effects and response
-                              │
-            optional paper PDF • parent review • feedback
-                              │
-                              └────────► Slack text outbox
-                                           │
-                    visual intent → trust policy → private PNG
-                                           └────► dependent Slack file outbox
+parent in Slack
+      │ paired identity + normalized message + durable receipt
+      ▼
+durable thread session ──► parent-chat planner ──► reviewed capability + skill
+      │                                               │
+      │ prior releases + bounded child context        ▼
+      │                                      typed tool + code policy
+      │                                               │
+      └───────────────────────────────────────────────┤
+                                                      ▼
+     answer ──► Block Kit choice ──► visual ──► worksheet/activity/challenge
+       │              │                 │                    │
+       └──────────── durable ordered release units + outboxes ────────────► Slack thread
+
+confirmed weekly request ──► narrow scheduler ──► interactive parent check-in
 ```
 
-The fixed paired `connection` command exits at the Slack transport/outbox boundary. It does not construct the service, build family context, search resources, or invoke a model. This lets setup prove transport before the brain exists.
+The harness is provider-neutral. Models interpret natural parent language, select reviewed tools, and produce typed
+content. Code owns identity, permissions, approval, transactions, rendering, retries, files, schedules, and external
+effects. There is no general shell or computer-control tool in the family runtime.
 
-## Interaction ownership
+## Main boundaries
 
-Slack owns no family truth. It converts an authorized message to a strict transport contract and delivers queued replies. Pairing binds an exact `(workspace, user, conversation)` tuple. Transport receipts prevent duplicate Slack delivery from duplicating state; the durable outbox separates processing from delivery.
+- `sessions.py` persists thread history, agent turns, and tool calls.
+- `capabilities.py` progressively loads reviewed workflow and skill instructions from `capabilities/`.
+- `parent_agent.py` runs the bounded semantic tool loop; `tooling.py` enforces deny-by-default policy.
+- `interactions.py` compiles transport-neutral choices to Block Kit using opaque, bound, expiring, one-use tokens.
+- `learning_artifacts.py` owns distinct worksheet, activity, and challenge contracts plus one-page render/QA.
+- `scheduler.py` owns confirmed weekly check-ins and durable, deduplicated runs.
+- `service.py` binds tools to family-safe operations; `transports/slack.py` only handles Slack normalization/delivery.
+- `db.py` owns the versioned local SQLite state; text, visual, and artifact outboxes isolate external delivery.
 
-Messages that do not explicitly name a child are saved to `capture_inbox`. The core does not infer attribution. Future transports must reuse the same contracts, authorization, receipts, inbox, service, and outbox semantics.
+Every model action produces an inspectable capability run and ordered release units. This lets the text arrive first,
+while a visual or printable finishes later, without losing thread identity or repeating work.
 
-## Core ownership
+## Existing learning pipeline
 
-- `contracts.py` defines model-visible and state-transition shapes. Extra keys fail validation.
-- `db.py` owns schema versioning, backups, SQLite safety settings, pairing, receipts, inbox, and outbox tables.
-- `interaction.py` owns household setup and transport-independent authorization/delivery state.
-- `transports/contracts.py` normalizes messages; `transports/slack.py` is the Slack shell.
-- `repository.py` owns idempotent events, job leases, run state, atomic effects, and proposed actions.
-- `context_builder.py` returns a controlled projection rather than the whole family database.
-- `resources.py` owns the licensed-content boundary and FTS5 retrieval.
-- `reasoning.py` owns generator/critic/revision topology. Backends cannot execute effects.
-- `brain_config.py` owns ignored non-secret role selections and redacted credential/config readiness.
-- `providers/` owns distinct OpenAI Responses, Anthropic Messages, and OpenRouter Chat Completions adapters.
-- `artifacts.py` owns deterministic one-page paper output and validation.
-- `episodes.py` conservatively groups raw events into inspectable learning occasions and records append-only parent corrections.
-- `director.py` owns the bounded reflection path; public policy keeps context-driven suggestions disabled in v0.1.
-- `service.py` is the shared application boundary; `web.py` is a loopback setup/review console.
+New questions still pass through bounded context, generator, adversarial critics, revision, and strict local validation.
+Raw evidence is committed before model calls. A retry or parent revision is diagnostic evidence, not a second interest
+signal. Private-resource retrieval requires household opt-in and relevance; Slack never receives purchased excerpts.
 
-## Transactions and retries
+The fixed `connection` response stops at the transport/outbox boundary and contacts no model. Visuals deliver only
+after accessible text. Knowledge-bearing diagrams remain deterministic and code-labelled; optional decorative art uses
+a minimized prompt and visual QA, falling back safely when generation fails.
 
-Network/model calls occur outside SQLite transactions. Raw evidence is committed before reasoning. Final response, validated graph effects, action proposals, and completion statuses commit together. Duplicate event IDs return the original result; an ID reused with different content fails.
+## Reliability
 
-Critics may request bounded revisions. The final revision discards the rejected draft and rebuilds from the original event, bounded context, and flattened required changes so repeated bad examples do not anchor recovery.
+Network/model calls occur outside SQLite transactions. Duplicate inputs return the original result; conflicting reuse
+fails. Confirmed provider rejections may retry within bounds. Ambiguous external completion becomes `unknown` so the
+harness does not silently duplicate a parent message or file.
 
-Slack events receive an independent payload hash. A confirmed Slack API rejection can be retried with a bound attempt limit. An ambiguous network failure is marked `unknown` instead of automatically risking a duplicate parent message.
-
-Visuals are dependent deliveries: accessible text is confirmed first, then one validated asset may upload. Model-proposed deterministic cards become exact reviewed local templates. In opt-in decorative mode, a template may embed privacy-minimized generated art marked **imaginary** only after visual QA; otherwise it falls back to the reviewed local card. Code owns every label and comparison. The file state machine persists the Slack file ID before byte transfer and marks `completing` before the single-use completion call. Ambiguous provider or Slack completion is never retried. Tier C instructional visuals remain disabled.
-
-## Deployment boundary
-
-The MVP is a local family service. SQLite and private source paths are deliberate. Slack Socket Mode establishes an outbound WebSocket from that service, so no inbound public endpoint or cloud database is required. The loopback console is not a LAN service. Cloud hosting and remote workers need a separate threat model.
-
-Coding agents are setup/customization operators. An experimental attended coding-agent backend would still have to implement the same bounded `ModelBackend` contract; the coding session itself does not own family truth or side effects.
+The MVP runs on one family computer. Slack Socket Mode needs no public inbound endpoint. `curiosity host install`
+creates restartable Linux user services for Slack and scheduled work. Cloud or multi-family hosting needs a separate
+threat model.

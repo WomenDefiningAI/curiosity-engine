@@ -14,7 +14,14 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 
 from .brain_config import brain_config_fingerprint, brain_status
-from .config import AppConfig, ConfigurationError, configuration_root, repository_root
+from .config import (
+    AppConfig,
+    ConfigurationError,
+    configuration_root,
+    family_home,
+    private_root,
+    repository_root,
+)
 from .db import SCHEMA_VERSION, connect, init_db, jload, utcnow
 from .interaction import onboarding_checkpoint, onboarding_status, record_onboarding_checkpoint
 from .openai_image_backend import configured_image_backend
@@ -35,6 +42,18 @@ IMAGE_PROBE_VERSION = "synthetic-hybrid-image-v4"
 
 def _check(name: str, status: str, detail: str, *, required: bool) -> dict[str, Any]:
     return {"name": name, "status": status, "detail": detail, "required": required}
+
+
+def _installed_layout_is_safe(root: Path, public_config_root: Path) -> bool:
+    installed_root = (Path(sys.prefix) / "share" / "curiosity-engine").resolve()
+    private = private_root().resolve()
+    home = family_home().resolve()
+    return (
+        public_config_root.resolve() == installed_root
+        and not (root / ".git").exists()
+        and private.is_relative_to(home)
+        and not private.is_relative_to(installed_root)
+    )
 
 
 def _answer_quality_summary(db: Path, *, limit: int = 20) -> dict[str, Any]:
@@ -135,6 +154,7 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
         _check("public_config", "pass" if config_ok else "fail", "versioned public configuration", required=True)
     )
     ignored = False
+    boundary_detail = "run inside the cloned repository with private/ ignored"
     if (root / ".git").is_dir() and shutil.which("git"):
         proc = subprocess.run(
             ["git", "check-ignore", "-q", "private/example"],
@@ -144,16 +164,23 @@ def doctor(db_path: str | Path) -> dict[str, Any]:
             timeout=10,
         )
         ignored = proc.returncode == 0
+        if ignored:
+            boundary_detail = "private/ is ignored"
+    elif _installed_layout_is_safe(root, public_config_root):
+        ignored = True
+        boundary_detail = "installed runtime keeps private family state outside the package"
     else:
         ignore_file = root / ".gitignore"
         ignored = ignore_file.is_file() and "private/" in ignore_file.read_text(
             encoding="utf-8", errors="replace"
         )
+        if ignored:
+            boundary_detail = "private/ is ignored"
     checks.append(
         _check(
             "private_git_boundary",
             "pass" if ignored else "fail",
-            "private/ is ignored" if ignored else "run inside the cloned repository with private/ ignored",
+            boundary_detail,
             required=True,
         )
     )

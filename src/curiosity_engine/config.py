@@ -25,6 +25,36 @@ def repository_root() -> Path:
     return Path.cwd().resolve()
 
 
+def family_home() -> Path:
+    """Return the mutable household root, separate from the installed runtime.
+
+    Source checkouts retain the historical ``<repo>/private`` layout unless an
+    explicit home is configured. Packaged installs use ``~/.curiosity-engine``.
+    """
+
+    configured = os.environ.get("CURIOSITY_HOME")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    source = repository_root()
+    if (source / ".git").exists() or (source / "private").exists():
+        return source
+    return (Path.home() / ".curiosity-engine").resolve()
+
+
+def private_root() -> Path:
+    configured = os.environ.get("CURIOSITY_PRIVATE_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return family_home() / "private"
+
+
+def family_workspace() -> Path:
+    configured = os.environ.get("CURIOSITY_WORKSPACE")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return family_home() / "workspace"
+
+
 def configuration_root() -> Path:
     source = repository_root()
     if (source / "configs").is_dir():

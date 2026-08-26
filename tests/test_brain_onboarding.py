@@ -212,6 +212,26 @@ def test_doctor_fails_safely_outside_a_protected_checkout(
     assert "cloned repository" in boundary["detail"]
 
 
+def test_doctor_accepts_installed_private_state_outside_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    workspace = tmp_path / "family-home" / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr("curiosity_engine.onboarding.repository_root", lambda: workspace)
+    monkeypatch.setattr(
+        "curiosity_engine.onboarding._installed_layout_is_safe",
+        lambda _root, _config: True,
+    )
+    report = doctor(tmp_path / "family-home" / "private" / "data" / "db.sqlite")
+    boundary = next(check for check in report["checks"] if check["name"] == "private_git_boundary")
+    assert boundary == {
+        "name": "private_git_boundary",
+        "status": "pass",
+        "detail": "installed runtime keeps private family state outside the package",
+        "required": True,
+    }
+
+
 def test_doctor_reports_redacted_answer_rejection_rate(tmp_path: Path):
     db = tmp_path / "private" / "data" / "db.sqlite"
     init_db(db)

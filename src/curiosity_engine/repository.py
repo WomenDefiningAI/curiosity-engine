@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -12,6 +13,7 @@ from .db import connect, init_db, jdump, jload, utcnow
 from .episodes import resolve_episode
 from .graph import apply_graph_mutation
 
+logger = logging.getLogger(__name__)
 
 class IdempotencyConflict(ValueError):
     pass
@@ -182,7 +184,9 @@ class Repository:
         now = utcnow()
         with connect(self.db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            effects = self._apply_mutations(conn, event_id, child_id, run_id, graph_updates)
+            effects = self._apply_mutations(
+                conn, event_id, child_id, run_id, graph_updates, skip_invalid=True
+            )
             stored_actions = self._store_actions(conn, event_id, run_id, actions)
             conn.execute(
                 """INSERT INTO responses(event_id,run_id,workflow,status,output_json,created_at,updated_at)
@@ -283,7 +287,13 @@ class Repository:
 
     @staticmethod
     def _apply_mutations(
-        conn, event_id: str, child_id: str | None, run_id: int, mutations: list[GraphMutation]
+        conn,
+        event_id: str,
+        child_id: str | None,
+        run_id: int,
+        mutations: list[GraphMutation],
+        *,
+        skip_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for mutation in mutations:
@@ -302,12 +312,28 @@ class Repository:
             )
             try:
                 effect = apply_graph_mutation(conn, mutation, child_id)
-            except Exception as exc:
+            except ValueError as exc:
                 conn.execute(
                     "UPDATE graph_effects SET status='failed',error=? WHERE event_id=? AND mutation_json=?",
                     (repr(exc), event_id, payload),
                 )
-                raise
+                if not skip_invalid:
+                    raise
+                logger.warning(
+                    "skipped invalid optional graph mutation event_id=%s run_id=%s kind=%s error=%s",
+                    event_id,
+                    run_id,
+                    mutation.kind.value,
+                    str(exc),
+                )
+                results.append(
+                    {
+                        "mutation": jload(payload),
+                        "status": "skipped_invalid",
+                        "error": str(exc),
+                    }
+                )
+                continue
             conn.execute(
                 "UPDATE graph_effects SET status='applied',applied_at=?,error=NULL WHERE event_id=? AND mutation_json=?",
                 (utcnow(), event_id, payload),

@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .config import repository_root
+from .config import private_root, repository_root
 
 ProviderName = Literal["openai", "anthropic", "openrouter"]
 RuntimeMode = Literal["api", "coding_agent_attended"]
@@ -63,16 +63,14 @@ def brain_config_path(root: str | Path | None = None) -> Path:
     configured = os.environ.get("CURIOSITY_BRAIN_CONFIG")
     if configured:
         return Path(configured).resolve()
-    repo = Path(root).resolve() if root else repository_root()
-    return repo / "private" / "setup" / "brain.json"
+    return (Path(root).resolve() / "private" if root else private_root()) / "setup" / "brain.json"
 
 
 def model_env_path(root: str | Path | None = None) -> Path:
     configured = os.environ.get("CURIOSITY_MODEL_ENV")
     if configured:
         return Path(configured).resolve()
-    repo = Path(root).resolve() if root else repository_root()
-    return repo / "private" / "setup" / "model.env"
+    return (Path(root).resolve() / "private" if root else private_root()) / "setup" / "model.env"
 
 
 def brain_config_fingerprint(root: str | Path | None = None) -> str:

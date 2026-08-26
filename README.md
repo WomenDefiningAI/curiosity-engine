@@ -1,106 +1,97 @@
 # Curiosity Engine
 
-A local-first, parent-facing harness that turns children’s questions into short, hands-on learning threads.
+A local-first family AI harness that turns children’s questions into accurate, playful learning threads, visuals,
+games, and printables. Parents use it in Slack; children do not chat with the model directly.
 
 > AI plans. Parents create the conditions. Kids do the thinking.
 
-Slack is the v1 family interface. Family context stays in ignored local storage; only bounded request context is sent to the model provider you choose. This is not a child-facing chatbot.
+## Install
 
-## What you need
+On a Mac or Linux family computer with Python 3.11+:
 
-- Python 3.11+ on a Mac or Linux computer
-- Codex, Claude Code, or another coding agent for guided setup
-- an adult-controlled Slack workspace and Slack app
-- an API key from OpenAI, Anthropic, or OpenRouter
+```bash
+curl -fsSL https://raw.githubusercontent.com/WomenDefiningAI/curiosity-engine/main/scripts/install.sh | sh
+```
 
-The family computer and Slack connector must stay running for replies. Paper and writing utensils are enough; a home or library printer is optional.
+The installer creates an isolated runtime and private family home at `~/.curiosity-engine`; it does not clone a
+source repository. If Codex or Claude Code is installed, `curiosity setup` opens a private setup workspace and asks
+the coding agent to operate the terminal, explain decisions, and verify every checkpoint. Otherwise run
+`curiosity setup --no-launch`, then point your coding agent to `~/.curiosity-engine/workspace/SETUP_HANDOFF.md`.
 
-## Start here
+Setup covers six decisions:
 
-Clone the repo, open it in VS Code, and tell your coding agent:
+1. household and child profiles;
+2. an adult-controlled Slack workspace and app;
+3. a fixed, non-AI Slack connection test;
+4. a bring-your-own model stack for reasoning, vision/OCR, visual QA, and image generation;
+5. family pedagogy, practical constraints, and licensed-resource consent;
+6. always-on local services plus one parent-reviewed real answer.
 
-> Read `AGENTS.md` and `docs/AGENT_ONBOARDING.md`. Act as my Family Operator and walk me through each checkpoint. Keep all family data and credentials private. Do not call setup complete until the fixed Slack text and visual tests, synthetic model test, and one parent-reviewed real answer pass.
+Use [Slack setup](docs/SLACK_SETUP.md) and [brain setup](docs/BRAIN_SETUP.md) if you want to inspect the manual steps.
 
-Then let the agent run:
+## How families use it
+
+Mention the bot with a child ID for a new question:
+
+```text
+@Curiosity Engine ask kid-a: Why do airplanes stay up?
+```
+
+The answer stays in a thread. Continue naturally there: “show different wing shapes,” “turn this into a mystery,”
+or “make a printable challenge.” Buttons are shortcuts, not commands the parent must memorize. Unattributed channel
+notes remain in a private inbox until a parent chooses a child or dismisses them.
+
+## What makes it a harness
+
+- Durable sessions keep the thread’s prior ideas and parent revisions.
+- Reviewed capabilities and skills guide worksheets, activities, challenges, visuals, and check-ins.
+- A provider-neutral model planner chooses only typed, policy-checked tools.
+- Code owns permissions, approval, persistence, retries, rendering, and external effects.
+- Responses, visuals, interactions, and PDFs release independently as they are ready.
+- Feedback and regeneration attempts improve private family fit and create opt-in, de-identified eval candidates.
+
+Weekly check-ins are available only after explicit confirmation. The harness has no general shell or computer-control
+tool; scheduling is a narrow reviewed capability.
+
+## Privacy
+
+Family state is separate from the installed code:
+
+```text
+~/.curiosity-engine/private/    database, resources, output, credentials
+~/.curiosity-engine/workspace/  private coding-agent setup handoff
+```
+
+Credentials are read from owner-only files and never printed by `curiosity doctor`. Purchased-resource excerpts stay
+local unless the parent opts into bounded, relevant model context. Slack and the selected model provider still
+process the content sent to them. Back up family state with:
+
+```bash
+curiosity backup create
+curiosity backup verify
+```
+
+## Scope
+
+The MVP includes Slack, local child context, parent feedback, visual responses, three real one-page artifact types,
+and confirmed weekly check-ins. It assumes paper, writing tools, and optional access to a home or library printer.
+
+It does not yet include unsolicited suggestions, embeddings, a graph database, probabilistic mastery, child accounts,
+cloud hosting, Telegram, school email, calendars, autonomous purchasing, or 3D printing.
+
+## Develop
+
+Clone only if you want to change the open-source code:
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev,slack,all-providers]'
-curiosity doctor
-```
-
-`curiosity doctor` reports the next setup action without printing family details or secrets.
-
-## Setup checkpoints
-
-| Checkpoint | Proof |
-|---|---|
-| Local | `private/` is ignored; household and child records exist locally |
-| Slack | One adult and conversation are paired |
-| Connection | Slack replies to `connection` without loading a model or family context |
-| Visual delivery | Slack receives the fixed `visual connection` card with useful alt text |
-| Brain | A family-data-free live provider probe passes |
-| Family fit | The family lens is set and one real Slack answer passes parent review |
-
-Use [Slack setup](docs/SLACK_SETUP.md) first, then [brain setup](docs/BRAIN_SETUP.md). The model stack should cover structured reasoning, vision/OCR, visual QA, and image generation; one provider does not need to fill every role.
-
-## Daily Slack use
-
-```text
-connection
-visual connection
-children
-ask kid-a: Why does ice float?
-We saw a shiny beetle today
-inbox
-assign inbox_... kid-a
-feedback kid-a engaged: Kept asking about it
-privacy
-help
-```
-
-Unattributed notes stay in the inbox until a parent assigns them. In a channel, invite the app and mention it explicitly.
-
-## Privacy boundary
-
-Family data never belongs in tracked files:
-
-```text
-private/data/       local database
-private/resources/  family-owned and purchased material
-private/output/     generated pages
-private/setup/      Slack and model configuration
-```
-
-Do not paste credentials into agent chat. Enter them directly in the ignored files created by setup. Purchased-resource excerpts are off by default and require both parent opt-in and relevant retrieval. See [Privacy](docs/PRIVACY.md).
-
-Protect the ignored family data with a separate local snapshot:
-
-```bash
-curiosity backup create
-curiosity backup verify
-curiosity backup status
-```
-
-Snapshots live beside the repository by default, include the database, purchased resources, and generated output, and exclude Slack/model credentials. Back them up with Time Machine or your normal encrypted computer backup too.
-
-## MVP boundaries
-
-Included: Slack capture, accessible visual response cards, optional decorative image generation, bring-your-own model APIs, local context, parent feedback, and optional one-page PDFs.
-
-Not included: unsolicited suggestions, embeddings, a graph database, probabilistic mastery, child-facing accounts, cloud hosting, autonomous purchasing, or 3D printing. Telegram, school email, calendars, and easier printer workflows are future extensions.
-
-## Documentation
-
-- Families and coding agents: [onboarding](docs/AGENT_ONBOARDING.md), [Slack](docs/SLACK_SETUP.md), [brain](docs/BRAIN_SETUP.md), [family lens](docs/FAMILY_LENS.md), [operations](docs/OPERATIONS.md)
-- Design and trust: [architecture](docs/ARCHITECTURE.md), [context graph](docs/CONTEXT_GRAPH.md), [artifact trust](docs/ARTIFACT_TRUST.md), [privacy](docs/PRIVACY.md)
-- Contributors: [testing](docs/TESTING.md), [public-project policy](docs/PUBLIC_PROJECTS.md), [stewardship](docs/OPEN_SOURCE_STEWARDSHIP.md), [roadmap](ROADMAP.md)
-
-Run the public quality gate with:
-
-```bash
 ruff check .
 pytest
 curiosity-lab --repo . --json-out private/eval-report.json
 ```
+
+Read [AGENTS.md](AGENTS.md) before using a coding agent. Family files belong only in ignored local storage. Start with
+[architecture](docs/ARCHITECTURE.md), [privacy](docs/PRIVACY.md), [testing](docs/TESTING.md), and
+[open-source stewardship](docs/OPEN_SOURCE_STEWARDSHIP.md).

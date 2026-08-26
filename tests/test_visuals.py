@@ -544,3 +544,59 @@ def test_visual_policy_rejects_proper_names_and_known_household_identity(tmp_pat
             mode="decorative",
             visual={**proper_name, "subject": "alice with an imaginary robot"},
         )
+
+
+def test_decorative_mode_completes_missing_visual_without_rewriting_reviewed_text():
+    question = "How does electricity move through a wire?"
+    expected_hook = StubBackend._pull_thread(question)["hook"]
+
+    class VisualCompletionBackend(StubBackend):
+        def __init__(self):
+            self.pull_thread_calls = 0
+
+        def complete(self, *, role, system, payload, response_model):
+            if response_model is PullThreadOutput:
+                self.pull_thread_calls += 1
+                if payload.get("visual_completion"):
+                    result = dict(payload["candidate"])
+                    result["visual"] = {
+                        "kind": "decorative_illustration",
+                        "purpose": "imagine",
+                        "knowledge_role": "decorative",
+                        "title": "A spark adventure",
+                        "pedagogical_value": "Adds wonder without depicting an electrical mechanism.",
+                        "caption": "Imagine a tiny spark setting out on an adventure.",
+                        "alt_text": "A cheerful imaginary spark explores a colorful cut-paper world.",
+                        "subject": "a cheerful imaginary spark exploring a colorful cut-paper world",
+                    }
+                    return result
+                result = super().complete(
+                    role=role,
+                    system=system,
+                    payload=payload,
+                    response_model=response_model,
+                )
+                result["visual"] = None
+                return result
+            return super().complete(
+                role=role,
+                system=system,
+                payload=payload,
+                response_model=response_model,
+            )
+
+    backend = VisualCompletionBackend()
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy("pull_thread", 2),
+        context={"child": {"grade": "1st"}},
+        event={
+            "type": "child_question",
+            "text": question,
+            "metadata": {"response_visual_mode": "decorative"},
+        },
+    )
+
+    assert backend.pull_thread_calls == 2
+    assert result.output["hook"] == expected_hook
+    assert result.output["visual"]["kind"] == "decorative_illustration"
+    assert result.output["visual"]["knowledge_role"] == "decorative"
