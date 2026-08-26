@@ -198,6 +198,7 @@ def test_plain_photo_context_cannot_be_normalized_into_an_unsolicited_lesson(tmp
         latest_event_id=None,
         current_attachment_context=[{"status": "ready", "summary": "paper pieces on a table"}],
     )
+    assert result["status"] == "completed"
     assert result["message"] == "Saved as context only."
     assert calls == [{"note": "new play at home"}]
 

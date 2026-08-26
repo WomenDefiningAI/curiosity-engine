@@ -917,9 +917,12 @@ class SlackTransport:
                 )
                 if not row or row["parent_id"] != binding["parent_id"]:
                     raise ValueError("unassigned note not found for this parent")
-                event_id = _engine_event_id(message, f"assign:{inbox_id}:{child_id}")
                 captured_attachments = attachments_for_inbox(self.db_path, inbox_id)
                 if captured_attachments and message.thread_id:
+                    # Context-only parent chat has no learning event. Keeping this
+                    # explicitly null also prevents a rejected context turn from
+                    # being written as a nonexistent event foreign key.
+                    event_id = None
                     response = self.service.chat(
                         binding_id=binding_id,
                         team_id=message.team_id,
@@ -931,6 +934,7 @@ class SlackTransport:
                         attachments=captured_attachments,
                     )
                 else:
+                    event_id = _engine_event_id(message, f"assign:{inbox_id}:{child_id}")
                     response = self.service.ask(
                         child_id=child_id,
                         text=str(row["text"]),
@@ -1110,6 +1114,11 @@ class SlackTransport:
                 outbound_id=outbound_id,
             )
         except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Slack processing failed (%s; event=%s)",
+                exc.__class__.__name__,
+                sha256(message.external_event_id.encode()).hexdigest()[:12],
+            )
             outbound_id = self._queue(
                 message,
                 binding_id,
@@ -1486,7 +1495,11 @@ def _make_slack_action_receiver(
                     resolved_text = (
                         "Dismissed this saved note."
                         if action_id == INBOX_DISMISS_ACTION
-                        else "Assigned this saved note. The learning thread follows."
+                        else (
+                            f"Saved this context for {selected_child_name}."
+                            if result.event_id is None
+                            else "Assigned this saved note. The learning thread follows."
+                        )
                     )
                     try:
                         client.chat_update(
@@ -1503,6 +1516,16 @@ def _make_slack_action_receiver(
                     except Exception:
                         logging.getLogger(__name__).exception("could not retire Slack inbox controls")
             elif action_id == INBOX_ASSIGN_ACTION and message_ts:
+                if result.outbound_id:
+                    # The interactive message itself carries the retry state.
+                    # Retire the queued fallback so one tap cannot produce a
+                    # second, contradictory error message in the thread.
+                    mark_delivery(
+                        db_path,
+                        result.outbound_id,
+                        status="expired",
+                        error="presented inline by Slack action handler",
+                    )
                 retry_text = "I couldn't finish that learning thread. The note is still saved."
                 try:
                     client.chat_update(

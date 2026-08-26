@@ -293,7 +293,11 @@ class ParentAgentRuntime:
         origin: str,
         run_id: str,
     ) -> dict[str, Any]:
-        result: dict[str, Any] = {"message": turn.message, "tool_results": []}
+        result: dict[str, Any] = {
+            "status": "completed",
+            "message": turn.message,
+            "tool_results": [],
+        }
         if turn.interaction:
             result["interaction"] = turn.interaction.model_dump(mode="json")
         for index, call in enumerate(turn.tool_calls, start=1):
@@ -362,6 +366,9 @@ class ParentAgentRuntime:
                         (jdump(tool_result), utcnow(), call_id),
                     )
             result["tool_results"].append({"tool": call.name, **tool_result})
+            tool_status = str(tool_result.get("status") or "completed")
+            if tool_status != "completed":
+                result["status"] = tool_status
             for key in ("message", "interaction", "event_id", "visual_job_id", "artifact", "schedule"):
                 if tool_result.get(key) is not None:
                     result[key] = tool_result[key]
