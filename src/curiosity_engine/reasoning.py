@@ -237,6 +237,40 @@ class StubBackend:
                 "actions": [],
                 "resource_refs": [],
             }
+        if "sauropod" in lowered or ("dinosaur" in lowered and "long neck" in lowered):
+            return {
+                "hook": "Sauropods were long-necked plant eaters that could reach leaves at different heights.",
+                "show": "Place three paper leaves low, medium, and high, then compare which one your pretend sauropod can reach.",
+                "ask": "Which leaf was easiest for your dinosaur to eat, and what made it easier?",
+                "nugget": "A long neck helped a sauropod reach plants without moving its whole heavy body each time.",
+                "next_possible_concepts": ["body adaptations", "plant eaters", "height and reach"],
+                "physical_extension": {
+                    "title": "Sauropod leaf reach",
+                    "instructions": [
+                        "Color and cut out the three leaf targets.",
+                        "Place them low, medium, and high around one room.",
+                        "Keep your feet planted, reach like a long neck, and compare the targets.",
+                    ],
+                    "materials": ["printed leaf page", "coloring utensils", "tape", "grown-up scissors"],
+                    "parent_effort": "low",
+                    "printable": {
+                        "kind": "target_set",
+                        "title": "Sauropod Leaf Reach",
+                        "child_directions": "Color and cut out the leaves. Put them at three heights, then reach like a sauropod!",
+                        "parent_setup": "Help with cutting if needed, then tape the leaves low, medium, and high.",
+                        "pedagogical_value": "The page becomes the three targets used to compare reach instead of merely illustrating a dinosaur.",
+                        "pieces": [
+                            {"label": "LOW", "prompt": "easy snack", "shape": "leaf"},
+                            {"label": "MEDIUM", "prompt": "stretch snack", "shape": "leaf"},
+                            {"label": "HIGH", "prompt": "sky snack", "shape": "leaf"},
+                        ],
+                    },
+                },
+                "visual": None,
+                "graph_updates": [],
+                "actions": [],
+                "resource_refs": [],
+            }
         if "dinosaur" in lowered or "fossil" in lowered:
             return {
                 "hook": "Nobody has ever seen a living non-bird dinosaur, yet scientists can still investigate them like detectives.",
@@ -638,7 +672,8 @@ class ReasoningEngine:
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
         mode = str(metadata.get("response_visual_mode") or "")
         question = str(event.get("text") or "")
-        if parsed.visual is not None or not should_attempt_decorative_visual(question, mode):
+        printable = parsed.physical_extension.printable if parsed.physical_extension else None
+        if printable is not None or parsed.visual is not None or not should_attempt_decorative_visual(question, mode):
             return parsed
 
         child = context.get("child") if isinstance(context.get("child"), dict) else {}
@@ -691,6 +726,14 @@ class ReasoningEngine:
         output = parsed.model_dump(mode="json")
         output["visual"] = candidate.get("visual")
         visual = normalize_response_visual(str(event.get("text") or ""), output)
+        if (
+            parsed.physical_extension
+            and parsed.physical_extension.printable
+            and visual is not None
+            and visual.kind == "decorative_illustration"
+        ):
+            logger.info("suppressed decorative visual because a child-usable printable is available")
+            visual = None
         return parsed.model_copy(update={"visual": visual})
 
     @staticmethod
@@ -755,7 +798,11 @@ class ReasoningEngine:
             ),
             "critic_parent_effort": "Attack anything a busy parent is unlikely to do at the stated moment.",
             "critic_epistemic": "Reject durable child-state claims that lack multiple attributable pieces of evidence.",
-            "critic_visual": "Find plans likely to create misleading, illegible, or malformed child-facing visuals.",
+            "critic_visual": (
+                "Find visuals that are misleading, illegible, malformed, or merely decorative when the proposed "
+                "activity has an obvious child-usable printout, diagram, play piece, comparison, or recording need. "
+                "A pleasant topic picture does not satisfy an activity's visual need."
+            ),
         }
         return (
             self._prompt("critic-v1.md", "Return a strict verdict: pass, revise, or reject.")

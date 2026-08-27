@@ -11,6 +11,12 @@
     "expected_kind": "activity_sequence"
   },
   {
+    "id": "sauropod-leaf-reach-needs-play-pieces",
+    "input": "Ethan has been listening to dinosaur stories about long-neck sauropods.",
+    "expected_kind": "none",
+    "expected_printable_kind": "target_set"
+  },
+  {
     "id": "social-inference-control-stays-text-only",
     "input": "Why was my friend mad at me?",
     "expected_kind": "none"

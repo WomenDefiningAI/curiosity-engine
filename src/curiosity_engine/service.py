@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -29,6 +30,8 @@ from .scheduler import SchedulerService
 from .sessions import SessionStore
 from .tooling import ToolRegistry
 from .visuals import enqueue_response_visual, infer_safe_visual_revision
+
+logger = logging.getLogger(__name__)
 
 
 def _explicit_visual_request(text: str) -> bool:
@@ -209,19 +212,36 @@ class CuriosityService:
             payload["id"] = event_id
         result = CuriosityHarness(self.db_path).dispatch(Event.model_validate(payload))
         response = result.model_dump(mode="json")
-        if response.get("status") == "completed" and enqueue_visual:
-            try:
-                visual_job_id = enqueue_response_visual(
-                    self.db_path,
-                    event_id=str(response["event_id"]),
-                    visual=(response.get("output") or {}).get("visual"),
-                    mode=visual_mode,
-                )
-            except (ValueError, RuntimeError):
-                # A useful text answer must survive an unsafe or malformed visual proposal.
-                visual_job_id = None
-            if visual_job_id:
-                response["visual_job_id"] = visual_job_id
+        if response.get("status") == "completed":
+            output = response.get("output") or {}
+            printable = (output.get("physical_extension") or {}).get("printable")
+            if printable:
+                try:
+                    response["artifact"] = LearningArtifactService(
+                        self.db_path,
+                        self.output_dir,
+                        backend=StubBackend(),
+                    ).create_from_extension(event_id=str(response["event_id"]))
+                except (KeyError, ValueError, RuntimeError) as exc:
+                    # The reviewed answer still ships if an optional local printout fails.
+                    logger.warning(
+                        "automatic activity printout failed event=%s error_type=%s",
+                        response.get("event_id"),
+                        exc.__class__.__name__,
+                    )
+            if enqueue_visual:
+                try:
+                    visual_job_id = enqueue_response_visual(
+                        self.db_path,
+                        event_id=str(response["event_id"]),
+                        visual=output.get("visual"),
+                        mode=visual_mode,
+                    )
+                except (ValueError, RuntimeError):
+                    # A useful text answer must survive an unsafe or malformed visual proposal.
+                    visual_job_id = None
+                if visual_job_id:
+                    response["visual_job_id"] = visual_job_id
         if attachment_context:
             response["attachment_context"] = attachment_context
         return response

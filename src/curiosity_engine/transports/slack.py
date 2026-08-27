@@ -895,6 +895,7 @@ class SlackTransport:
                     reply = _format_thread(response)
                     reply_blocks = _response_blocks(reply, event_id)
                     visual_job_id = response.get("visual_job_id")
+                    artifact_to_deliver = response.get("artifact")
                     purpose = "response-retry"
                     result_status = "completed"
                 else:
@@ -949,6 +950,7 @@ class SlackTransport:
                         else _response_blocks(reply, event_id)
                     )
                     visual_job_id = response.get("visual_job_id")
+                    artifact_to_deliver = response.get("artifact")
                     purpose = "answer"
                     result_status = "completed"
                 else:
@@ -1054,6 +1056,7 @@ class SlackTransport:
                             else _response_blocks(reply, event_id)
                         )
                         visual_job_id = response.get("visual_job_id")
+                        artifact_to_deliver = response.get("artifact")
                         purpose = "named-answer"
                         result_status = "completed"
                     else:
@@ -1134,6 +1137,7 @@ class SlackTransport:
                         ]
                     )
                     visual_job_id = response.get("visual_job_id")
+                    artifact_to_deliver = response.get("artifact")
                     purpose = "assign"
                     result_status = "completed"
                 else:

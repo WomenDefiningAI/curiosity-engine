@@ -104,15 +104,48 @@ class ActionRequest(StrictModel):
     rationale: str = Field(min_length=1, max_length=1_000)
 
 
+class PrintablePiece(StrictModel):
+    """One large child-usable part of a deterministic activity page."""
+
+    label: str = Field(min_length=1, max_length=32)
+    prompt: str = Field(default="", max_length=90)
+    shape: Literal["leaf", "target", "card", "circle", "arrow"] = "card"
+
+
+class PrintablePlan(StrictModel):
+    """A semantic plan for a useful printout; code owns its layout and drawing."""
+
+    kind: Literal["target_set", "play_cards", "recording_sheet"]
+    title: str = Field(min_length=1, max_length=90)
+    child_directions: str = Field(min_length=1, max_length=220)
+    parent_setup: str = Field(default="", max_length=220)
+    pedagogical_value: str = Field(min_length=1, max_length=300)
+    pieces: list[PrintablePiece] = Field(min_length=2, max_length=6)
+
+
 class PhysicalExtension(StrictModel):
     title: str = Field(min_length=1, max_length=160)
     instructions: list[str] = Field(min_length=1, max_length=6)
     materials: list[str] = Field(default_factory=list, max_length=8)
     parent_effort: Literal["very_low", "low", "medium"] = "low"
+    printable: PrintablePlan | None = None
 
     @model_validator(mode="after")
     def uses_ordinary_materials(self) -> PhysicalExtension:
-        _reject_3d_printing([self.title, *self.instructions, *self.materials])
+        printable_text = []
+        if self.printable:
+            printable_text = [
+                self.printable.title,
+                self.printable.child_directions,
+                self.printable.parent_setup,
+                self.printable.pedagogical_value,
+                *[
+                    text
+                    for piece in self.printable.pieces
+                    for text in (piece.label, piece.prompt)
+                ],
+            ]
+        _reject_3d_printing([self.title, *self.instructions, *self.materials, *printable_text])
         return self
 
 
@@ -512,6 +545,7 @@ class ActivitySpec(LearningArtifactBase):
     variations: list[str] = Field(default_factory=list, max_length=3)
     safety: str = Field(default="Use ordinary care and grown-up help when needed.", max_length=300)
     cleanup: str = Field(min_length=1, max_length=220)
+    printable: PrintablePlan | None = None
 
     @model_validator(mode="after")
     def ordinary_materials_only(self) -> ActivitySpec:

@@ -16,7 +16,15 @@ from reportlab.pdfgen.canvas import Canvas
 from .artifact_validation import render_pdf_preview, validate_rendered_file
 from .artifacts import deterministic_visual_qa
 from .capabilities import CapabilityRegistry
-from .contracts import ActivitySpec, ChallengeSpec, LearningArtifactSpec, WorksheetSpec
+from .contracts import (
+    ActivitySpec,
+    ChallengeSpec,
+    LearningArtifactSpec,
+    PhysicalExtension,
+    PrintablePiece,
+    PrintablePlan,
+    WorksheetSpec,
+)
 from .db import connect, init_db, jdump, jload, utcnow
 from .reasoning import ModelBackend
 
@@ -163,6 +171,9 @@ def _draw_worksheet(canvas: Canvas, spec: WorksheetSpec, x: float, y: float, wid
 
 
 def _draw_activity(canvas: Canvas, spec: ActivitySpec, x: float, y: float, width: float) -> None:
+    if spec.printable:
+        _draw_activity_printable(canvas, spec.printable, x, y, width)
+        return
     navy = HexColor("#17324D")
     canvas.setFillColor(HexColor("#FFF2ED"))
     canvas.roundRect(x, y - 60, width, 60, 10, stroke=0, fill=1)
@@ -203,6 +214,152 @@ def _draw_activity(canvas: Canvas, spec: ActivitySpec, x: float, y: float, width
         _paragraph(canvas, spec.variations[0], x=x, y=y, width=width, size=10, leading=13)
     canvas.setFillColor(HexColor("#557080"))
     _paragraph(canvas, f"Cleanup: {spec.cleanup}", x=x, y=74, width=width, size=8, leading=10)
+
+
+def _draw_piece_shape(
+    canvas: Canvas,
+    piece: PrintablePiece,
+    *,
+    center_x: float,
+    center_y: float,
+    width: float,
+    height: float,
+) -> None:
+    navy = HexColor("#17324D")
+    green = HexColor("#8CCB68")
+    pale = HexColor("#F4FAEF")
+    canvas.saveState()
+    canvas.setStrokeColor(navy)
+    canvas.setLineWidth(2)
+    canvas.setDash(5, 4)
+    canvas.roundRect(center_x - width / 2, center_y - height / 2, width, height, 12, stroke=1, fill=0)
+    canvas.setDash()
+    if piece.shape == "leaf":
+        leaf_width = width * 0.64
+        leaf_height = height * 0.53
+        bottom = center_y - leaf_height * 0.35
+        top = bottom + leaf_height
+        path = canvas.beginPath()
+        path.moveTo(center_x, bottom)
+        path.curveTo(
+            center_x - leaf_width * 0.62,
+            bottom + leaf_height * 0.18,
+            center_x - leaf_width * 0.55,
+            bottom + leaf_height * 0.74,
+            center_x,
+            top,
+        )
+        path.curveTo(
+            center_x + leaf_width * 0.55,
+            bottom + leaf_height * 0.74,
+            center_x + leaf_width * 0.62,
+            bottom + leaf_height * 0.18,
+            center_x,
+            bottom,
+        )
+        canvas.setFillColor(pale)
+        canvas.setStrokeColor(green)
+        canvas.setLineWidth(3)
+        canvas.drawPath(path, stroke=1, fill=1)
+        canvas.setStrokeColor(HexColor("#4B8F45"))
+        canvas.setLineWidth(2)
+        canvas.line(center_x, bottom - 12, center_x, top - 9)
+        for offset in (0.22, 0.38, 0.54, 0.70):
+            branch_y = bottom + leaf_height * offset
+            spread = leaf_width * (0.34 - abs(offset - 0.5) * 0.22)
+            canvas.line(center_x, branch_y, center_x - spread, branch_y + 13)
+            canvas.line(center_x, branch_y, center_x + spread, branch_y + 13)
+    elif piece.shape == "target":
+        for scale, color in ((0.66, "#F26B5B"), (0.44, "#FFF2ED"), (0.2, "#2A9D8F")):
+            canvas.setFillColor(HexColor(color))
+            canvas.circle(center_x, center_y + 9, min(width, height) * scale / 2, stroke=0, fill=1)
+    elif piece.shape == "circle":
+        canvas.setFillColor(pale)
+        canvas.setStrokeColor(green)
+        canvas.circle(center_x, center_y + 9, min(width, height) * 0.31, stroke=1, fill=1)
+    elif piece.shape == "arrow":
+        canvas.setFillColor(HexColor("#F7C948"))
+        canvas.setStrokeColor(navy)
+        path = canvas.beginPath()
+        path.moveTo(center_x - width * 0.28, center_y - 12)
+        path.lineTo(center_x + width * 0.02, center_y - 12)
+        path.lineTo(center_x + width * 0.02, center_y - 34)
+        path.lineTo(center_x + width * 0.29, center_y + 4)
+        path.lineTo(center_x + width * 0.02, center_y + 42)
+        path.lineTo(center_x + width * 0.02, center_y + 20)
+        path.lineTo(center_x - width * 0.28, center_y + 20)
+        path.close()
+        canvas.drawPath(path, stroke=1, fill=1)
+    else:
+        canvas.setFillColor(HexColor("#E8F5F2"))
+        canvas.setStrokeColor(HexColor("#2A9D8F"))
+        canvas.roundRect(
+            center_x - width * 0.34,
+            center_y - height * 0.20,
+            width * 0.68,
+            height * 0.48,
+            10,
+            stroke=1,
+            fill=1,
+        )
+    canvas.setFillColor(navy)
+    canvas.setFont("Helvetica-Bold", 17)
+    canvas.drawCentredString(center_x, center_y - height * 0.38, piece.label)
+    if piece.prompt:
+        canvas.setFillColor(HexColor("#557080"))
+        canvas.setFont("Helvetica-Bold", 9)
+        canvas.drawCentredString(center_x, center_y - height * 0.46, piece.prompt)
+    canvas.restoreState()
+
+
+def _draw_activity_printable(
+    canvas: Canvas,
+    plan: PrintablePlan,
+    x: float,
+    y: float,
+    width: float,
+) -> None:
+    navy = HexColor("#17324D")
+    canvas.setFillColor(HexColor("#E8F5F2"))
+    canvas.roundRect(x, y - 58, width, 58, 10, stroke=0, fill=1)
+    canvas.setFillColor(navy)
+    _paragraph(
+        canvas,
+        plan.child_directions,
+        x=x + 14,
+        y=y - 18,
+        width=width - 28,
+        size=12,
+        leading=15,
+        bold=True,
+    )
+    pieces = plan.pieces
+    columns = 3 if len(pieces) != 2 else 2
+    rows = (len(pieces) + columns - 1) // columns
+    gap = 12
+    grid_top = y - 76
+    grid_bottom = 126 if plan.parent_setup else 92
+    cell_width = (width - gap * (columns - 1)) / columns
+    cell_height = (grid_top - grid_bottom - gap * (rows - 1)) / rows
+    for index, piece in enumerate(pieces):
+        row, column = divmod(index, columns)
+        center_x = x + column * (cell_width + gap) + cell_width / 2
+        center_y = grid_top - row * (cell_height + gap) - cell_height / 2
+        _draw_piece_shape(
+            canvas,
+            piece,
+            center_x=center_x,
+            center_y=center_y,
+            width=cell_width,
+            height=cell_height,
+        )
+    if plan.parent_setup:
+        canvas.setFillColor(HexColor("#FFF2ED"))
+        canvas.roundRect(x, 70, width, 42, 8, stroke=0, fill=1)
+        canvas.setFillColor(navy)
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawString(x + 12, 97, "GROWN-UP SETUP")
+        _paragraph(canvas, plan.parent_setup, x=x + 12, y=85, width=width - 24, size=8, leading=10)
 
 
 def _draw_challenge(canvas: Canvas, spec: ChallengeSpec, x: float, y: float, width: float) -> None:
@@ -339,6 +496,57 @@ class LearningArtifactService:
             grade=str(row["grade"] or "early elementary"),
             source_event_id=event_id,
             revision=revision,
+        )
+        return self._render_and_store(child_id=str(row["child_id"]), spec=spec)
+
+    def create_from_extension(self, *, event_id: str) -> dict[str, Any]:
+        """Render a reviewed activity's structured printout without another model call."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT e.child_id,c.grade,r.output_json,r.status
+                   FROM events e JOIN responses r ON r.event_id=e.id
+                   JOIN children c ON c.id=e.child_id WHERE e.id=?""",
+                (event_id,),
+            ).fetchone()
+        if not row or row["status"] != "completed" or not row["child_id"]:
+            raise ValueError("completed child response not found")
+        response = jload(row["output_json"])
+        extension = PhysicalExtension.model_validate(response.get("physical_extension"))
+        if extension.printable is None:
+            raise ValueError("response has no reviewed printable plan")
+        instructions = list(extension.instructions)
+        while len(instructions) < 3:
+            instructions.append(
+                "Use the pieces in the activity, then compare what happened."
+                if len(instructions) == 2
+                else "Prepare the pieces on the printed page."
+            )
+        plan = extension.printable
+        spec = ActivitySpec(
+            title=plan.title,
+            target_grade=str(row["grade"] or "early elementary"),
+            learning_objective=plan.pedagogical_value,
+            estimated_minutes=12,
+            parent_effort=extension.parent_effort,
+            trust_tier="B",
+            story_theme="hands-on curiosity mission",
+            accessibility_text=(
+                f"A one-page {plan.kind.replace('_', ' ')} with "
+                + ", ".join(piece.label for piece in plan.pieces)
+                + "."
+            ),
+            source_event_id=event_id,
+            source_refs=list(response.get("resource_refs") or [])[:8],
+            mission=plan.child_directions,
+            materials=extension.materials or ["this printed page"],
+            substitutions=[],
+            setup=[plan.parent_setup] if plan.parent_setup else [],
+            steps=instructions[:8],
+            observation_prompts=[str(response.get("ask") or "What did you notice?")],
+            variations=[],
+            cleanup="Recycle the page or save the pieces for another round.",
+            printable=plan,
         )
         return self._render_and_store(child_id=str(row["child_id"]), spec=spec)
 

@@ -154,6 +154,21 @@ def _run_harness_case(case: dict[str, Any]) -> list[str]:
 def _run_visual_case(case: dict[str, Any]) -> list[str]:
     output, failures = _run_semantic_case("curiosity", case)
     visual = output.get("visual")
+    printable = (output.get("physical_extension") or {}).get("printable")
+    expected_printable = case.get("expected_printable_kind")
+    if expected_printable:
+        if not isinstance(printable, dict):
+            failures.append("response used no child-usable printable for an obvious activity visual need")
+        elif printable.get("kind") != expected_printable:
+            failures.append(
+                f"expected printable kind {expected_printable}, got {printable.get('kind')}"
+            )
+        elif len(printable.get("pieces") or []) < 2:
+            failures.append("activity printable omitted usable play pieces")
+        if isinstance(visual, dict) and visual.get("kind") == "decorative_illustration":
+            failures.append("decorative image displaced an obvious child-usable activity visual")
+        if case.get("expected_kind") == "none":
+            return failures
     expected = case.get("expected_kind")
     if expected == "none":
         if visual is not None:

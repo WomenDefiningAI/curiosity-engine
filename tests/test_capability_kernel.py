@@ -563,6 +563,71 @@ def test_three_artifact_contracts_render_real_distinct_one_page_outputs(tmp_path
     assert mechanics == {"worksheet", "activity", "challenge"}
 
 
+def test_reviewed_activity_printable_becomes_child_usable_target_page(tmp_path: Path):
+    db, _setup, _binding_id = _family_db(tmp_path)
+    now = utcnow()
+    output = {
+        "hook": "Sauropods could reach leaves at different heights.",
+        "show": "Compare three leaf targets.",
+        "ask": "Which leaf was easiest to reach?",
+        "nugget": "A long neck helped reach plants without moving the whole body.",
+        "resource_refs": [],
+        "physical_extension": {
+            "title": "Sauropod leaf reach",
+            "instructions": [
+                "Color and cut out the leaves.",
+                "Put them low, medium, and high.",
+                "Keep your feet still and reach for each one.",
+            ],
+            "materials": ["printed page", "crayons", "tape"],
+            "parent_effort": "low",
+            "printable": {
+                "kind": "target_set",
+                "title": "Sauropod Leaf Reach",
+                "child_directions": "Color and cut out the leaves. Put them at three heights, then reach!",
+                "parent_setup": "Tape the leaves low, medium, and high.",
+                "pedagogical_value": "The child uses three visible targets to compare reach.",
+                "pieces": [
+                    {"label": "LOW", "prompt": "easy snack", "shape": "leaf"},
+                    {"label": "MEDIUM", "prompt": "stretch snack", "shape": "leaf"},
+                    {"label": "HIGH", "prompt": "sky snack", "shape": "leaf"},
+                ],
+            },
+        },
+    }
+    with connect(db) as conn:
+        conn.execute(
+            """INSERT INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
+               VALUES('evt-leaves','child_question','kid-a','Tell me about sauropods','parent','{}',?,'completed')""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO responses(event_id,run_id,workflow,status,output_json,created_at,updated_at)
+               VALUES('evt-leaves',NULL,'pull_thread','completed',?,?,?)""",
+            (jdump(output), now, now),
+        )
+    artifact = LearningArtifactService(
+        db,
+        tmp_path / "output",
+        backend=StubBackend(),
+    ).create_from_extension(event_id="evt-leaves")
+    assert artifact["artifact_type"] == "activity"
+    assert Path(artifact["pdf_path"]).read_bytes().startswith(b"%PDF-")
+    assert Path(artifact["preview_path"]).stat().st_size > 1_000
+    with connect(db) as conn:
+        spec = json.loads(
+            conn.execute(
+                "SELECT spec_json FROM artifacts WHERE id=?", (artifact["artifact_id"],)
+            ).fetchone()[0]
+        )
+    assert spec["printable"]["kind"] == "target_set"
+    assert [piece["label"] for piece in spec["printable"]["pieces"]] == [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    ]
+
+
 def test_challenge_fallback_preserves_named_comparison_and_play_sequence(tmp_path: Path):
     db, _setup, _binding_id = _family_db(tmp_path)
     _stored_response(db)
