@@ -480,6 +480,7 @@ class LearningArtifactService:
         event_id: str,
         artifact_type: str,
         revision: str = "",
+        require_printable: bool = False,
     ) -> dict[str, Any]:
         with connect(self.db_path) as conn:
             row = conn.execute(
@@ -499,8 +500,32 @@ class LearningArtifactService:
             grade=str(row["grade"] or "early elementary"),
             source_event_id=event_id,
             revision=revision,
+            require_printable=require_printable,
         )
         return self._render_and_store(child_id=str(row["child_id"]), spec=spec)
+
+    def create_activity_aid_from_event(
+        self,
+        *,
+        event_id: str,
+        evaluator_guidance: str = "",
+    ) -> dict[str, Any]:
+        """Create a private functional companion for an existing reviewed Try it activity."""
+
+        guidance = evaluator_guidance.strip()
+        revision = (
+            "Create the functional activity aid for the reviewed Try it activity. The one-page output must "
+            "supply child-usable targets, cards, pieces, a comparison surface, or a recording surface that is "
+            "actually used in the activity. Do not repeat the conversational answer as decorated prose."
+        )
+        if guidance:
+            revision += f" Evaluator guidance: {guidance}"
+        return self.create_from_event(
+            event_id=event_id,
+            artifact_type="activity",
+            revision=revision,
+            require_printable=True,
+        )
 
     def create_from_extension(self, *, event_id: str) -> dict[str, Any]:
         """Render a reviewed activity's structured printout without another model call."""
@@ -562,6 +587,7 @@ class LearningArtifactService:
         grade: str,
         source_event_id: str,
         revision: str,
+        require_printable: bool = False,
     ) -> LearningArtifactSpec:
         model_cls: type[WorksheetSpec | ActivitySpec | ChallengeSpec] = {
             "worksheet": WorksheetSpec,
@@ -577,6 +603,7 @@ class LearningArtifactService:
                 grade,
                 source_event_id,
                 revision=revision,
+                require_printable=require_printable,
             )
         design_payload = {
             "question": question,
@@ -591,6 +618,7 @@ class LearningArtifactService:
             "comparison_evidence_requirement": (
                 "For a comparison, evidence_rows must name each version so the child can mark two trials and a best result."
             ),
+            "require_printable": require_printable,
         }
         last_error: Exception | None = None
         for attempt in range(2):
@@ -606,6 +634,12 @@ class LearningArtifactService:
                     "parent's sentence. A challenge must tell the child exactly what to make/do, how to run the fair "
                     "test or puzzle, and what evidence to record. "
                     "Generated imagery is not part of this contract; code owns layout and knowledge-bearing visuals.\n\n"
+                    + (
+                        "This is a functional activity-aid request. The ActivitySpec.printable field is required, "
+                        "and its pieces must be used by the reviewed activity rather than merely decorating the page. "
+                        if require_printable
+                        else ""
+                    )
                     + self.capabilities.instructions_for(capability_id)
                 ),
                 payload={
@@ -624,6 +658,8 @@ class LearningArtifactService:
                 parsed = model_cls.model_validate(candidate)
                 parsed = parsed.model_copy(update={"source_event_id": source_event_id, "target_grade": grade})
                 errors = validate_learning_artifact(parsed)
+                if require_printable and isinstance(parsed, ActivitySpec) and parsed.printable is None:
+                    errors.append("functional activity aid requires a child-usable printable plan")
                 errors.extend(self._alignment_errors(parsed, revision.strip() or question))
                 if errors:
                     raise ValueError("designed artifact failed quality checks: " + "; ".join(errors))
@@ -659,6 +695,7 @@ class LearningArtifactService:
             grade,
             source_event_id,
             revision=revision,
+            require_printable=require_printable,
         )
 
     @staticmethod
@@ -837,6 +874,7 @@ class LearningArtifactService:
         event_id: str,
         *,
         revision: str = "",
+        require_printable: bool = False,
     ) -> LearningArtifactSpec:
         brief = re.sub(r"<@[^>]+>|@Curiosity Engine", "", revision.strip() or question.strip()).strip()
         sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", brief) if part.strip()]
@@ -890,6 +928,11 @@ class LearningArtifactService:
                 observation_prompts=["What stayed the same?", "What surprised you?"],
                 variations=["Turn it into a two-player prediction game."],
                 cleanup="Put the object back and save the paper for your next clue.",
+                printable=(
+                    LearningArtifactService._fallback_activity_printable(question, response)
+                    if require_printable
+                    else None
+                ),
             )
         return ChallengeSpec(
             **common,
@@ -927,6 +970,65 @@ class LearningArtifactService:
             ),
             evidence_rows=evidence_rows or (["Version A", "Version B", "Version C"] if comparison else []),
             reflection="What new question appeared after your test?",
+        )
+
+    @staticmethod
+    def _fallback_activity_printable(question: str, response: dict[str, Any]) -> PrintablePlan:
+        """Return a usable local aid when model artifact design cannot pass review."""
+
+        extension = response.get("physical_extension") or {}
+        activity_text = " ".join(
+            [
+                question,
+                str(extension.get("title") or ""),
+                *[str(step) for step in extension.get("instructions") or []],
+            ]
+        ).casefold()
+        if "leaf" in activity_text or "leaves" in activity_text:
+            return PrintablePlan(
+                kind="target_set",
+                title="Leaf Reach Targets",
+                child_directions="Reach each leaf without moving your feet. Which reach feels easiest?",
+                parent_setup="Cut out the three leaves and place them low, medium, and high.",
+                pedagogical_value="Turns reach height into a visible movement comparison.",
+                pieces=[
+                    PrintablePiece(label="LOW", prompt="Reach low", shape="leaf"),
+                    PrintablePiece(label="MEDIUM", prompt="Reach midway", shape="leaf"),
+                    PrintablePiece(label="HIGH", prompt="Reach high", shape="leaf"),
+                ],
+            )
+        if all(word in activity_text for word in ("go", "stop", "turn")):
+            return PrintablePlan(
+                kind="play_cards",
+                title="Robot Command Cards",
+                child_directions="Choose one card at a time and follow the command exactly.",
+                parent_setup="Cut out the cards, shuffle them, and reveal one at a time.",
+                pedagogical_value="Makes a command sequence visible and playable.",
+                pieces=[
+                    PrintablePiece(label="GO", prompt="Move forward", shape="arrow"),
+                    PrintablePiece(label="STOP", prompt="Freeze", shape="target"),
+                    PrintablePiece(label="TURN", prompt="Change direction", shape="arrow"),
+                ],
+            )
+        if any(word in activity_text for word in ("ice", "freeze", "freezing", "water")):
+            labels = (("BEFORE", "Mark the water"), ("PREDICT", "What will change?"), ("AFTER", "Mark the ice"))
+            title = "Ice Change Record"
+        elif any(word in activity_text for word in ("airplane", "wing", "glide", "flight")):
+            labels = (("WING A", "Try 1 and 2"), ("WING B", "Try 1 and 2"), ("BEST", "Star your evidence"))
+            title = "Flight Test Record"
+        else:
+            labels = (("PREDICT", "What might happen?"), ("TRY", "Mark what happened"), ("NOTICE", "What changed?"))
+            title = "Try It Record"
+        return PrintablePlan(
+            kind="recording_sheet",
+            title=title,
+            child_directions="Draw or mark one clue in each box as you do the activity.",
+            parent_setup="Keep this page beside the activity and let the child draw or dictate.",
+            pedagogical_value="Gives the child a visible place to predict, test, and notice.",
+            pieces=[
+                PrintablePiece(label=label, prompt=prompt, shape="card")
+                for label, prompt in labels
+            ],
         )
 
     @staticmethod

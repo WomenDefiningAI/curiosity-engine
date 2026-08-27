@@ -24,8 +24,15 @@
 
   <main class="eval-shell">
     <section class="eval-intro">
-      <strong>What belongs here?</strong>
-      <span>Judge the released answer—not the child. Say whether it should have been chat, a quick answer, or a learning thread, then choose no visual, imagination art, an activity aid, or both.</span>
+      <div>
+        <strong>What belongs here?</strong>
+        <span>Judge the released answer—not the child. Say whether it should have been chat, a quick answer, or a learning thread, then choose no visual, imagination art, an activity aid, or both.</span>
+      </div>
+      <form method="post" action="/evals/generate-activity-aids">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Generate missing activity aids</button>
+        <small>Private eval output only · no Slack message · no child-graph write</small>
+      </form>
     </section>
 
     {% for item in items %}

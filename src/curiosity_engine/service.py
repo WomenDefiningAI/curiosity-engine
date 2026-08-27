@@ -1067,6 +1067,67 @@ class CuriosityService:
             "onboarding": onboarding_status(self.db_path),
         }
 
+    def generate_eval_activity_aid(
+        self,
+        *,
+        event_id: str,
+        evaluator_guidance: str = "",
+    ) -> dict[str, Any]:
+        """Generate one private artifact for eval without Slack delivery or graph evidence."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT r.status,r.output_json FROM responses r WHERE r.event_id=?""",
+                (event_id,),
+            ).fetchone()
+            existing = conn.execute(
+                """SELECT a.id,a.artifact_type,x.title FROM artifacts a
+                   JOIN experiences x ON x.id=a.experience_id
+                   WHERE x.source_event_id=? ORDER BY a.created_at DESC LIMIT 1""",
+                (event_id,),
+            ).fetchone()
+        if existing:
+            return {"status": "existing", "artifact_id": existing["id"], "title": existing["title"]}
+        if not row or row["status"] != "completed":
+            raise ValueError("completed response not found")
+        output = jload(row["output_json"])
+        if not output.get("physical_extension"):
+            raise ValueError("response has no Try it activity to support")
+        backend = configured_backend(self.config) or StubBackend()
+        artifact = LearningArtifactService(
+            self.db_path,
+            self.output_dir,
+            backend=backend,
+        ).create_activity_aid_from_event(
+            event_id=event_id,
+            evaluator_guidance=evaluator_guidance,
+        )
+        return {"status": "generated", **artifact}
+
+    def generate_evaluation_activity_aids(self, *, limit: int = 10) -> dict[str, Any]:
+        """Generate missing activity aids for the current private evaluation set."""
+
+        results: list[dict[str, Any]] = []
+        for item in self.evaluation_queue(limit=limit):
+            output = item.get("output") or {}
+            if item.get("status") != "completed" or not output.get("physical_extension"):
+                continue
+            guidance = str((item.get("evaluation") or {}).get("note") or "")
+            try:
+                result = self.generate_eval_activity_aid(
+                    event_id=str(item["event_id"]),
+                    evaluator_guidance=guidance,
+                )
+            except Exception as exc:
+                result = {"status": "failed", "error_type": exc.__class__.__name__}
+            results.append({"event_id": item["event_id"], **result})
+        return {
+            "generated": sum(item["status"] == "generated" for item in results),
+            "existing": sum(item["status"] == "existing" for item in results),
+            "failed": sum(item["status"] == "failed" for item in results),
+            "results": results,
+        }
+
     def evaluation_queue(self, *, limit: int = 8) -> list[dict[str, Any]]:
         """Return recent delivered Slack releases and their private visual assets."""
 

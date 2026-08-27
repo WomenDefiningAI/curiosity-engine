@@ -112,6 +112,16 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             raise HTTPException(404)
         return FileResponse(path, media_type=row["mime_type"], filename=row["filename"])
 
+    @app.post("/evals/generate-activity-aids", response_class=HTMLResponse)
+    def generate_eval_activity_aids(request: Request, csrf: Annotated[str, Form()] = ""):
+        check_csrf(csrf)
+        result = service.generate_evaluation_activity_aids(limit=10)
+        notice = (
+            f"Generated {result['generated']} activity aid(s); "
+            f"{result['existing']} already existed; {result['failed']} failed review."
+        )
+        return render_evals(request, notice=notice)
+
     @app.post("/evals/{event_id}")
     def save_eval(
         request: Request,

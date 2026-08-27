@@ -789,8 +789,22 @@ def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path:
     )
     assert saved.status_code == 303
     assert saved.headers["location"] == "/evals"
+    generated = client.post(
+        "/evals/generate-activity-aids",
+        data={"csrf": token},
+    )
+    assert generated.status_code == 200
+    assert "Generated 1 activity aid(s)" in generated.text
+    assert "Printable tool for doing the activity" in generated.text
+    generated_again = client.post(
+        "/evals/generate-activity-aids",
+        data={"csrf": token},
+    )
+    assert "Generated 0 activity aid(s); 1 already existed" in generated_again.text
     with connect(db) as conn:
         evaluation = dict(conn.execute("SELECT * FROM output_evaluations").fetchone())
+        artifact = dict(conn.execute("SELECT * FROM artifacts").fetchone())
+        assert conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == observations_before
         assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
     assert evaluation["event_id"] == event_id
@@ -799,6 +813,7 @@ def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path:
     assert evaluation["preferred_response_shape"] == "learning_thread"
     assert evaluation["preferred_visual_mix"] == "both"
     assert evaluation["note"] == "Make the leaves into usable targets."
+    assert json.loads(artifact["spec_json"])["printable"]["kind"] == "target_set"
 
 
 def test_migration_backup_and_schema_version(tmp_path: Path):

@@ -100,7 +100,10 @@ button.secondary { color:var(--ink); background:#e8f5f2; box-shadow:none; }
 .text-link { color:var(--blue); font-weight:800; text-decoration:none; }
 .text-link:hover { text-decoration:underline; }
 .eval-shell { display:grid; gap:1rem; max-width:1440px; margin:0 auto; padding:1.2rem max(3vw,1.2rem) 4rem; }
-.eval-intro { display:flex; gap:.7rem; align-items:baseline; padding:1rem 1.2rem; border-radius:15px; background:#effafa; color:var(--muted); }
+.eval-intro { display:flex; gap:1rem; align-items:center; justify-content:space-between; padding:1rem 1.2rem; border-radius:15px; background:#effafa; color:var(--muted); }
+.eval-intro>div { display:flex; gap:.7rem; align-items:baseline; }
+.eval-intro form { display:grid; justify-items:end; gap:.25rem; flex:0 0 auto; }
+.eval-intro form small { font-size:.68rem; }
 .eval-intro strong { color:var(--ink); }
 .eval-card { overflow:hidden; border:1.5px solid var(--line); border-radius:22px 18px 24px 19px; background:rgba(255,255,255,.96); box-shadow:0 7px 24px rgba(23,50,77,.05); }
 .eval-card-head { display:flex; align-items:start; justify-content:space-between; gap:1rem; padding:1.25rem 1.35rem .7rem; }
