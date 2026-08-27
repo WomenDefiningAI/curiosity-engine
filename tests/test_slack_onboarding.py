@@ -116,14 +116,29 @@ class FakeSlackClient:
     def __init__(self):
         self.messages: list[dict[str, Any]] = []
         self.updates: list[dict[str, Any]] = []
+        self.reactions_added: list[dict[str, Any]] = []
+        self.reactions_removed: list[dict[str, Any]] = []
+        self.calls: list[str] = []
 
     def chat_postMessage(self, **kwargs: Any) -> dict[str, str]:
+        self.calls.append("message")
         self.messages.append(kwargs)
         return {"ts": f"100.{len(self.messages)}"}
 
     def chat_update(self, **kwargs: Any) -> dict[str, str]:
+        self.calls.append("update")
         self.updates.append(kwargs)
         return {"ts": str(kwargs["ts"])}
+
+    def reactions_add(self, **kwargs: Any) -> dict[str, bool]:
+        self.calls.append("reaction_add")
+        self.reactions_added.append(kwargs)
+        return {"ok": True}
+
+    def reactions_remove(self, **kwargs: Any) -> dict[str, bool]:
+        self.calls.append("reaction_remove")
+        self.reactions_removed.append(kwargs)
+        return {"ok": True}
 
 
 def incoming(event_id: str, text: str, *, channel: str = "D_PARENT", user: str = "U_PARENT") -> InboundMessage:
@@ -219,6 +234,82 @@ def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
     assert client.messages[0]["thread_ts"] == "100.1"
     assert client.messages[0]["text"].startswith("Paired.")
 
+    client.calls.clear()
+    client.messages.clear()
+    receive(
+        {"event_id": "EvMentionWorking", "team_id": "T_FAMILY"},
+        {
+            "type": "app_mention",
+            "user": "U_PARENT",
+            "channel": "C_FAMILY",
+            "text": "<@U123ABC> still working?",
+            "ts": "100.2",
+            "event_ts": "100.2",
+        },
+        client,
+    )
+    working = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "eyes"}
+    done = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "white_check_mark"}
+    assert client.reactions_added == [working, done]
+    assert client.reactions_removed == []
+    assert client.calls == ["reaction_add", "message", "reaction_add"]
+    assert client.messages[0]["thread_ts"] == "100.2"
+
+
+def test_paired_message_keeps_acknowledgement_and_adds_done_after_reply(tmp_path: Path):
+    db, transport, _fake, client, _code = paired_transport(tmp_path)
+    client.calls.clear()
+    client.messages.clear()
+    receive = _make_slack_event_receiver(transport, db)
+
+    receive(
+        {"event_id": "EvWorking", "team_id": "T_FAMILY"},
+        {
+            "type": "message",
+            "channel_type": "im",
+            "user": "U_PARENT",
+            "channel": "D_PARENT",
+            "text": "still working?",
+            "ts": "200.1",
+            "event_ts": "200.1",
+        },
+        client,
+    )
+
+    working = {"channel": "D_PARENT", "timestamp": "200.1", "name": "eyes"}
+    done = {"channel": "D_PARENT", "timestamp": "200.1", "name": "white_check_mark"}
+    assert client.reactions_added == [working, done]
+    assert client.reactions_removed == []
+    assert client.calls == ["reaction_add", "message", "reaction_add"]
+    assert client.messages[0]["text"].startswith("Slack connection works")
+
+
+def test_missing_reaction_scope_never_blocks_reply(tmp_path: Path):
+    db, transport, _fake, client, _code = paired_transport(tmp_path)
+    client.messages.clear()
+
+    def deny_reaction(**_kwargs: Any) -> None:
+        raise RuntimeError("synthetic missing scope")
+
+    client.reactions_add = deny_reaction  # type: ignore[method-assign]
+    receive = _make_slack_event_receiver(transport, db)
+    receive(
+        {"event_id": "EvNoReactionScope", "team_id": "T_FAMILY"},
+        {
+            "type": "message",
+            "channel_type": "im",
+            "user": "U_PARENT",
+            "channel": "D_PARENT",
+            "text": "connection",
+            "ts": "200.2",
+            "event_ts": "200.2",
+        },
+        client,
+    )
+
+    assert client.reactions_removed == []
+    assert client.messages[0]["text"].startswith("Slack connection works")
+
 
 def test_expired_pairing_code_is_rejected(tmp_path: Path):
     db = tmp_path / "db.sqlite"
@@ -273,6 +364,37 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
             "source": "slack_parent",
         }
     ]
+
+
+def test_slack_routes_one_strong_name_signal_without_an_inbox_prompt(tmp_path: Path):
+    db, transport, fake, client, _code = paired_transport(tmp_path)
+
+    result = transport.handle(incoming("EvNamed", "Kid A keeps wondering why feathers float"))
+
+    assert result.status == "completed"
+    assert result.inbox_id is None
+    assert fake.calls[-1]["child_id"] == "kid-a"
+    assert fake.calls[-1]["text"] == "Kid A keeps wondering why feathers float"
+    assert list_inbox(db) == []
+    flush_slack_outbox(client, db)
+    assert "Who was this for?" not in client.messages[-1]["text"]
+
+
+def test_slack_keeps_multiple_or_weak_name_signals_unassigned(tmp_path: Path):
+    db, transport, fake, _client, _code = paired_transport(tmp_path)
+    fake.children = lambda: [  # type: ignore[method-assign]
+        {"id": "kid-a", "name": "Kid A", "grade": "2"},
+        {"id": "kid-b", "name": "Kid B", "grade": "1"},
+    ]
+
+    multiple = transport.handle(incoming("EvTwoNames", "Kid A and Kid B keep comparing feathers"))
+    assert multiple.status == "unassigned"
+    assert fake.calls == []
+
+    fake.children = lambda: [{"id": "kid-a", "name": "Will", "grade": "2"}]  # type: ignore[method-assign]
+    weak = transport.handle(incoming("EvWeakName", "Will airplanes fly?"))
+    assert weak.status == "unassigned"
+    assert fake.calls == []
 
 
 def test_slack_accepts_backticked_commands_and_natural_health_check(tmp_path: Path):
@@ -645,9 +767,16 @@ def test_doctor_never_echoes_tokens_or_family_content(tmp_path: Path, monkeypatc
 
 def test_manifest_has_only_mvp_scopes():
     manifest = (Path(__file__).parents[1] / "integrations" / "slack" / "manifest.yaml").read_text()
-    for scope in ("app_mentions:read", "chat:write", "files:write", "im:history"):
+    for scope in (
+        "app_mentions:read",
+        "chat:write",
+        "files:write",
+        "files:read",
+        "im:history",
+        "reactions:write",
+    ):
         assert f"- {scope}" in manifest
-    for forbidden in ("channels:history", "groups:history", "users:read", "files:read"):
+    for forbidden in ("channels:history", "groups:history", "users:read"):
         assert forbidden not in manifest
     assert "interactivity:" in manifest
     assert "is_enabled: true" in manifest

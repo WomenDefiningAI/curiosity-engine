@@ -104,15 +104,48 @@ class ActionRequest(StrictModel):
     rationale: str = Field(min_length=1, max_length=1_000)
 
 
+class PrintablePiece(StrictModel):
+    """One large child-usable part of a deterministic activity page."""
+
+    label: str = Field(min_length=1, max_length=32)
+    prompt: str = Field(default="", max_length=90)
+    shape: Literal["leaf", "target", "card", "circle", "arrow"] = "card"
+
+
+class PrintablePlan(StrictModel):
+    """A semantic plan for a useful printout; code owns its layout and drawing."""
+
+    kind: Literal["target_set", "play_cards", "recording_sheet"]
+    title: str = Field(min_length=1, max_length=90)
+    child_directions: str = Field(min_length=1, max_length=220)
+    parent_setup: str = Field(default="", max_length=220)
+    pedagogical_value: str = Field(min_length=1, max_length=300)
+    pieces: list[PrintablePiece] = Field(min_length=2, max_length=6)
+
+
 class PhysicalExtension(StrictModel):
     title: str = Field(min_length=1, max_length=160)
     instructions: list[str] = Field(min_length=1, max_length=6)
     materials: list[str] = Field(default_factory=list, max_length=8)
     parent_effort: Literal["very_low", "low", "medium"] = "low"
+    printable: PrintablePlan | None = None
 
     @model_validator(mode="after")
     def uses_ordinary_materials(self) -> PhysicalExtension:
-        _reject_3d_printing([self.title, *self.instructions, *self.materials])
+        printable_text = []
+        if self.printable:
+            printable_text = [
+                self.printable.title,
+                self.printable.child_directions,
+                self.printable.parent_setup,
+                self.printable.pedagogical_value,
+                *[
+                    text
+                    for piece in self.printable.pieces
+                    for text in (piece.label, piece.prompt)
+                ],
+            ]
+        _reject_3d_printing([self.title, *self.instructions, *self.materials, *printable_text])
         return self
 
 
@@ -130,6 +163,8 @@ class VisualPanel(StrictModel):
         "stop",
         "turn",
         "robot",
+        "water",
+        "ice",
         "question",
         "idea",
     ]
@@ -409,6 +444,37 @@ class ParentAgentToolCall(StrictModel):
     rationale: str = Field(min_length=1, max_length=500)
 
 
+class ThreadOutputRef(StrictModel):
+    """A code-resolved reference to one output in the current parent thread."""
+
+    ref_id: str = Field(pattern=r"^(?:msg|rel|art)_[a-zA-Z0-9_-]{1,120}$")
+    kind: Literal["answer", "visual", "artifact", "interaction"]
+    title: str | None = Field(default=None, max_length=180)
+    snippet: str = Field(min_length=1, max_length=500)
+    event_id: str | None = Field(default=None, max_length=160)
+    artifact_id: str | None = Field(default=None, max_length=160)
+
+
+class ThreadPreference(StrictModel):
+    """Explicit, reversible presentation guidance scoped to one thread."""
+
+    category: Literal[
+        "answer_style",
+        "visual_style",
+        "artifact_style",
+        "activity_style",
+        "interaction_style",
+    ]
+    value: str = Field(min_length=1, max_length=400)
+    source_message_id: str = Field(min_length=1, max_length=160)
+
+
+class ParentSessionState(StrictModel):
+    version: int = Field(default=1, ge=1, le=10)
+    preferences: list[ThreadPreference] = Field(default_factory=list, max_length=10)
+    active_output_ref: str | None = Field(default=None, max_length=160)
+
+
 class ParentAgentTurn(StrictModel):
     message: str | None = Field(default=None, max_length=2_000)
     tool_calls: list[ParentAgentToolCall] = Field(default_factory=list, max_length=3)
@@ -420,6 +486,15 @@ class ParentAgentTurn(StrictModel):
         if not self.message and not self.tool_calls and not self.interaction:
             raise ValueError("parent agent turn must communicate or act")
         return self
+
+
+class ImageContextOutput(StrictModel):
+    """Bounded evidence extracted from one parent-shared image."""
+
+    summary: str = Field(min_length=1, max_length=700)
+    visible_details: list[str] = Field(default_factory=list, max_length=10)
+    possible_play_threads: list[str] = Field(default_factory=list, max_length=5)
+    uncertainties: list[str] = Field(default_factory=list, max_length=6)
 
 
 class WorksheetTask(StrictModel):
@@ -470,6 +545,7 @@ class ActivitySpec(LearningArtifactBase):
     variations: list[str] = Field(default_factory=list, max_length=3)
     safety: str = Field(default="Use ordinary care and grown-up help when needed.", max_length=300)
     cleanup: str = Field(min_length=1, max_length=220)
+    printable: PrintablePlan | None = None
 
     @model_validator(mode="after")
     def ordinary_materials_only(self) -> ActivitySpec:

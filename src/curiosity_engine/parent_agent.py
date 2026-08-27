@@ -15,7 +15,9 @@ from .reasoning import ModelBackend
 from .sessions import SessionStore
 from .tooling import ToolPolicy, ToolRegistry
 
-PARENT_AGENT_POLICY_VERSION = "parent-agent-v1"
+PARENT_AGENT_POLICY_VERSION = "parent-agent-v3"
+MAX_PARENT_AGENT_STEPS = 2
+MAX_PARENT_AGENT_TOOL_CALLS = 3
 
 
 class ParentAgentRuntime:
@@ -44,6 +46,7 @@ class ParentAgentRuntime:
         child: dict[str, Any] | None,
         latest_event_id: str | None,
         origin: str = "slack",
+        current_attachment_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         history = self.sessions.history(session_id, limit=16)
         capability = self.capabilities.capability("parent_chat")
@@ -51,10 +54,20 @@ class ParentAgentRuntime:
         request = {
             "session": {"id": session_id, "child": child, "latest_event_id": latest_event_id},
             "history": [
-                {"role": item["role"], "kind": item["kind"], "content": item["content"]}
+                {
+                    "role": item["role"],
+                    "kind": item["kind"],
+                    "content": item["content"],
+                    "attachment_context": (item.get("metadata") or {}).get("attachment_context") or [],
+                }
                 for item in history
             ],
             "message": user_message,
+            "current_attachment_context": current_attachment_context or [],
+            "workspace": {
+                "thread_preferences": self.sessions.active_preferences(session_id),
+                "recent_outputs": self.sessions.output_index(session_id, limit=10),
+            },
             "capabilities": self.capabilities.capability_cards(),
             "skills": self.capabilities.skill_cards(set(capability.skill_ids)),
             "tools": self.tools.specs(allowed_tools),
@@ -65,14 +78,48 @@ class ParentAgentRuntime:
         turn_row = self.sessions.start_turn(session_id, request, policy_hash=policy_hash)
         run_id = self._start_capability_run(session_id, latest_event_id)
         try:
-            turn = self._plan(request, allowed_tools)
-            result = self._execute_turn(
-                turn,
-                session_id=session_id,
-                turn_id=turn_row["id"],
-                origin=origin,
-                run_id=run_id,
-            )
+            result: dict[str, Any] = {"status": "completed", "message": None, "tool_results": []}
+            seen_calls: set[str] = set()
+            call_ordinal = 1
+            for step in range(1, MAX_PARENT_AGENT_STEPS + 1):
+                request["agent_step"] = step
+                turn = self._plan(request, allowed_tools)
+                if call_ordinal - 1 + len(turn.tool_calls) > MAX_PARENT_AGENT_TOOL_CALLS:
+                    raise ValueError("parent agent exceeded its bounded tool-call budget")
+                fingerprints = [
+                    sha256(f"{call.name}:{jdump(call.arguments)}".encode()).hexdigest()
+                    for call in turn.tool_calls
+                ]
+                if any(fingerprint in seen_calls for fingerprint in fingerprints):
+                    result["message"] = (
+                        "I could not tell which earlier item you meant. Tell me a few words from it, and I’ll "
+                        "look again without changing anything yet."
+                    )
+                    break
+                seen_calls.update(fingerprints)
+                step_result = self._execute_turn(
+                    turn,
+                    session_id=session_id,
+                    turn_id=turn_row["id"],
+                    origin=origin,
+                    call_ordinal=call_ordinal,
+                )
+                call_ordinal += len(turn.tool_calls)
+                result = self._merge_results(result, step_result)
+                if turn.done or not turn.tool_calls:
+                    break
+                if any(self.tools.spec(call.name).side_effect != "none" for call in turn.tool_calls):
+                    break
+                if step == MAX_PARENT_AGENT_STEPS:
+                    result["message"] = result.get("message") or (
+                        "I found the earlier thread context but still need a few words about which part to change."
+                    )
+                    break
+                request["tool_results"] = [
+                    self._tool_result_for_model(item)
+                    for item in result.get("tool_results", [])[-MAX_PARENT_AGENT_TOOL_CALLS:]
+                ]
+            self._store_release_units(run_id, result)
             self.sessions.finish_turn(
                 turn_row["id"],
                 response=result,
@@ -81,12 +128,13 @@ class ParentAgentRuntime:
             )
             self._finish_capability_run(run_id, result)
             if result.get("message"):
+                result_status = str(result.get("status") or "completed")
                 self.sessions.append_message(
                     session_id,
                     role="assistant",
                     content=str(result["message"]),
-                    kind="agent_response",
-                    event_id=result.get("event_id"),
+                    kind="agent_response" if result_status == "completed" else "agent_notice",
+                    event_id=result.get("event_id") if result_status == "completed" else None,
                     metadata={"capability_run_id": run_id},
                 )
             return {**result, "session_id": session_id, "capability_run_id": run_id}
@@ -107,18 +155,30 @@ class ParentAgentRuntime:
 
     def _plan(self, request: dict[str, Any], allowed_tools: set[str]) -> ParentAgentTurn:
         if self.backend.name == "deterministic":
-            return self._fallback_plan(str(request["message"]))
+            return self._fallback_plan(
+                str(request["message"]), bool(request.get("current_attachment_context"))
+            )
         system = (
             "You are the parent-conversation planner inside Curiosity Engine. Parents speak naturally; never require "
             "commands or perfectly structured questions. Read the thread history. Choose the smallest useful next "
-            "step and call only reviewed tools shown in the payload. Use continue_learning_thread for a genuine "
-            "follow-up question, revise_learning_thread when the parent critiques or tunes prior output, "
+            "step and call only reviewed tools shown in the payload. A parent turn is not automatically a lesson. "
+            "Use record_thread_context when the parent shares a photo, observation, or play context without asking "
+            "for an output. Use continue_learning_thread for a genuine child-learning follow-up question, "
+            "revise_learning_thread when the parent asks to change a prior answer, activity, or visual, "
             "create_learning_artifact when they ask for a worksheet/activity/challenge/printable, and "
-            "propose_weekly_checkin for recurring check-ins. Do not repeat a prior activity. A model-written message "
-            "A critique of a printable, worksheet, activity sheet, or challenge artifact must call "
+            "propose_weekly_checkin for recurring check-ins. If the parent asks why the engine behaved a certain "
+            "way, corrects what it received, or asks about its capabilities, answer directly in one to four sentences "
+            "with no tool unless a local record is needed. Never generate a lesson or visual merely to apologize or "
+            "explain the interface. Do not repeat a prior activity. A critique of a printable, worksheet, activity "
+            "sheet, or challenge artifact must call "
             "create_learning_artifact again with the full parent wording in revision; revise_learning_thread is only "
-            "for the conversational answer or its generated image. "
-            "may acknowledge briefly, but learning work must use a tool. Block-style interactions are optional "
+            "for the conversational answer or its generated image. A model-written message may acknowledge briefly, "
+            "but learning work must use a tool. The workspace contains code-owned recent-output references and "
+            "explicit preferences for this thread. When an older target is unclear, call search_thread_outputs by "
+            "itself with done=false; its bounded results will be returned for one final planning pass. Never set "
+            "done=false after a write or request more than one lookup pass. Use update_thread_preference only when "
+            "the parent explicitly requests future behavior in this thread; a one-off critique is not a preference. "
+            "Block-style interactions are optional "
             "shortcuts and free-form chat must remain allowed. Never invent child IDs, permissions, or tool names.\n\n"
             + self.capabilities.instructions_for("parent_chat")
         )
@@ -129,11 +189,40 @@ class ParentAgentRuntime:
             response_model=ParentAgentTurn,
         )
         parsed = ParentAgentTurn.model_validate(candidate)
+        parsed = self._normalize_context_capture(parsed, request)
         parsed = self._normalize_artifact_revision(parsed, request)
         invalid = [call.name for call in parsed.tool_calls if call.name not in allowed_tools]
         if invalid:
             raise ValueError(f"parent agent proposed unavailable tools: {', '.join(invalid)}")
         return parsed
+
+    @staticmethod
+    def _normalize_context_capture(
+        turn: ParentAgentTurn, request: dict[str, Any]
+    ) -> ParentAgentTurn:
+        """A plain photo/context share must not turn into an unsolicited mini-lesson."""
+
+        if not request.get("current_attachment_context"):
+            return turn
+        message = str(request.get("message") or "").strip().casefold()
+        requests_output = bool(
+            "?" in message
+            or re.search(
+                r"\b(?:why|how|what|when|where|who|can|could|would|should|explain|help|ideas?|make|create|show|tell|give|suggest)\b",
+                message,
+            )
+        )
+        if requests_output:
+            return turn
+        return ParentAgentTurn(
+            tool_calls=[
+                ParentAgentToolCall(
+                    name="record_thread_context",
+                    arguments={"note": str(request.get("message") or "")},
+                    rationale="The parent shared photo context without requesting a learning output.",
+                )
+            ]
+        )
 
     def _normalize_artifact_revision(
         self,
@@ -171,7 +260,15 @@ class ParentAgentRuntime:
         calls = [
             ParentAgentToolCall(
                 name="create_learning_artifact",
-                arguments={"artifact_type": artifact_type, "revision": message},
+                arguments={
+                    "artifact_type": artifact_type,
+                    "revision": message,
+                    **(
+                        {"target_ref": str(call.arguments["target_ref"])}
+                        if call.arguments.get("target_ref")
+                        else {}
+                    ),
+                },
                 rationale="The parent is revising the current printable artifact.",
             )
             if call.name == "revise_learning_thread"
@@ -181,8 +278,24 @@ class ParentAgentRuntime:
         return turn.model_copy(update={"tool_calls": calls})
 
     @staticmethod
-    def _fallback_plan(message: str) -> ParentAgentTurn:
+    def _fallback_plan(message: str, has_current_attachments: bool = False) -> ParentAgentTurn:
         lowered = message.casefold()
+        if has_current_attachments and not (
+            "?" in message
+            or re.search(
+                r"\b(?:why|how|what|when|where|who|can|could|would|should|explain|help|ideas?|make|create|show|tell|give|suggest)\b",
+                lowered,
+            )
+        ):
+            return ParentAgentTurn(
+                tool_calls=[
+                    ParentAgentToolCall(
+                        name="record_thread_context",
+                        arguments={"note": message},
+                        rationale="The parent shared photo context without asking for an output.",
+                    )
+                ]
+            )
         artifact = next((kind for kind in ("worksheet", "activity", "challenge") if kind in lowered), None)
         if artifact or "printable" in lowered:
             return ParentAgentTurn(
@@ -232,12 +345,16 @@ class ParentAgentRuntime:
         session_id: str,
         turn_id: str,
         origin: str,
-        run_id: str,
+        call_ordinal: int,
     ) -> dict[str, Any]:
-        result: dict[str, Any] = {"message": turn.message, "tool_results": []}
+        result: dict[str, Any] = {
+            "status": "completed",
+            "message": turn.message,
+            "tool_results": [],
+        }
         if turn.interaction:
             result["interaction"] = turn.interaction.model_dump(mode="json")
-        for index, call in enumerate(turn.tool_calls, start=1):
+        for index, call in enumerate(turn.tool_calls, start=call_ordinal):
             spec = self.tools.spec(call.name)
             decision = ToolPolicy.decide(spec, origin=origin)
             if decision.requires_approval:
@@ -303,11 +420,48 @@ class ParentAgentRuntime:
                         (jdump(tool_result), utcnow(), call_id),
                     )
             result["tool_results"].append({"tool": call.name, **tool_result})
+            tool_status = str(tool_result.get("status") or "completed")
+            if tool_status != "completed":
+                result["status"] = tool_status
             for key in ("message", "interaction", "event_id", "visual_job_id", "artifact", "schedule"):
                 if tool_result.get(key) is not None:
                     result[key] = tool_result[key]
-        self._store_release_units(run_id, result)
+        notices = [str(item["notice"]) for item in result["tool_results"] if item.get("notice")]
+        if notices and result.get("message") not in notices:
+            result["message"] = (str(result.get("message") or "") + "\n\n" + "\n".join(notices)).strip()
         return result
+
+    @staticmethod
+    def _merge_results(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+        merged = {**current}
+        merged["tool_results"] = [
+            *current.get("tool_results", []),
+            *update.get("tool_results", []),
+        ]
+        if update.get("status") != "completed":
+            merged["status"] = update["status"]
+        for key in ("message", "interaction", "event_id", "visual_job_id", "artifact", "schedule"):
+            if update.get(key) is not None:
+                merged[key] = update[key]
+        return merged
+
+    @staticmethod
+    def _tool_result_for_model(result: dict[str, Any]) -> dict[str, Any]:
+        """Return only the bounded fields needed for a second planning pass."""
+
+        safe = {
+            key: result[key]
+            for key in ("tool", "status", "matches", "operation", "category", "preferences", "message")
+            if result.get(key) is not None
+        }
+        if isinstance(result.get("artifact"), dict):
+            artifact = result["artifact"]
+            safe["artifact"] = {
+                key: artifact[key]
+                for key in ("artifact_id", "artifact_type", "title")
+                if artifact.get(key) is not None
+            }
+        return safe
 
     def _start_capability_run(self, session_id: str, source_event_id: str | None) -> str:
         run_id = f"cap_{uuid4().hex[:20]}"
@@ -322,7 +476,7 @@ class ParentAgentRuntime:
                     run_id,
                     session_id,
                     "parent_chat",
-                    "1",
+                    "2",
                     jdump({card["id"]: card["version"] for card in self.capabilities.skill_cards()}),
                     source_event_id,
                     now,
@@ -362,8 +516,9 @@ class ParentAgentRuntime:
                 )
 
     def _finish_capability_run(self, run_id: str, result: dict[str, Any]) -> None:
+        status = "rejected" if result.get("status") == "rejected" else "completed"
         with connect(self.db_path) as conn:
             conn.execute(
-                "UPDATE capability_runs SET status='completed',result_json=?,updated_at=? WHERE id=?",
-                (jdump(result), utcnow(), run_id),
+                "UPDATE capability_runs SET status=?,result_json=?,updated_at=? WHERE id=?",
+                (status, jdump(result), utcnow(), run_id),
             )

@@ -148,6 +148,32 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
         draw.ellipse((cx - 28, cy - 12, cx - 14, cy + 2), fill=teal)
         draw.ellipse((cx + 14, cy - 12, cx + 28, cy + 2), fill=teal)
         draw.arc((cx - 24, cy - 2, cx + 24, cy + 28), 15, 165, fill=ink, width=5)
+    elif icon in {"water", "ice"}:
+        cup_left, cup_right = left + 24, right - 24
+        cup_top, cup_bottom = top + 14, bottom - 10
+        draw.line((cup_left, cup_top, cup_left + 10, cup_bottom), fill=ink, width=6)
+        draw.line((cup_right, cup_top, cup_right - 10, cup_bottom), fill=ink, width=6)
+        draw.line((cup_left + 10, cup_bottom, cup_right - 10, cup_bottom), fill=ink, width=6)
+        marker_y = cy + 12
+        draw.line((cup_left - 10, marker_y, cup_right + 10, marker_y), fill=accent, width=6)
+        if icon == "water":
+            draw.rectangle(
+                (cup_left + 8, marker_y - 4, cup_right - 8, cup_bottom - 7),
+                fill=PALETTE["sky"],
+            )
+            draw.line((cup_left + 8, marker_y, cup_right - 8, marker_y), fill=teal, width=5)
+        else:
+            ice_top = marker_y - 25
+            draw.rectangle(
+                (cup_left + 8, ice_top, cup_right - 8, cup_bottom - 7),
+                fill=PALETTE["sky"],
+            )
+            draw.line((cup_left + 8, ice_top, cup_right - 8, ice_top), fill=teal, width=5)
+            draw.line((right - 8, marker_y + 12, right - 8, ice_top - 8), fill=teal, width=7)
+            draw.polygon(
+                [(right - 8, ice_top - 18), (right - 21, ice_top + 2), (right + 5, ice_top + 2)],
+                fill=teal,
+            )
     else:
         glyph = "?" if icon == "question" else "✦"
         draw.text((cx, cy), glyph, font=_font(64, bold=True), fill=accent, anchor="mm")
@@ -361,6 +387,30 @@ def _robot_activity_intent() -> VisualIntent:
     )
 
 
+def _water_expansion_intent() -> VisualIntent:
+    return VisualIntent(
+        kind="activity_sequence",
+        purpose="notice",
+        knowledge_role="supportive",
+        title="Watch the water line",
+        pedagogical_value=(
+            "Shows an early reader exactly how to compare one marked water level before and after freezing."
+        ),
+        caption="Compare both cups to the same marker line: the ice can rise above it.",
+        alt_text=(
+            "A playful before-and-after diagram shows liquid water reaching a red marker line in a plastic cup, "
+            "then frozen ice rising above that same line with an upward arrow. A final card asks the child to "
+            "compare the two levels."
+        ),
+        subject="cheerful imaginary ice crystals exploring a colorful paper science table",
+        panels=[
+            {"label": "BEFORE", "detail": "Water starts at the marker line.", "icon": "water"},
+            {"label": "AFTER FREEZING", "detail": "Ice rises above the same line.", "icon": "ice"},
+            {"label": "COMPARE", "detail": "Point to where the level changed.", "icon": "look"},
+        ],
+    )
+
+
 def infer_safe_response_visual(question: str, output: dict[str, Any]) -> VisualIntent | None:
     """Provide a small deterministic fallback when a model omits or exceeds the visual boundary.
 
@@ -379,6 +429,30 @@ def infer_safe_response_visual(question: str, output: dict[str, Any]) -> VisualI
         return _robot_comparison_intent()
     if is_robot and _contains_any_word(lowered, ROBOT_ACTIVITY_VERBS):
         return _robot_activity_intent()
+    return None
+
+
+def infer_safe_visual_revision(
+    question: str,
+    output: dict[str, Any],
+    revision: str,
+) -> VisualIntent | None:
+    """Select a reviewed local diagram for an explicit visual-only parent revision."""
+
+    if not re.search(r"\b(?:diagram|picture|visual|image|draw|show)\b", revision.casefold()):
+        return None
+    context = " ".join(
+        [
+            question,
+            str(output.get("hook") or ""),
+            str(output.get("show") or ""),
+            str(output.get("nugget") or ""),
+        ]
+    ).casefold()
+    if _contains_word(context, "water") and _contains_any_word(
+        context, {"freeze", "freezes", "freezing", "frozen", "ice"}
+    ):
+        return _water_expansion_intent()
     return None
 
 
@@ -454,7 +528,12 @@ def synthetic_visual_intent() -> VisualIntent:
 def _is_curated_deterministic_intent(intent: VisualIntent) -> bool:
     """Require exact reviewed content at the final deterministic rendering boundary."""
 
-    return intent in (synthetic_visual_intent(), _robot_comparison_intent(), _robot_activity_intent())
+    return intent in (
+        synthetic_visual_intent(),
+        _robot_comparison_intent(),
+        _robot_activity_intent(),
+        _water_expansion_intent(),
+    )
 
 
 def create_synthetic_visual_job(db_path: str | Path, event_id: str) -> str:

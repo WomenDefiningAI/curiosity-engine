@@ -19,6 +19,7 @@ from curiosity_engine.trust import validate_response_visual_intent
 from curiosity_engine.visuals import (
     enqueue_response_visual,
     infer_safe_response_visual,
+    infer_safe_visual_revision,
     normalize_response_visual,
     process_visual_jobs,
     render_deterministic_visual,
@@ -76,6 +77,24 @@ def test_deterministic_renderer_is_accessible_private_and_nonblank(tmp_path: Pat
     image = Image.open(target).convert("RGB")
     assert image.size == (1200, 900)
     assert len(image.getcolors(maxcolors=image.width * image.height) or []) > 4
+
+
+def test_explicit_water_freezing_revision_gets_a_reviewed_before_after_diagram(tmp_path: Path):
+    intent = infer_safe_visual_revision(
+        "Why does water expand when it freezes?",
+        {
+            "hook": "Ice can rise above the starting water line.",
+            "show": "Mark the water line before freezing.",
+            "nugget": "Frozen water usually needs a little more room.",
+        },
+        "How about a diagram?",
+    )
+
+    assert intent is not None
+    assert [panel.icon for panel in intent.panels] == ["water", "ice", "look"]
+    target = tmp_path / "ice-diagram.png"
+    render_deterministic_visual(intent, target)
+    assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_visual_job_writes_opaque_validated_asset_beneath_private_output(tmp_path: Path):

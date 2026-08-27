@@ -11,6 +11,16 @@ All notable public changes will be recorded here. The project follows semantic v
 - Added explicitly confirmed weekly parent check-ins, durable schedule runs, and restartable Linux user services.
 - Added a no-clone installer and private Codex/Claude Code setup handoff under `~/.curiosity-engine`.
 - Improved thread-aware revisions, playful output guidance, visual delivery resilience, and malformed graph-update recovery.
+- Added paired Slack photo context with bounded vision inspection, durable private thread memory, and proportionate
+  parent replies that do not force a full lesson or visual for every turn.
+- Added Slack status reactions that change from `:eyes:` while a reply is processing to a persistent
+  `:white_check_mark:` when it is done.
+- Added a bounded conversational parent-agent loop with current-thread output recall, validated revision targets,
+  and explicit reversible thread preferences that never become child evidence.
+- Added deterministic child-name routing for strong single-name signals, retained ambiguity prompts, and kept rejected
+  drafts from becoming the thread's revision target.
+- Added a reviewed before-and-after ice-expansion diagram path for visual-only revisions and removed false-success
+  fallback copy after rejected revisions.
 
 ## 0.1.0 — initial Slack MVP
 

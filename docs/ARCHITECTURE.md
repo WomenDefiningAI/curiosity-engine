@@ -19,12 +19,14 @@ confirmed weekly request ──► narrow scheduler ──► interactive parent
 ```
 
 The harness is provider-neutral. Models interpret natural parent language, select reviewed tools, and produce typed
-content. Code owns identity, permissions, approval, transactions, rendering, retries, files, schedules, and external
-effects. There is no general shell or computer-control tool in the family runtime.
+content. The parent agent may take one bounded read-only recall step before acting, so “change that earlier diagram”
+works without an open-ended tool loop. Code owns identity, permissions, approval, transactions, rendering, retries,
+files, schedules, and external effects. There is no general shell or computer-control tool in the family runtime.
 
 ## Main boundaries
 
-- `sessions.py` persists thread history, agent turns, and tool calls.
+- `sessions.py` persists thread history, agent turns, tool calls, code-owned output references, and reversible
+  presentation preferences scoped to one thread.
 - `capabilities.py` progressively loads reviewed workflow and skill instructions from `capabilities/`.
 - `parent_agent.py` runs the bounded semantic tool loop; `tooling.py` enforces deny-by-default policy.
 - `interactions.py` compiles transport-neutral choices to Block Kit using opaque, bound, expiring, one-use tokens.
@@ -35,6 +37,9 @@ effects. There is no general shell or computer-control tool in the family runtim
 
 Every model action produces an inspectable capability run and ordered release units. This lets the text arrive first,
 while a visual or printable finishes later, without losing thread identity or repeating work.
+
+One-off parent criticism remains revision feedback. Only an explicit “remember/from now on/for this thread” request
+can become a thread working preference; it never becomes child evidence and the parent can clear it in ordinary chat.
 
 ## Existing learning pipeline
 

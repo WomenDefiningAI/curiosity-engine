@@ -25,6 +25,7 @@ from .printer import print_artifact
 from .reasoning import ReasoningEngine, StubBackend
 from .repository import IdempotencyConflict
 from .runtime import CuriosityHarness
+from .sessions import SessionStore
 
 SUITES = [
     "golden",
@@ -153,6 +154,21 @@ def _run_harness_case(case: dict[str, Any]) -> list[str]:
 def _run_visual_case(case: dict[str, Any]) -> list[str]:
     output, failures = _run_semantic_case("curiosity", case)
     visual = output.get("visual")
+    printable = (output.get("physical_extension") or {}).get("printable")
+    expected_printable = case.get("expected_printable_kind")
+    if expected_printable:
+        if not isinstance(printable, dict):
+            failures.append("response used no child-usable printable for an obvious activity visual need")
+        elif printable.get("kind") != expected_printable:
+            failures.append(
+                f"expected printable kind {expected_printable}, got {printable.get('kind')}"
+            )
+        elif len(printable.get("pieces") or []) < 2:
+            failures.append("activity printable omitted usable play pieces")
+        if isinstance(visual, dict) and visual.get("kind") == "decorative_illustration":
+            failures.append("decorative image displaced an obvious child-usable activity visual")
+        if case.get("expected_kind") == "none":
+            return failures
     expected = case.get("expected_kind")
     if expected == "none":
         if visual is not None:
@@ -418,6 +434,65 @@ def _run_regression(case: dict[str, Any]) -> list[str]:
                 pass
             else:
                 failures.append("one observation became an established pattern")
+        elif kind == "thread_output_search_isolated":
+            store = SessionStore(db)
+            first = store.get_or_create(
+                origin="cli",
+                conversation_ref="conversation-one",
+                thread_ref="thread-one",
+                child_id="eval-child",
+            )
+            second = store.get_or_create(
+                origin="cli",
+                conversation_ref="conversation-two",
+                thread_ref="thread-two",
+                child_id="eval-child",
+            )
+            store.append_message(
+                first["id"], role="assistant", content="Compare a flat wing and a curved wing."
+            )
+            store.append_message(
+                second["id"], role="assistant", content="Private other-thread submarine idea."
+            )
+            matches = store.search_outputs(first["id"], "wing")
+            leaked = store.search_outputs(first["id"], "submarine")
+            if not matches or leaked:
+                failures.append("thread output search crossed or lost the current-session boundary")
+        elif kind == "thread_preference_reversible":
+            store = SessionStore(db)
+            session = store.get_or_create(
+                origin="cli",
+                conversation_ref="conversation-one",
+                thread_ref="thread-one",
+                child_id="eval-child",
+            )
+            source = store.append_message(
+                session["id"], role="user", content="For this thread, remember useful diagrams."
+            )
+            store.update_thread_preference(
+                session["id"],
+                operation="set",
+                category="visual_style",
+                value="Use useful comparison diagrams.",
+                source_message_id=source,
+            )
+            clear_source = store.append_message(
+                session["id"], role="user", content="Forget that visual preference."
+            )
+            store.update_thread_preference(
+                session["id"],
+                operation="clear",
+                category="visual_style",
+                value=None,
+                source_message_id=clear_source,
+            )
+            with connect(db) as conn:
+                event_count = conn.execute(
+                    "SELECT COUNT(*) FROM agent_session_preference_events"
+                ).fetchone()[0]
+                evidence_count = conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+            if store.active_preferences(session["id"]) or event_count != 2 or evidence_count:
+                failures.append("thread preference was not reversible or leaked into child evidence")
         elif kind == "episode_independence":
             started = datetime(2026, 1, 5, 10, tzinfo=UTC)
             harness = _offline_harness(db)

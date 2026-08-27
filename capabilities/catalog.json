@@ -3,11 +3,11 @@
   "capabilities": [
     {
       "id": "parent_chat",
-      "version": "1",
+      "version": "2",
       "description": "Understand ordinary parent conversation in a learning thread and choose a bounded next action.",
       "output_kinds": ["answer", "interaction"],
       "skill_ids": ["parent-revision", "visual-selection-k2"],
-      "tool_names": ["continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
+      "tool_names": ["search_thread_outputs", "update_thread_preference", "record_thread_context", "continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
       "approval": "none",
       "expected_latency": "short"
     },
@@ -53,7 +53,7 @@
     }
   ],
   "skills": [
-    {"id": "parent-revision", "version": "1", "description": "Interpret natural parent feedback and revise only the requested components.", "instructions_path": "capabilities/skills/parent-revision.md", "required_tools": ["continue_learning_thread", "revise_learning_thread", "create_learning_artifact"]},
+    {"id": "parent-revision", "version": "2", "description": "Interpret natural parent feedback, recall earlier thread outputs, and revise only the requested components.", "instructions_path": "capabilities/skills/parent-revision.md", "required_tools": ["search_thread_outputs", "update_thread_preference", "continue_learning_thread", "revise_learning_thread", "create_learning_artifact"]},
     {"id": "worksheet-k2", "version": "1", "description": "Design a child-usable K–2 worksheet rather than prose arranged on a page.", "instructions_path": "capabilities/skills/worksheet-k2.md", "required_tools": ["create_learning_artifact"]},
     {"id": "hands-on-activity-k2", "version": "1", "description": "Design a fast-starting activity with a playful observation loop.", "instructions_path": "capabilities/skills/hands-on-activity-k2.md", "required_tools": ["create_learning_artifact"]},
     {"id": "mystery-challenge-k2", "version": "1", "description": "Design a story, mission, constraints, and hints that preserve child agency.", "instructions_path": "capabilities/skills/mystery-challenge-k2.md", "required_tools": ["create_learning_artifact"]},

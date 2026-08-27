@@ -21,6 +21,7 @@ from curiosity_engine.learning_artifacts import LearningArtifactService
 from curiosity_engine.parent_agent import ParentAgentRuntime
 from curiosity_engine.reasoning import StubBackend
 from curiosity_engine.scheduler import SchedulerService
+from curiosity_engine.service import CuriosityService, _explicit_thread_preference_change
 from curiosity_engine.sessions import SessionStore
 from curiosity_engine.setup_agent import prepare_agent_setup
 from curiosity_engine.tooling import ToolRegistry
@@ -70,7 +71,7 @@ def _stored_response(db: Path, event_id: str = "evt-source") -> None:
         )
 
 
-def test_schema_v12_migrates_with_backup_and_preserves_data(tmp_path: Path):
+def test_schema_v14_migrates_with_backup_and_preserves_data(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE family_marker(value TEXT NOT NULL)")
@@ -82,6 +83,7 @@ def test_schema_v12_migrates_with_backup_and_preserves_data(tmp_path: Path):
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert conn.execute("SELECT value FROM family_marker").fetchone()[0] == "keep-me"
         assert conn.execute("PRAGMA table_info(agent_sessions)").fetchall()
+        assert conn.execute("PRAGMA table_info(agent_session_preference_events)").fetchall()
 
 
 def test_capabilities_are_progressively_disclosed_and_reviewed():
@@ -243,6 +245,254 @@ def test_parent_agent_persists_turn_tool_release_and_scoped_approval(tmp_path: P
     assert row["decision"] == "pending" and len(row["scope_hash"]) == 64
 
 
+class _RecallThenReviseBackend:
+    name = "test-model"
+    model = "test-model-v1"
+
+    def __init__(self):
+        self.payloads: list[dict[str, Any]] = []
+
+    def complete(self, **kwargs: Any) -> dict[str, Any]:
+        payload = kwargs["payload"]
+        self.payloads.append(payload)
+        if len(self.payloads) == 1:
+            assert all("air detective" not in item["snippet"].casefold() for item in payload["workspace"]["recent_outputs"])
+            return {
+                "tool_calls": [
+                    {
+                        "name": "search_thread_outputs",
+                        "arguments": {"query": "air detective wing"},
+                        "rationale": "The parent referred to an older answer outside the recent window.",
+                    }
+                ],
+                "done": False,
+            }
+        match = payload["tool_results"][0]["matches"][0]
+        return {
+            "tool_calls": [
+                {
+                    "name": "revise_learning_thread",
+                    "arguments": {
+                        "target_ref": match["ref_id"],
+                        "revision": "Show three wing variations without repeating the activity.",
+                    },
+                    "rationale": "The bounded lookup resolved the requested earlier answer.",
+                }
+            ],
+            "done": True,
+        }
+
+
+def test_parent_agent_can_recall_an_old_thread_output_then_act_once(tmp_path: Path):
+    db, _setup, binding_id = _family_db(tmp_path)
+    _stored_response(db, "evt-earlier")
+    store = SessionStore(db)
+    session = store.get_or_create(
+        origin="slack",
+        transport="slack",
+        binding_id=binding_id,
+        conversation_ref="conversation",
+        thread_ref="thread",
+        child_id="kid-a",
+    )
+    store.append_message(
+        session["id"], role="assistant", content="An airplane wing is an air detective.", event_id="evt-earlier"
+    )
+    for index in range(18):
+        store.append_message(session["id"], role="assistant", content=f"Later idea number {index}.")
+    backend = _RecallThenReviseBackend()
+    revised: list[dict[str, Any]] = []
+    tools = ToolRegistry()
+    tools.register(
+        "search_thread_outputs",
+        lambda arguments: {
+            "status": "completed",
+            "matches": store.search_outputs(session["id"], str(arguments["query"])),
+        },
+    )
+    tools.register(
+        "revise_learning_thread",
+        lambda arguments: revised.append(arguments) or {"status": "completed", "message": "Revised the earlier wing visual."},
+    )
+    result = ParentAgentRuntime(db, backend=backend, tools=tools).run(
+        session_id=session["id"],
+        user_message="Change that earlier air-detective answer to show three wing variations.",
+        child={"id": "kid-a", "grade": "1"},
+        latest_event_id="evt-earlier",
+    )
+    assert result["message"] == "Revised the earlier wing visual."
+    assert revised[0]["target_ref"].startswith("msg_")
+    assert len(backend.payloads) == 2
+    with connect(db) as conn:
+        calls = conn.execute(
+            "SELECT ordinal,tool_name FROM tool_calls ORDER BY ordinal"
+        ).fetchall()
+        releases = conn.execute("SELECT unit_type FROM release_units").fetchall()
+    assert [(row["ordinal"], row["tool_name"]) for row in calls] == [
+        (1, "search_thread_outputs"),
+        (2, "revise_learning_thread"),
+    ]
+    assert [row["unit_type"] for row in releases] == ["answer"]
+
+
+def test_service_validates_recalled_revision_target_inside_current_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db, _setup, binding_id = _family_db(tmp_path)
+    _stored_response(db, "evt-earlier")
+    backend = _RecallThenReviseBackend()
+    monkeypatch.setattr("curiosity_engine.service.configured_backend", lambda *_args, **_kwargs: backend)
+    service = CuriosityService(db, tmp_path / "output")
+    session_id = service.record_thread_response(
+        binding_id=binding_id,
+        team_id="T_FAMILY",
+        channel_id="C_FAMILY",
+        thread_id="thread-root",
+        child_id="kid-a",
+        user_text="How do airplanes fly?",
+        result={
+            "status": "completed",
+            "event_id": "evt-earlier",
+            "output": {
+                "hook": "An airplane wing is an air detective.",
+                "show": "Compare two wings.",
+                "ask": "What changes?",
+                "nugget": "Air pushes back.",
+                "resource_refs": [],
+            },
+        },
+    )
+    store = SessionStore(db)
+    for index in range(18):
+        store.append_message(session_id, role="assistant", content=f"Later idea number {index}.")
+    revised: list[dict[str, Any]] = []
+
+    def fake_revision(**kwargs: Any) -> dict[str, Any]:
+        revised.append(kwargs)
+        return {
+            "status": "completed",
+            "event_id": "evt-earlier",
+            "output": {
+                "hook": "Three wings, three air paths.",
+                "nugget": "Changing a wing shape changes how it redirects air.",
+                "show": "Compare flat, curved-up, and curved-down wings.",
+            },
+        }
+
+    monkeypatch.setattr(service, "revise_response", fake_revision)
+    result = service.chat(
+        binding_id=binding_id,
+        team_id="T_FAMILY",
+        channel_id="C_FAMILY",
+        thread_id="thread-root",
+        text="Change that earlier air-detective answer to show three wing variations.",
+    )
+    assert result["status"] == "completed"
+    assert revised[0]["source_event_id"] == "evt-earlier"
+
+
+class _PreferenceBackend:
+    name = "test-model"
+    model = "test-model-v1"
+
+    def __init__(self):
+        self.payloads: list[dict[str, Any]] = []
+
+    def complete(self, **kwargs: Any) -> dict[str, Any]:
+        payload = kwargs["payload"]
+        self.payloads.append(payload)
+        if len(self.payloads) == 1:
+            return {
+                "tool_calls": [
+                    {
+                        "name": "update_thread_preference",
+                        "arguments": {
+                            "operation": "set",
+                            "category": "visual_style",
+                            "value": "Use useful comparison diagrams instead of decorative art.",
+                        },
+                        "rationale": "The parent explicitly requested future behavior in this thread.",
+                    }
+                ],
+                "done": False,
+            }
+        return {"message": "I’ll use the saved working preference.", "done": True}
+
+
+def test_explicit_thread_preference_is_reversible_local_and_stops_after_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db, _setup, binding_id = _family_db(tmp_path)
+    _stored_response(db)
+    backend = _PreferenceBackend()
+    monkeypatch.setattr("curiosity_engine.service.configured_backend", lambda *_args, **_kwargs: backend)
+    service = CuriosityService(db, tmp_path / "output")
+    service.record_thread_response(
+        binding_id=binding_id,
+        team_id="T_FAMILY",
+        channel_id="C_FAMILY",
+        thread_id="thread-root",
+        child_id="kid-a",
+        user_text="How do airplanes fly?",
+        result={
+            "status": "completed",
+            "event_id": "evt-source",
+            "output": {
+                "hook": "An airplane wing is an air detective.",
+                "show": "Compare two wings.",
+                "ask": "What changes?",
+                "nugget": "Air pushes back.",
+                "resource_refs": [],
+            },
+        },
+    )
+    saved = service.chat(
+        binding_id=binding_id,
+        team_id="T_FAMILY",
+        channel_id="C_FAMILY",
+        thread_id="thread-root",
+        text="From now on in this thread, use useful comparison diagrams instead of decorative art.",
+    )
+    assert "saved for this thread" in saved["message"]
+    assert len(backend.payloads) == 1
+    session_id = saved["session_id"]
+    assert SessionStore(db).active_preferences(session_id)[0]["category"] == "visual_style"
+    follow = service.chat(
+        binding_id=binding_id,
+        team_id="T_FAMILY",
+        channel_id="C_FAMILY",
+        thread_id="thread-root",
+        text="What working preference are you using?",
+    )
+    assert follow["message"] == "I’ll use the saved working preference."
+    assert backend.payloads[1]["workspace"]["thread_preferences"][0]["category"] == "visual_style"
+    assert _explicit_thread_preference_change("This picture is not useful; change it.", "set") is False
+    assert _explicit_thread_preference_change("Forget that visual preference.", "clear") is True
+
+    source_message_id = SessionStore(db).append_message(
+        session_id,
+        role="user",
+        content="Forget that visual preference.",
+        kind="parent_chat",
+    )
+    SessionStore(db).update_thread_preference(
+        session_id,
+        operation="clear",
+        category="visual_style",
+        value=None,
+        source_message_id=source_message_id,
+    )
+    assert SessionStore(db).active_preferences(session_id) == []
+    with connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agent_session_preference_events").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
+        conn.execute("DELETE FROM agent_sessions WHERE id=?", (session_id,))
+        assert conn.execute("SELECT COUNT(*) FROM agent_session_preference_events").fetchone()[0] == 0
+
+
 class _MisroutingBackend:
     name = "test-model"
     model = "test-model-v1"
@@ -311,6 +561,71 @@ def test_three_artifact_contracts_render_real_distinct_one_page_outputs(tmp_path
             for row in conn.execute("SELECT spec_json FROM artifacts")
         }
     assert mechanics == {"worksheet", "activity", "challenge"}
+
+
+def test_reviewed_activity_printable_becomes_child_usable_target_page(tmp_path: Path):
+    db, _setup, _binding_id = _family_db(tmp_path)
+    now = utcnow()
+    output = {
+        "hook": "Sauropods could reach leaves at different heights.",
+        "show": "Compare three leaf targets.",
+        "ask": "Which leaf was easiest to reach?",
+        "nugget": "A long neck helped reach plants without moving the whole body.",
+        "resource_refs": [],
+        "physical_extension": {
+            "title": "Sauropod leaf reach",
+            "instructions": [
+                "Color and cut out the leaves.",
+                "Put them low, medium, and high.",
+                "Keep your feet still and reach for each one.",
+            ],
+            "materials": ["printed page", "crayons", "tape"],
+            "parent_effort": "low",
+            "printable": {
+                "kind": "target_set",
+                "title": "Sauropod Leaf Reach",
+                "child_directions": "Color and cut out the leaves. Put them at three heights, then reach!",
+                "parent_setup": "Tape the leaves low, medium, and high.",
+                "pedagogical_value": "The child uses three visible targets to compare reach.",
+                "pieces": [
+                    {"label": "LOW", "prompt": "easy snack", "shape": "leaf"},
+                    {"label": "MEDIUM", "prompt": "stretch snack", "shape": "leaf"},
+                    {"label": "HIGH", "prompt": "sky snack", "shape": "leaf"},
+                ],
+            },
+        },
+    }
+    with connect(db) as conn:
+        conn.execute(
+            """INSERT INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
+               VALUES('evt-leaves','child_question','kid-a','Tell me about sauropods','parent','{}',?,'completed')""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO responses(event_id,run_id,workflow,status,output_json,created_at,updated_at)
+               VALUES('evt-leaves',NULL,'pull_thread','completed',?,?,?)""",
+            (jdump(output), now, now),
+        )
+    artifact = LearningArtifactService(
+        db,
+        tmp_path / "output",
+        backend=StubBackend(),
+    ).create_from_extension(event_id="evt-leaves")
+    assert artifact["artifact_type"] == "activity"
+    assert Path(artifact["pdf_path"]).read_bytes().startswith(b"%PDF-")
+    assert Path(artifact["preview_path"]).stat().st_size > 1_000
+    with connect(db) as conn:
+        spec = json.loads(
+            conn.execute(
+                "SELECT spec_json FROM artifacts WHERE id=?", (artifact["artifact_id"],)
+            ).fetchone()[0]
+        )
+    assert spec["printable"]["kind"] == "target_set"
+    assert [piece["label"] for piece in spec["printable"]["pieces"]] == [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    ]
 
 
 def test_challenge_fallback_preserves_named_comparison_and_play_sequence(tmp_path: Path):
