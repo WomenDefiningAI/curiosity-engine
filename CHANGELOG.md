@@ -17,6 +17,10 @@ All notable public changes will be recorded here. The project follows semantic v
   `:white_check_mark:` when it is done.
 - Added a bounded conversational parent-agent loop with current-thread output recall, validated revision targets,
   and explicit reversible thread preferences that never become child evidence.
+- Added deterministic child-name routing for strong single-name signals, retained ambiguity prompts, and kept rejected
+  drafts from becoming the thread's revision target.
+- Added a reviewed before-and-after ice-expansion diagram path for visual-only revisions and removed false-success
+  fallback copy after rejected revisions.
 
 ## 0.1.0 — initial Slack MVP
 

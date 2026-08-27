@@ -130,6 +130,8 @@ class VisualPanel(StrictModel):
         "stop",
         "turn",
         "robot",
+        "water",
+        "ice",
         "question",
         "idea",
     ]

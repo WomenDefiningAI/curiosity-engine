@@ -28,7 +28,7 @@ from .runtime import CuriosityHarness, configured_backend
 from .scheduler import SchedulerService
 from .sessions import SessionStore
 from .tooling import ToolRegistry
-from .visuals import enqueue_response_visual
+from .visuals import enqueue_response_visual, infer_safe_visual_revision
 
 
 def _explicit_visual_request(text: str) -> bool:
@@ -66,6 +66,8 @@ def _thread_preference_brief(preferences: list[dict[str, Any]]) -> str:
 def _proportionate_thread_message(result: dict[str, Any], request: str) -> str:
     """Render a follow-up at the scale of the turn, without repeating the lesson template."""
 
+    if result.get("status") not in {None, "completed"}:
+        return "I couldn't make a reliable change, so I kept the last reviewed answer unchanged."
     output = result.get("output") or {}
     lowered = request.casefold()
     extension = output.get("physical_extension") or {}
@@ -84,7 +86,10 @@ def _proportionate_thread_message(result: dict[str, Any], request: str) -> str:
     )
     if _explicit_visual_request(request) and output.get("show"):
         answer = f"{answer}\n\n{output['show']}".strip()
-    return (answer or "I followed that question and kept the answer focused on this thread.")[:4_000]
+    return (
+        answer
+        or "I couldn't find a useful child-facing change in that draft, so I kept the last reviewed answer unchanged."
+    )[:4_000]
 
 
 class CuriosityService:
@@ -314,6 +319,91 @@ class CuriosityService:
             enqueue_visual=enqueue_visual,
         )
 
+    def revise_visual_response(
+        self,
+        *,
+        source_event_id: str,
+        revision: str,
+        event_id: str,
+    ) -> dict[str, Any] | None:
+        """Create a reviewed local visual revision without regenerating the lesson prose."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT e.child_id,e.text,r.output_json,r.status FROM events e
+                   JOIN responses r ON r.event_id=e.id WHERE e.id=?""",
+                (source_event_id,),
+            ).fetchone()
+        if not row or not row["child_id"] or row["status"] != "completed":
+            raise ValueError("completed response not found")
+        previous = jload(row["output_json"])
+        visual = infer_safe_visual_revision(str(row["text"]), previous, revision)
+        if visual is None:
+            return None
+        visual_mode = household_visual_mode(self.db_path)
+        if visual_mode == "off":
+            return {
+                "status": "rejected",
+                "message": "Visual responses are turned off for this household, so I kept the answer unchanged.",
+            }
+        output = {
+            **previous,
+            "visual": visual.model_dump(mode="json"),
+            "graph_updates": [],
+            "actions": [],
+        }
+        now = utcnow()
+        metadata = {
+            "episode_relation": "retry",
+            "retry_of_event_id": source_event_id,
+            "learning_scope": "diagnostic",
+            "visual_revision": {"parent_request": revision, "template": "water_expansion_v1"},
+        }
+        with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """INSERT INTO events(
+                       id,type,child_id,text,source,metadata_json,created_at,status,processed_at,result_json
+                   ) VALUES(?,'child_question',?,?,?,?,?,'completed',?,'{}')""",
+                (
+                    event_id,
+                    str(row["child_id"]),
+                    str(row["text"]),
+                    "slack_parent_visual_revision",
+                    jdump(metadata),
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO responses(
+                       event_id,run_id,workflow,status,output_json,created_at,updated_at
+                   ) VALUES(?,NULL,'visual_revision','completed',?,?,?)""",
+                (event_id, jdump(output), now, now),
+            )
+        visual_job_id = enqueue_response_visual(
+            self.db_path,
+            event_id=event_id,
+            visual=visual,
+            mode=visual_mode,
+        )
+        if not visual_job_id:
+            return {
+                "status": "rejected",
+                "message": "I couldn't prepare that visual, so I kept the last reviewed answer unchanged.",
+                "event_id": event_id,
+            }
+        return {
+            "status": "completed",
+            "message": (
+                "Yes—I'm making a before-and-after diagram that compares the same marked water line "
+                "before and after freezing."
+            ),
+            "event_id": event_id,
+            "visual_job_id": visual_job_id,
+            "output": output,
+        }
+
     def record_thread_response(
         self,
         *,
@@ -506,19 +596,26 @@ class CuriosityService:
                         "content": preference_brief,
                     },
                 ]
+            revision = str(arguments.get("revision") or text)
+            if _explicit_visual_request(revision):
+                visual_response = self.revise_visual_response(
+                    source_event_id=source_event_id,
+                    revision=revision,
+                    event_id=f"evt_visual_revision_{uuid4().hex[:16]}",
+                )
+                if visual_response is not None:
+                    return visual_response
             response = self.revise_response(
                 source_event_id=source_event_id,
-                revision=str(arguments.get("revision") or text),
+                revision=revision,
                 event_id=f"evt_revision_{uuid4().hex[:20]}",
                 include_private_excerpts=include_private_excerpts,
                 thread_history=history,
-                enqueue_visual=_explicit_visual_request(str(arguments.get("revision") or text)),
+                enqueue_visual=_explicit_visual_request(revision),
             )
             return {
                 "status": response["status"],
-                "message": _proportionate_thread_message(
-                    response, str(arguments.get("revision") or text)
-                ),
+                "message": _proportionate_thread_message(response, revision),
                 "event_id": response.get("event_id"),
                 "visual_job_id": response.get("visual_job_id"),
             }

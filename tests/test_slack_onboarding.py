@@ -251,12 +251,12 @@ def test_bolt_listener_receives_injected_event_arguments(tmp_path: Path):
     working = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "eyes"}
     done = {"channel": "C_FAMILY", "timestamp": "100.2", "name": "white_check_mark"}
     assert client.reactions_added == [working, done]
-    assert client.reactions_removed == [working]
-    assert client.calls == ["reaction_add", "message", "reaction_add", "reaction_remove"]
+    assert client.reactions_removed == []
+    assert client.calls == ["reaction_add", "message", "reaction_add"]
     assert client.messages[0]["thread_ts"] == "100.2"
 
 
-def test_paired_message_changes_processing_reaction_to_done_after_reply(tmp_path: Path):
+def test_paired_message_keeps_acknowledgement_and_adds_done_after_reply(tmp_path: Path):
     db, transport, _fake, client, _code = paired_transport(tmp_path)
     client.calls.clear()
     client.messages.clear()
@@ -279,8 +279,8 @@ def test_paired_message_changes_processing_reaction_to_done_after_reply(tmp_path
     working = {"channel": "D_PARENT", "timestamp": "200.1", "name": "eyes"}
     done = {"channel": "D_PARENT", "timestamp": "200.1", "name": "white_check_mark"}
     assert client.reactions_added == [working, done]
-    assert client.reactions_removed == [working]
-    assert client.calls == ["reaction_add", "message", "reaction_add", "reaction_remove"]
+    assert client.reactions_removed == []
+    assert client.calls == ["reaction_add", "message", "reaction_add"]
     assert client.messages[0]["text"].startswith("Slack connection works")
 
 
@@ -364,6 +364,37 @@ def test_slack_never_guesses_child_and_assignment_answers(tmp_path: Path):
             "source": "slack_parent",
         }
     ]
+
+
+def test_slack_routes_one_strong_name_signal_without_an_inbox_prompt(tmp_path: Path):
+    db, transport, fake, client, _code = paired_transport(tmp_path)
+
+    result = transport.handle(incoming("EvNamed", "Kid A keeps wondering why feathers float"))
+
+    assert result.status == "completed"
+    assert result.inbox_id is None
+    assert fake.calls[-1]["child_id"] == "kid-a"
+    assert fake.calls[-1]["text"] == "Kid A keeps wondering why feathers float"
+    assert list_inbox(db) == []
+    flush_slack_outbox(client, db)
+    assert "Who was this for?" not in client.messages[-1]["text"]
+
+
+def test_slack_keeps_multiple_or_weak_name_signals_unassigned(tmp_path: Path):
+    db, transport, fake, _client, _code = paired_transport(tmp_path)
+    fake.children = lambda: [  # type: ignore[method-assign]
+        {"id": "kid-a", "name": "Kid A", "grade": "2"},
+        {"id": "kid-b", "name": "Kid B", "grade": "1"},
+    ]
+
+    multiple = transport.handle(incoming("EvTwoNames", "Kid A and Kid B keep comparing feathers"))
+    assert multiple.status == "unassigned"
+    assert fake.calls == []
+
+    fake.children = lambda: [{"id": "kid-a", "name": "Will", "grade": "2"}]  # type: ignore[method-assign]
+    weak = transport.handle(incoming("EvWeakName", "Will airplanes fly?"))
+    assert weak.status == "unassigned"
+    assert fake.calls == []
 
 
 def test_slack_accepts_backticked_commands_and_natural_health_check(tmp_path: Path):

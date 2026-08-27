@@ -142,8 +142,11 @@ class SessionStore:
     def latest_event_id(self, session_id: str) -> str | None:
         with connect(self.db_path) as conn:
             row = conn.execute(
-                """SELECT event_id FROM agent_messages
-                   WHERE session_id=? AND event_id IS NOT NULL ORDER BY ordinal DESC LIMIT 1""",
+                """SELECT m.event_id FROM agent_messages m
+                   JOIN events e ON e.id=m.event_id AND e.status='completed'
+                   JOIN responses r ON r.event_id=m.event_id AND r.status='completed'
+                   WHERE m.session_id=? AND m.event_id IS NOT NULL
+                   ORDER BY m.ordinal DESC LIMIT 1""",
                 (session_id,),
             ).fetchone()
         return str(row["event_id"]) if row else None

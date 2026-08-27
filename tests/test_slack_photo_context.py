@@ -8,11 +8,11 @@ import pytest
 from PIL import Image
 
 from curiosity_engine.attachments import link_assets_to_session
-from curiosity_engine.db import connect
+from curiosity_engine.db import connect, jdump, utcnow
 from curiosity_engine.graph import add_child
 from curiosity_engine.interaction import create_pairing_code, setup_household
 from curiosity_engine.parent_agent import ParentAgentRuntime
-from curiosity_engine.service import _proportionate_thread_message
+from curiosity_engine.service import CuriosityService, _proportionate_thread_message
 from curiosity_engine.sessions import SessionStore
 from curiosity_engine.tooling import ToolRegistry
 from curiosity_engine.transports.contracts import InboundMessage
@@ -218,3 +218,98 @@ def test_followup_renderer_does_not_force_full_lesson_headings():
         "A bend changes how the wing redirects the moving air."
     )
     assert "Show" not in message and "Tiny explanation" not in message
+
+
+def test_followup_renderer_never_claims_a_rejected_revision_succeeded():
+    message = _proportionate_thread_message({"status": "rejected", "output": {}}, "How about a diagram?")
+    assert message == "I couldn't make a reliable change, so I kept the last reviewed answer unchanged."
+    assert "followed that question" not in message
+
+
+def test_latest_thread_event_skips_a_rejected_revision(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "curiosity.db"
+    setup_household(db, owner_name="Parent", timezone="Etc/UTC")
+    add_child(db, "kid-a", "Kid A", grade="1")
+    session = SessionStore(db).get_or_create(
+        origin="slack",
+        transport="slack",
+        conversation_ref="conversation",
+        thread_ref="thread",
+        child_id="kid-a",
+    )
+    now = utcnow()
+    output = jdump({"hook": "Reviewed answer"})
+    with connect(db) as conn:
+        for event_id, status in (("evt_reviewed", "completed"), ("evt_rejected", "rejected")):
+            conn.execute(
+                """INSERT INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
+                   VALUES(?,'child_question','kid-a','question','test','{}',?,?)""",
+                (event_id, now, status),
+            )
+            conn.execute(
+                """INSERT INTO responses(event_id,workflow,status,output_json,created_at,updated_at)
+                   VALUES(?,'pull_thread',?,?,?,?)""",
+                (event_id, status, output, now, now),
+            )
+    store = SessionStore(db)
+    store.append_message(
+        str(session["id"]),
+        role="assistant",
+        content="Reviewed answer",
+        event_id="evt_reviewed",
+    )
+    store.append_message(
+        str(session["id"]),
+        role="assistant",
+        content="Rejected notice",
+        event_id="evt_rejected",
+    )
+
+    assert store.latest_event_id(str(session["id"])) == "evt_reviewed"
+
+
+def test_visual_only_revision_queues_diagram_without_regenerating_lesson(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "curiosity.db"
+    output_dir = tmp_path / "private" / "output"
+    setup_household(db, owner_name="Parent", timezone="Etc/UTC")
+    add_child(db, "kid-a", "Kid A", grade="1")
+    service = CuriosityService(db, output_dir)
+    now = utcnow()
+    reviewed = {
+        "hook": "Ice can rise above the starting line.",
+        "show": "Mark the water line before freezing.",
+        "ask": "Where did the level move?",
+        "nugget": "Water usually needs more room after it freezes.",
+        "next_possible_concepts": [],
+        "physical_extension": None,
+        "visual": None,
+        "graph_updates": [],
+        "actions": [],
+        "resource_refs": [],
+    }
+    with connect(db) as conn:
+        conn.execute(
+            """INSERT INTO events(id,type,child_id,text,source,metadata_json,created_at,status)
+               VALUES('evt_reviewed','child_question','kid-a','Why does water expand when it freezes?',
+                      'test','{}',?,'completed')""",
+            (now,),
+        )
+        conn.execute(
+            """INSERT INTO responses(event_id,workflow,status,output_json,created_at,updated_at)
+               VALUES('evt_reviewed','pull_thread','completed',?,?,?)""",
+            (jdump(reviewed), now, now),
+        )
+
+    result = service.revise_visual_response(
+        source_event_id="evt_reviewed",
+        revision="How about a diagram?",
+        event_id="evt_visual_revision",
+    )
+
+    assert result is not None and result["status"] == "completed"
+    assert result["visual_job_id"]
+    with connect(db) as conn:
+        stored = conn.execute(
+            "SELECT status,workflow FROM responses WHERE event_id='evt_visual_revision'"
+        ).fetchone()
+    assert dict(stored) == {"status": "completed", "workflow": "visual_revision"}

@@ -109,6 +109,53 @@ def _command_text(text: str) -> str:
     return value
 
 
+def _named_children(text: str, children: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Resolve only strong, explicit child-name signals from a natural parent message.
+
+    Identity attribution stays deterministic. A bare name-like word is not enough:
+    the name must lead the message, follow a clear family-context cue, or act as the
+    subject of a child-reporting phrase. Multiple matches remain ambiguous.
+    """
+
+    matched: list[dict[str, Any]] = []
+    for child in children:
+        name = " ".join(str(child.get("name") or "").split())
+        if not child.get("id") or not name:
+            continue
+        first_name = name.split()[0]
+        aliases = {name}
+        if len(first_name) >= 2:
+            aliases.add(first_name)
+        found = False
+        for alias in sorted(aliases, key=len, reverse=True):
+            token = re.escape(alias).replace(r"\ ", r"\s+")
+            boundary = rf"(?<![\w]){token}(?![\w])"
+            if " " in alias and re.search(boundary, text, re.IGNORECASE):
+                found = True
+            elif re.search(
+                rf"^\s*{boundary}(?=\s*(?:[:,—–-]|['’]s\b|\b(?:asked|asks|said|says|keeps|wants|wanted|wonders|wondered|is|was|has|had|loves|likes|made|built|drew|found|noticed|brought|tried|thinks|thought|what|why|how|can|could|would|does|do)\b))",
+                text,
+                re.IGNORECASE,
+            ):
+                found = True
+            elif re.search(
+                rf"\b(?:for|with|about|from|show|tell|help|teach)\s+{boundary}",
+                text,
+                re.IGNORECASE,
+            ):
+                found = True
+            elif re.search(
+                rf"{boundary}(?:['’]s)?\s+(?:asked|asks|said|says|keeps|wants|wanted|wonders|wondered|loves|likes|made|built|drew|found|noticed|brought|tried|thinks|thought)\b",
+                text,
+                re.IGNORECASE,
+            ):
+                found = True
+            if found:
+                matched.append(child)
+                break
+    return matched
+
+
 def _child_action_token(child_id: str) -> str:
     return sha256(child_id.encode()).hexdigest()[:20]
 
@@ -552,6 +599,7 @@ def _help_text() -> str:
         "• `visual connection` — prove an accessible picture can reach this conversation\n"
         "• `children` — show child IDs\n"
         "• `ask CHILD_ID: Why does ice float?` — get a response now\n"
+        "• Start a new message with one configured child's name — attribute it without a chooser\n"
         "• Attach a photo to a mention or DM — save it as private thread context after choosing a child\n"
         "• Learning threads include Helpful, Not for us, and Try another controls\n"
         "• Send any other note — choose a child or dismiss it with the buttons I show\n"
@@ -909,6 +957,111 @@ class SlackTransport:
                     purpose = "answer_rejected"
                     result_status = "rejected"
                 inbox_id = None
+            elif (
+                not _existing_thread_session(self.db_path, message, binding_id)
+                and len(named_children := _named_children(text, self.service.children())) == 1
+            ):
+                child_id = str(named_children[0]["id"])
+                resource_mode = household_resource_context_mode(self.db_path)
+                include_private_excerpts = resource_mode == "selected_excerpts"
+                if event_attachments and message.thread_id:
+                    response = self.service.chat(
+                        binding_id=binding_id,
+                        team_id=message.team_id,
+                        channel_id=message.channel_id,
+                        thread_id=message.thread_id,
+                        text=text,
+                        include_private_excerpts=include_private_excerpts,
+                        child_id=child_id,
+                        attachments=event_attachments,
+                    )
+                    reply = str(response.get("message") or "I saved that photo context for this thread.")
+                    session_id = str(response["session_id"])
+                    event_id = response.get("event_id")
+                    visual_job_id = response.get("visual_job_id")
+                    artifact_to_deliver = response.get("artifact")
+                    link_event_attachments(
+                        self.db_path,
+                        binding_id=binding_id,
+                        external_event_id=message.external_event_id,
+                        session_id=session_id,
+                    )
+                    if response.get("interaction"):
+                        presented = create_interaction(
+                            self.db_path,
+                            binding_id=binding_id,
+                            session_id=session_id,
+                            plan=InteractionPlan.model_validate(response["interaction"]),
+                        )
+                        reply_blocks = [
+                            *[
+                                {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                                for section in _mrkdwn_sections(reply)
+                            ],
+                            *interaction_blocks(presented),
+                        ]
+                    else:
+                        reply_blocks = [
+                            {"type": "section", "text": {"type": "mrkdwn", "text": section}}
+                            for section in _mrkdwn_sections(reply)
+                        ]
+                    purpose = "named-parent-chat"
+                    result_status = (
+                        "rejected"
+                        if response.get("status") in {"rejected", "failed"}
+                        else "completed"
+                    )
+                else:
+                    event_id = _engine_event_id(message, f"named:{child_id}")
+                    response = self.service.ask(
+                        child_id=child_id,
+                        text=text,
+                        source="slack_parent_report",
+                        include_private_excerpts=include_private_excerpts,
+                        event_id=event_id,
+                        context_metadata=_episode_metadata(message),
+                        attachments=event_attachments,
+                    )
+                    if response.get("status") == "completed":
+                        reply = _format_thread(response)
+                        if message.thread_id:
+                            session_id = self.service.record_thread_response(
+                                binding_id=binding_id,
+                                team_id=message.team_id,
+                                channel_id=message.channel_id,
+                                thread_id=message.thread_id,
+                                child_id=child_id,
+                                user_text=text,
+                                result=response,
+                                attachment_ids=[str(item["id"]) for item in event_attachments],
+                                attachment_context=response.get("attachment_context"),
+                            )
+                            link_event_attachments(
+                                self.db_path,
+                                binding_id=binding_id,
+                                external_event_id=message.external_event_id,
+                                session_id=session_id,
+                            )
+                        reply_blocks = (
+                            _semantic_response_blocks(
+                                self.db_path,
+                                binding_id=binding_id,
+                                session_id=session_id,
+                                event_id=event_id,
+                                text=reply,
+                            )
+                            if session_id
+                            else _response_blocks(reply, event_id)
+                        )
+                        visual_job_id = response.get("visual_job_id")
+                        purpose = "named-answer"
+                        result_status = "completed"
+                    else:
+                        reply = _response_did_not_pass()
+                        reply_blocks = _response_blocks(reply, event_id, retry_only=True)
+                        purpose = "named-answer-rejected"
+                        result_status = "rejected"
+                inbox_id = None
             elif match := ASSIGN_RE.fullmatch(text):
                 resource_mode = household_resource_context_mode(self.db_path)
                 include_private_excerpts = resource_mode == "selected_excerpts"
@@ -1012,7 +1165,10 @@ class SlackTransport:
                     include_private_excerpts=resource_mode == "selected_excerpts",
                     attachments=event_attachments,
                 )
-                reply = str(response.get("message") or "I followed that thread.")
+                reply = str(
+                    response.get("message")
+                    or "I couldn't make a reliable change, so I kept the last reviewed answer unchanged."
+                )
                 session_id = str(response["session_id"])
                 event_id = response.get("event_id")
                 visual_job_id = response.get("visual_job_id")
@@ -1036,8 +1192,10 @@ class SlackTransport:
                         {"type": "section", "text": {"type": "mrkdwn", "text": section}}
                         for section in _mrkdwn_sections(reply)
                     ]
-                purpose = "parent-chat"
-                result_status = "completed"
+                result_status = (
+                    "rejected" if response.get("status") in {"rejected", "failed"} else "completed"
+                )
+                purpose = "parent-chat" if result_status == "completed" else "parent-chat-rejected"
                 inbox_id = None
             else:
                 capture = create_unassigned_capture(self.db_path, message, str(binding["parent_id"]))
@@ -1433,17 +1591,9 @@ def _make_slack_event_receiver(transport: SlackTransport, db_path: str | Path) -
                         "Slack completion reaction was unavailable (%s)",
                         exc.__class__.__name__,
                     )
-                try:
-                    client.reactions_remove(
-                        channel=incoming.channel_id,
-                        timestamp=source_message_ts,
-                        name=PROCESSING_REACTION,
-                    )
-                except Exception as exc:
-                    logging.getLogger(__name__).warning(
-                        "Slack processing reaction cleanup was unavailable (%s)",
-                        exc.__class__.__name__,
-                    )
+                # Keep the acknowledgement reaction. Slack cannot atomically replace
+                # reactions, and removing :eyes: could render before the reply/check
+                # on some clients, making a healthy request look abandoned.
 
     return receive
 

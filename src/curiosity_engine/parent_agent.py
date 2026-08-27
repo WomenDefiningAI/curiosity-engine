@@ -128,12 +128,13 @@ class ParentAgentRuntime:
             )
             self._finish_capability_run(run_id, result)
             if result.get("message"):
+                result_status = str(result.get("status") or "completed")
                 self.sessions.append_message(
                     session_id,
                     role="assistant",
                     content=str(result["message"]),
-                    kind="agent_response",
-                    event_id=result.get("event_id"),
+                    kind="agent_response" if result_status == "completed" else "agent_notice",
+                    event_id=result.get("event_id") if result_status == "completed" else None,
                     metadata={"capability_run_id": run_id},
                 )
             return {**result, "session_id": session_id, "capability_run_id": run_id}
@@ -515,8 +516,9 @@ class ParentAgentRuntime:
                 )
 
     def _finish_capability_run(self, run_id: str, result: dict[str, Any]) -> None:
+        status = "rejected" if result.get("status") == "rejected" else "completed"
         with connect(self.db_path) as conn:
             conn.execute(
-                "UPDATE capability_runs SET status='completed',result_json=?,updated_at=? WHERE id=?",
-                (jdump(result), utcnow(), run_id),
+                "UPDATE capability_runs SET status=?,result_json=?,updated_at=? WHERE id=?",
+                (status, jdump(result), utcnow(), run_id),
             )
