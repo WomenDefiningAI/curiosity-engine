@@ -771,13 +771,18 @@ def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path:
     page = client.get("/evals")
     assert page.status_code == 200
     assert "How do long-neck dinosaurs reach leaves?" in page.text
-    assert "No visual was released" in page.text
+    assert "No imagination art" in page.text
+    assert "Activity proposed; no aid released" in page.text
+    assert "Best response shape" in page.text
+    assert "Best visual mix" in page.text
     saved = client.post(
         f"/evals/{event_id}",
         data={
             "csrf": token,
             "response_rating": "needs_work",
             "visual_rating": "missing_needed",
+            "preferred_response_shape": "learning_thread",
+            "preferred_visual_mix": "both",
             "note": "Make the leaves into usable targets.",
         },
         follow_redirects=False,
@@ -791,6 +796,8 @@ def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path:
     assert evaluation["event_id"] == event_id
     assert evaluation["response_rating"] == "needs_work"
     assert evaluation["visual_rating"] == "missing_needed"
+    assert evaluation["preferred_response_shape"] == "learning_thread"
+    assert evaluation["preferred_visual_mix"] == "both"
     assert evaluation["note"] == "Make the leaves into usable targets."
 
 

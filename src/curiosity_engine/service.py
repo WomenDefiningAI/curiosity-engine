@@ -1079,7 +1079,8 @@ class CuriosityService:
                           va.id AS visual_asset_id,va.title AS visual_title,va.caption AS visual_caption,
                           va.alt_text AS visual_alt_text,va.method AS visual_method,
                           a.id AS artifact_id,x.title AS artifact_title,
-                          q.response_rating,q.visual_rating,q.note AS evaluation_note,
+                          q.response_rating,q.visual_rating,q.preferred_response_shape,
+                          q.preferred_visual_mix,q.note AS evaluation_note,
                           q.created_at AS evaluated_at
                    FROM events e
                    JOIN responses r ON r.event_id=e.id
@@ -1133,11 +1134,20 @@ class CuriosityService:
                 evaluation = {
                     "response_rating": raw.pop("response_rating"),
                     "visual_rating": raw.pop("visual_rating"),
+                    "preferred_response_shape": raw.pop("preferred_response_shape"),
+                    "preferred_visual_mix": raw.pop("preferred_visual_mix"),
                     "note": raw.pop("evaluation_note"),
                     "created_at": raw.pop("evaluated_at"),
                 }
             else:
-                for key in ("response_rating", "visual_rating", "evaluation_note", "evaluated_at"):
+                for key in (
+                    "response_rating",
+                    "visual_rating",
+                    "preferred_response_shape",
+                    "preferred_visual_mix",
+                    "evaluation_note",
+                    "evaluated_at",
+                ):
                     raw.pop(key)
             items.append(
                 {
@@ -1160,6 +1170,8 @@ class CuriosityService:
         event_id: str,
         response_rating: str,
         visual_rating: str,
+        preferred_response_shape: str,
+        preferred_visual_mix: str,
         note: str | None = None,
         visual_asset_id: str | None = None,
         artifact_id: str | None = None,
@@ -1177,6 +1189,10 @@ class CuriosityService:
             "not_needed",
         }:
             raise ValueError("unsupported visual evaluation")
+        if preferred_response_shape not in {"parent_chat", "quick_answer", "learning_thread"}:
+            raise ValueError("unsupported preferred response shape")
+        if preferred_visual_mix not in {"none", "imagination", "activity_aid", "both"}:
+            raise ValueError("unsupported preferred visual mix")
         clean_note = note.strip()[:2_000] if note and note.strip() else None
         with connect(self.db_path) as conn:
             event = conn.execute(
@@ -1201,14 +1217,17 @@ class CuriosityService:
                     raise ValueError("artifact does not belong to response")
             cursor = conn.execute(
                 """INSERT INTO output_evaluations(
-                     event_id,visual_asset_id,artifact_id,response_rating,visual_rating,note,source,created_at
-                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                     event_id,visual_asset_id,artifact_id,response_rating,visual_rating,
+                     preferred_response_shape,preferred_visual_mix,note,source,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     event_id,
                     visual_asset_id,
                     artifact_id,
                     response_rating,
                     visual_rating,
+                    preferred_response_shape,
+                    preferred_visual_mix,
                     clean_note,
                     source,
                     utcnow(),

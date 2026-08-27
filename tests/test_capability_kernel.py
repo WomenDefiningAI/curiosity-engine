@@ -71,7 +71,7 @@ def _stored_response(db: Path, event_id: str = "evt-source") -> None:
         )
 
 
-def test_schema_v15_migrates_with_backup_and_preserves_data(tmp_path: Path):
+def test_schema_v16_migrates_with_backup_and_preserves_data(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE family_marker(value TEXT NOT NULL)")

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -312,6 +312,10 @@ CREATE TABLE IF NOT EXISTS output_evaluations (
     CHECK(response_rating IN ('useful','needs_work','not_useful')),
   visual_rating TEXT NOT NULL
     CHECK(visual_rating IN ('useful','pretty_not_useful','missing_needed','misleading','not_needed')),
+  preferred_response_shape TEXT
+    CHECK(preferred_response_shape IN ('parent_chat','quick_answer','learning_thread')),
+  preferred_visual_mix TEXT
+    CHECK(preferred_visual_mix IN ('none','imagination','activity_aid','both')),
   note TEXT,
   source TEXT NOT NULL DEFAULT 'local_eval_dashboard',
   created_at TEXT NOT NULL,
@@ -917,6 +921,14 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
         "brain_config_hash": "TEXT NOT NULL DEFAULT 'legacy'",
         "response_hash": "TEXT NOT NULL DEFAULT 'legacy'",
         "workflow": "TEXT NOT NULL DEFAULT 'legacy'",
+    },
+    "output_evaluations": {
+        "preferred_response_shape": (
+            "TEXT CHECK(preferred_response_shape IN ('parent_chat','quick_answer','learning_thread'))"
+        ),
+        "preferred_visual_mix": (
+            "TEXT CHECK(preferred_visual_mix IN ('none','imagination','activity_aid','both'))"
+        ),
     },
 }
 
