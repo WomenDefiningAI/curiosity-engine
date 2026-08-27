@@ -304,11 +304,14 @@ def _draw_piece_shape(
         )
     canvas.setFillColor(navy)
     canvas.setFont("Helvetica-Bold", 17)
-    canvas.drawCentredString(center_x, center_y - height * 0.38, piece.label)
+    canvas.drawCentredString(center_x, center_y - height * 0.35, piece.label)
     if piece.prompt:
         canvas.setFillColor(HexColor("#557080"))
-        canvas.setFont("Helvetica-Bold", 9)
-        canvas.drawCentredString(center_x, center_y - height * 0.46, piece.prompt)
+        canvas.setFont("Helvetica-Bold", 8)
+        prompt_y = center_y - height * 0.41
+        for line in _wrap(piece.prompt, "Helvetica-Bold", 8, width - 18)[:3]:
+            canvas.drawCentredString(center_x, prompt_y, line)
+            prompt_y -= 10
     canvas.restoreState()
 
 
