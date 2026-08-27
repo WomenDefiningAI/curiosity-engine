@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visual Eval Lab · Curiosity Engine</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">PRIVATE LOCAL REVIEW</p>
+      <h1>Visual Eval Lab</h1>
+      <p class="subtitle">Review recent real Slack releases without sending a message or changing a child’s context graph.</p>
+    </div>
+    <div class="header-actions">
+      <span class="privacy">0 child-graph writes</span>
+      <a class="text-link" href="/">Setup dashboard</a>
+    </div>
+  </header>
+
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <main class="eval-shell">
+    <section class="eval-intro">
+      <strong>What belongs here?</strong>
+      <span>Judge the released answer and visual—not the child. “Pretty, not useful” is intentionally a first-class eval.</span>
+    </section>
+
+    {% for item in items %}
+    <article class="eval-card" id="{{ item.event_id }}">
+      <div class="eval-card-head">
+        <div>
+          <p class="eyebrow">{{ item.child_name or 'Unassigned' }} · {{ item.created_at[:16]|replace('T', ' ') }}</p>
+          <h2>{{ item.question }}</h2>
+        </div>
+        <span class="badge {% if item.status != 'completed' %}badge-warn{% endif %}">{{ item.status }}</span>
+      </div>
+
+      {% if item.status == 'completed' %}
+      <div class="eval-release">
+        <section class="eval-answer">
+          <h3>{{ item.output.hook }}</h3>
+          <div class="response-grid compact">
+            <div><span>SHOW</span><p>{{ item.output.show }}</p></div>
+            <div><span>ASK</span><p>{{ item.output.ask }}</p></div>
+          </div>
+          <details>
+            <summary>See explanation and activity</summary>
+            <p><strong>Tiny explanation:</strong> {{ item.output.nugget }}</p>
+            {% if item.output.physical_extension %}
+            <p class="extension"><strong>Try it:</strong> {{ item.output.physical_extension.title }} — {{ item.output.physical_extension.instructions|join(' ') }}</p>
+            {% endif %}
+          </details>
+          <p class="meta">{{ item.workflow }} · {{ item.output._reasoning.model or item.output._reasoning.backend or 'reviewed output' }}</p>
+        </section>
+
+        <section class="eval-visual">
+          {% if item.visual %}
+            <img src="/evals/visual/{{ item.visual.id }}" alt="{{ item.visual.alt_text }}">
+            <div class="visual-copy">
+              <strong>{{ item.visual.title }}</strong>
+              <span>{{ item.visual.caption }}</span>
+              <small>{{ item.visual.method }}</small>
+            </div>
+          {% elif item.artifact %}
+            <img src="/artifacts/{{ item.artifact.id }}/preview" alt="Preview of {{ item.artifact.title }}">
+            <div class="visual-copy"><strong>{{ item.artifact.title }}</strong><span>Printable activity</span></div>
+          {% else %}
+            <div class="visual-missing"><span>?</span><strong>No visual was released</strong><small>Mark “Missing, needed” if a visual would have helped.</small></div>
+          {% endif %}
+        </section>
+      </div>
+      {% else %}
+      <div class="rejected-note">This draft did not pass the release checks, so its unsafe or malformed candidate is not displayed.</div>
+      {% endif %}
+
+      <form class="eval-form" method="post" action="/evals/{{ item.event_id }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% if item.visual %}<input type="hidden" name="visual_asset_id" value="{{ item.visual.id }}">{% endif %}
+        {% if item.artifact %}<input type="hidden" name="artifact_id" value="{{ item.artifact.id }}">{% endif %}
+        <label>Answer
+          <select name="response_rating">
+            <option value="useful" {% if item.evaluation and item.evaluation.response_rating == 'useful' %}selected{% endif %}>Useful</option>
+            <option value="needs_work" {% if not item.evaluation or item.evaluation.response_rating == 'needs_work' %}selected{% endif %}>Needs work</option>
+            <option value="not_useful" {% if item.evaluation and item.evaluation.response_rating == 'not_useful' %}selected{% endif %}>Not useful</option>
+          </select>
+        </label>
+        <label>Visual
+          <select name="visual_rating">
+            <option value="useful" {% if item.evaluation and item.evaluation.visual_rating == 'useful' %}selected{% endif %}>Useful for the child</option>
+            <option value="pretty_not_useful" {% if not item.evaluation or item.evaluation.visual_rating == 'pretty_not_useful' %}selected{% endif %}>Pretty, not useful</option>
+            <option value="missing_needed" {% if item.evaluation and item.evaluation.visual_rating == 'missing_needed' %}selected{% endif %}>Missing, needed</option>
+            <option value="misleading" {% if item.evaluation and item.evaluation.visual_rating == 'misleading' %}selected{% endif %}>Misleading or incorrect</option>
+            <option value="not_needed" {% if item.evaluation and item.evaluation.visual_rating == 'not_needed' %}selected{% endif %}>No visual needed</option>
+          </select>
+        </label>
+        <label class="eval-note">What should change?
+          <input name="note" maxlength="2000" value="{{ item.evaluation.note if item.evaluation and item.evaluation.note else '' }}" placeholder="Example: Turn the three leaves into printable targets.">
+        </label>
+        <button type="submit">Save eval only</button>
+        {% if item.evaluation %}<span class="saved-eval">Saved {{ item.evaluation.created_at[:16]|replace('T', ' ') }}</span>{% endif %}
+      </form>
+    </article>
+    {% else %}
+    <section class="panel"><p class="empty">No delivered Slack learning threads are available to review yet.</p></section>
+    {% endfor %}
+  </main>
+</body>
+</html>

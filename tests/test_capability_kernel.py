@@ -71,7 +71,7 @@ def _stored_response(db: Path, event_id: str = "evt-source") -> None:
         )
 
 
-def test_schema_v14_migrates_with_backup_and_preserves_data(tmp_path: Path):
+def test_schema_v15_migrates_with_backup_and_preserves_data(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE family_marker(value TEXT NOT NULL)")
@@ -874,4 +874,5 @@ def test_no_clone_setup_creates_private_agent_handoff_and_safe_units(tmp_path: P
     units = unit_definitions("/opt/curiosity/bin/curiosity")
     combined = "\n".join(units.values())
     assert "worker\" \"--forever" in combined
+    assert 'serve" "--db' in combined and '"--host" "127.0.0.1"' in combined
     assert "xoxb-" not in combined and "OPENAI_API_KEY" not in combined

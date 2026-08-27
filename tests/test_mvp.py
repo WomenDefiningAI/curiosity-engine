@@ -750,6 +750,50 @@ def test_web_onboarding_question_and_csrf(tmp_path: Path):
     assert response.headers["location"] == "/#artifacts"
 
 
+def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path: Path):
+    db = tmp_path / "db.sqlite"
+    app = create_app(db, tmp_path / "output")
+    client = TestClient(app)
+    token = app.state.csrf
+    client.post(
+        "/children",
+        data={"csrf": token, "child_id": "child-a", "name": "Demo Child", "grade": "1st"},
+    )
+    client.post(
+        "/ask",
+        data={"csrf": token, "child_id": "child-a", "question": "How do long-neck dinosaurs reach leaves?"},
+    )
+    with connect(db) as conn:
+        event_id = conn.execute("SELECT id FROM events").fetchone()[0]
+        conn.execute("UPDATE events SET source='slack_parent_report' WHERE id=?", (event_id,))
+        observations_before = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+
+    page = client.get("/evals")
+    assert page.status_code == 200
+    assert "How do long-neck dinosaurs reach leaves?" in page.text
+    assert "No visual was released" in page.text
+    saved = client.post(
+        f"/evals/{event_id}",
+        data={
+            "csrf": token,
+            "response_rating": "needs_work",
+            "visual_rating": "missing_needed",
+            "note": "Make the leaves into usable targets.",
+        },
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/evals"
+    with connect(db) as conn:
+        evaluation = dict(conn.execute("SELECT * FROM output_evaluations").fetchone())
+        assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == observations_before
+        assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
+    assert evaluation["event_id"] == event_id
+    assert evaluation["response_rating"] == "needs_work"
+    assert evaluation["visual_rating"] == "missing_needed"
+    assert evaluation["note"] == "Make the leaves into usable targets."
+
+
 def test_migration_backup_and_schema_version(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     conn = sqlite3.connect(db)

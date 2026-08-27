@@ -63,6 +63,18 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             },
         )
 
+    def render_evals(request: Request, *, notice: str | None = None, error: str | None = None):
+        return templates.TemplateResponse(
+            request,
+            "evals.html",
+            {
+                "csrf": app.state.csrf,
+                "items": service.evaluation_queue(limit=10),
+                "notice": notice,
+                "error": error,
+            },
+        )
+
     def redirect_home(child_id: str | None = None, *, anchor: str | None = None) -> RedirectResponse:
         """Redirect only to a fixed local path with a database-owned child identifier."""
 
@@ -77,6 +89,53 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request, child: str | None = None):
         return render_home(request, child=child)
+
+    @app.get("/evals", response_class=HTMLResponse)
+    def evals(request: Request):
+        return render_evals(request)
+
+    @app.get("/evals/visual/{visual_asset_id}")
+    def eval_visual(visual_asset_id: str):
+        with connect(service.db_path) as conn:
+            row = conn.execute(
+                "SELECT path,mime_type,filename FROM visual_assets WHERE id=?",
+                (visual_asset_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(404)
+        path = Path(row["path"]).resolve()
+        try:
+            path.relative_to(service.output_dir)
+        except ValueError as exc:
+            raise HTTPException(403) from exc
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, media_type=row["mime_type"], filename=row["filename"])
+
+    @app.post("/evals/{event_id}")
+    def save_eval(
+        request: Request,
+        event_id: str,
+        response_rating: Annotated[str, Form()],
+        visual_rating: Annotated[str, Form()],
+        csrf: Annotated[str, Form()] = "",
+        note: Annotated[str | None, Form(max_length=2_000)] = None,
+        visual_asset_id: Annotated[str | None, Form()] = None,
+        artifact_id: Annotated[str | None, Form()] = None,
+    ):
+        check_csrf(csrf)
+        try:
+            service.record_output_evaluation(
+                event_id=event_id,
+                response_rating=response_rating,
+                visual_rating=visual_rating,
+                note=note,
+                visual_asset_id=visual_asset_id or None,
+                artifact_id=artifact_id or None,
+            )
+        except Exception as exc:
+            return render_evals(request, error=str(exc))
+        return RedirectResponse("/evals", status_code=303)
 
     @app.get("/api/health")
     def health():
