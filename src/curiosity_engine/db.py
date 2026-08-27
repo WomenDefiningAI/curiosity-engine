@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -673,6 +673,22 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_session_preference_events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  category TEXT NOT NULL CHECK(category IN (
+    'answer_style','visual_style','artifact_style','activity_style','interaction_style'
+  )),
+  operation TEXT NOT NULL CHECK(operation IN ('set','clear')),
+  value TEXT,
+  source_message_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id,ordinal),
+  FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(source_message_id) REFERENCES agent_messages(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS inbound_assets (
   id TEXT PRIMARY KEY,
   binding_id TEXT NOT NULL,
@@ -1006,6 +1022,9 @@ def init_db(db_path: str | Path) -> Path | None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id,created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_thread ON agent_sessions(binding_id,conversation_ref,thread_ref,updated_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id,ordinal)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_preferences_session ON agent_session_preference_events(session_id,ordinal)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inbound_assets_event ON inbound_assets(binding_id,external_event_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inbound_assets_inbox ON inbound_assets(inbox_id,created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inbound_assets_session ON inbound_assets(session_id,created_at)")

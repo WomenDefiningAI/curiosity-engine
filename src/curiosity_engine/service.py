@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -36,6 +37,30 @@ def _explicit_visual_request(text: str) -> bool:
         term in lowered
         for term in ("image", "picture", "visual", "diagram", "illustration", "show me", "draw")
     )
+
+
+def _explicit_thread_preference_change(text: str, operation: str) -> bool:
+    lowered = text.casefold()
+    if operation == "clear":
+        return bool(
+            re.search(r"\b(?:forget|clear|remove|stop using|do not use|don't use|no longer)\b", lowered)
+        )
+    return bool(
+        re.search(
+            r"\b(?:remember|from now on|going forward|for this thread|in this thread|always|keep using|keep doing|make this the default)\b",
+            lowered,
+        )
+    )
+
+
+def _thread_preference_brief(preferences: list[dict[str, Any]]) -> str:
+    if not preferences:
+        return ""
+    lines = [
+        f"- {str(item.get('category') or '').replace('_', ' ')}: {str(item.get('value') or '')[:400]}"
+        for item in preferences[:10]
+    ]
+    return "Parent-set working preferences for this thread:\n" + "\n".join(lines)
 
 
 def _proportionate_thread_message(result: dict[str, Any], request: str) -> str:
@@ -374,7 +399,7 @@ class CuriosityService:
             [str(item["id"]) for item in attachments or [] if item.get("id")],
             str(session["id"]),
         )
-        store.append_message(
+        user_message_id = store.append_message(
             str(session["id"]),
             role="user",
             content=text,
@@ -384,6 +409,55 @@ class CuriosityService:
         latest_event_id = store.latest_event_id(str(session["id"]))
         backend = configured_backend(self.config) or StubBackend()
         tools = ToolRegistry()
+
+        def current_preferences() -> list[dict[str, Any]]:
+            return store.active_preferences(str(session["id"]))
+
+        def target_event_id(arguments: dict[str, Any]) -> str:
+            ref_id = str(arguments.get("target_ref") or arguments.get("ref_id") or "").strip()
+            if not ref_id:
+                if latest_event_id:
+                    return latest_event_id
+                raise ValueError("there is no reviewed response to use in this thread")
+            target = store.resolve_output_ref(str(session["id"]), ref_id)
+            if target.get("event_id"):
+                return str(target["event_id"])
+            if target.get("artifact_id"):
+                with connect(self.db_path) as conn:
+                    row = conn.execute(
+                        """SELECT e.source_event_id FROM artifacts a
+                           JOIN experiences e ON e.id=a.experience_id WHERE a.id=?""",
+                        (str(target["artifact_id"]),),
+                    ).fetchone()
+                if row and row["source_event_id"]:
+                    return str(row["source_event_id"])
+            raise ValueError("the selected thread output has no revisable learning event")
+
+        def search_thread_outputs(arguments: dict[str, Any]) -> dict[str, Any]:
+            query = str(arguments.get("query") or text).strip()
+            return {
+                "status": "completed",
+                "matches": store.search_outputs(str(session["id"]), query, limit=5),
+            }
+
+        def update_thread_preference(arguments: dict[str, Any]) -> dict[str, Any]:
+            operation = str(arguments.get("operation") or "set").casefold()
+            if not _explicit_thread_preference_change(text, operation):
+                raise ValueError(
+                    "a lasting thread preference requires an explicit remember, future-behavior, or forget request"
+                )
+            result = store.update_thread_preference(
+                str(session["id"]),
+                operation=operation,
+                category=str(arguments.get("category") or ""),
+                value=str(arguments.get("value") or "") if operation == "set" else None,
+                source_message_id=user_message_id,
+            )
+            if operation == "clear":
+                notice = "Working preference cleared for this thread."
+            else:
+                notice = "Working preference saved for this thread—you can ask me to forget it anytime."
+            return {**result, "message": notice, "notice": notice}
 
         def continue_thread(arguments: dict[str, Any]) -> dict[str, Any]:
             question = str(arguments.get("message") or text).strip()
@@ -402,6 +476,7 @@ class CuriosityService:
                         for item in store.history(str(session["id"]), limit=12)
                     ],
                     "instruction": "Build on the thread. Do not repeat prior activities, examples, or explanations.",
+                    "thread_preferences": current_preferences(),
                 },
                 attachments=prepared_attachments,
                 enqueue_visual=True,
@@ -418,14 +493,25 @@ class CuriosityService:
             }
 
         def revise_thread(arguments: dict[str, Any]) -> dict[str, Any]:
-            if not latest_event_id:
-                raise ValueError("there is no reviewed response to revise")
+            source_event_id = target_event_id(arguments)
+            preferences = current_preferences()
+            history = store.history(str(session["id"]), limit=12)
+            preference_brief = _thread_preference_brief(preferences)
+            if preference_brief:
+                history = [
+                    *history,
+                    {
+                        "role": "system",
+                        "kind": "thread_preferences",
+                        "content": preference_brief,
+                    },
+                ]
             response = self.revise_response(
-                source_event_id=latest_event_id,
+                source_event_id=source_event_id,
                 revision=str(arguments.get("revision") or text),
                 event_id=f"evt_revision_{uuid4().hex[:20]}",
                 include_private_excerpts=include_private_excerpts,
-                thread_history=store.history(str(session["id"]), limit=12),
+                thread_history=history,
                 enqueue_visual=_explicit_visual_request(str(arguments.get("revision") or text)),
             )
             return {
@@ -460,19 +546,22 @@ class CuriosityService:
             return {"status": "completed", "message": message}
 
         def create_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
-            if not latest_event_id:
-                raise ValueError("there is no reviewed learning thread to turn into an artifact")
+            source_event_id = target_event_id(arguments)
             artifact_type = str(arguments.get("artifact_type") or "challenge").casefold()
+            revision = str(arguments.get("revision") or text)
+            preference_brief = _thread_preference_brief(current_preferences())
+            if preference_brief:
+                revision = f"{revision}\n\n{preference_brief}"
             artifact = LearningArtifactService(
                 self.db_path,
                 self.output_dir,
                 backend=backend,
             ).create_from_event(
-                event_id=latest_event_id,
+                event_id=source_event_id,
                 artifact_type=artifact_type,
                 # The model chooses the reviewed tool and artifact kind. The parent's
                 # exact wording remains the authoritative revision brief.
-                revision=text,
+                revision=revision,
             )
             return {
                 "status": "completed",
@@ -481,6 +570,7 @@ class CuriosityService:
                     "The printable will arrive next in this thread."
                 ),
                 "artifact": artifact,
+                "event_id": source_event_id,
                 "interaction": {
                     "kind": "artifact_preview",
                     "title": "Tune this printable",
@@ -517,6 +607,8 @@ class CuriosityService:
             )
             return {"status": "completed", "message": "Thanks—I saved that as output feedback, not as a claim about your child."}
 
+        tools.register("search_thread_outputs", search_thread_outputs)
+        tools.register("update_thread_preference", update_thread_preference)
         tools.register("continue_learning_thread", continue_thread)
         tools.register("revise_learning_thread", revise_thread)
         tools.register("record_thread_context", record_thread_context)

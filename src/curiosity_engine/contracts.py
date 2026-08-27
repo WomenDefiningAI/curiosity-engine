@@ -409,6 +409,37 @@ class ParentAgentToolCall(StrictModel):
     rationale: str = Field(min_length=1, max_length=500)
 
 
+class ThreadOutputRef(StrictModel):
+    """A code-resolved reference to one output in the current parent thread."""
+
+    ref_id: str = Field(pattern=r"^(?:msg|rel|art)_[a-zA-Z0-9_-]{1,120}$")
+    kind: Literal["answer", "visual", "artifact", "interaction"]
+    title: str | None = Field(default=None, max_length=180)
+    snippet: str = Field(min_length=1, max_length=500)
+    event_id: str | None = Field(default=None, max_length=160)
+    artifact_id: str | None = Field(default=None, max_length=160)
+
+
+class ThreadPreference(StrictModel):
+    """Explicit, reversible presentation guidance scoped to one thread."""
+
+    category: Literal[
+        "answer_style",
+        "visual_style",
+        "artifact_style",
+        "activity_style",
+        "interaction_style",
+    ]
+    value: str = Field(min_length=1, max_length=400)
+    source_message_id: str = Field(min_length=1, max_length=160)
+
+
+class ParentSessionState(StrictModel):
+    version: int = Field(default=1, ge=1, le=10)
+    preferences: list[ThreadPreference] = Field(default_factory=list, max_length=10)
+    active_output_ref: str | None = Field(default=None, max_length=160)
+
+
 class ParentAgentTurn(StrictModel):
     message: str | None = Field(default=None, max_length=2_000)
     tool_calls: list[ParentAgentToolCall] = Field(default_factory=list, max_length=3)

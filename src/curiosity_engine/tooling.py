@@ -11,6 +11,35 @@ ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 DEFAULT_TOOL_SPECS = (
     ToolSpec(
+        name="search_thread_outputs",
+        version="1",
+        description=(
+            "Search reviewed answers and artifacts only inside the current authorized learning thread. Arguments: "
+            "query (a short description of the earlier output). Use when the parent refers to an older item that "
+            "is not unambiguous from the recent history."
+        ),
+        risk="read_only",
+        side_effect="none",
+        data_classes=["thread_history"],
+        origins=["slack", "cli"],
+        timeout_seconds=10,
+    ),
+    ToolSpec(
+        name="update_thread_preference",
+        version="1",
+        description=(
+            "Set or clear explicit presentation/workflow guidance for this Slack thread only. Arguments: operation "
+            "(set or clear), category (answer_style, visual_style, artifact_style, activity_style, or "
+            "interaction_style), and value for set. Never use for a one-off critique, child trait, safety override, "
+            "or family-wide rule."
+        ),
+        risk="low",
+        side_effect="local_write",
+        data_classes=["thread_history", "parent_preferences"],
+        origins=["slack", "cli"],
+        timeout_seconds=10,
+    ),
+    ToolSpec(
         name="record_thread_context",
         version="1",
         description=(
