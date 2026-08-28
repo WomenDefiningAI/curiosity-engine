@@ -71,7 +71,7 @@ def _stored_response(db: Path, event_id: str = "evt-source") -> None:
         )
 
 
-def test_schema_v14_migrates_with_backup_and_preserves_data(tmp_path: Path):
+def test_schema_v16_migrates_with_backup_and_preserves_data(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE family_marker(value TEXT NOT NULL)")
@@ -155,7 +155,13 @@ def test_duplicate_semantic_slack_action_does_not_execute_tool_twice(tmp_path: P
             kind="confirm_action",
             title="Do it?",
             prompt="One reviewed action.",
-            options=[InteractionOption(label="Yes", intent="test_action")],
+            options=[
+                InteractionOption(
+                    label="Make it",
+                    intent="create_artifact",
+                    payload={"event_id": "evt-source", "artifact_type": "challenge"},
+                )
+            ],
         ),
     )
 
@@ -200,7 +206,10 @@ def test_duplicate_semantic_slack_action_does_not_execute_tool_twice(tmp_path: P
     receive(lambda: acknowledgements.append(True), body, action, client)
     assert acknowledgements == [True, True]
     assert service.calls == 1
-    assert len(client.posts) == len(client.updates) == 1
+    assert len(client.posts) == 1
+    assert len(client.updates) == 2
+    assert "Making a child-ready challenge" in client.updates[0]["blocks"][-1]["elements"][0]["text"]
+    assert "Challenge created; sending the PDF" in client.updates[1]["blocks"][-1]["elements"][0]["text"]
 
 
 def test_parent_agent_persists_turn_tool_release_and_scoped_approval(tmp_path: Path):
@@ -874,4 +883,5 @@ def test_no_clone_setup_creates_private_agent_handoff_and_safe_units(tmp_path: P
     units = unit_definitions("/opt/curiosity/bin/curiosity")
     combined = "\n".join(units.values())
     assert "worker\" \"--forever" in combined
+    assert 'serve" "--db' in combined and '"--host" "127.0.0.1"' in combined
     assert "xoxb-" not in combined and "OPENAI_API_KEY" not in combined
