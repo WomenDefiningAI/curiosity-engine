@@ -16,15 +16,19 @@ Time narrows candidates but never establishes interest by itself. The determinis
 
 child, question, topic, concept, interest, school_concept, teacher_language, SEL_theme, life_event, experience, resource, media_resource.
 
-## Knowledge states
+## Learner state
 
-- `unseen`
-- `exposed`
-- `emerging`
-- `demonstrated`
-- `unknown`
+Phase 1 has a trusted but **shadow-only** learner-state projection. Historical observations, nodes, edges, confidence
+values, and state JSON may have been model-authored before the authority boundary existed. They remain inspectable in
+local storage, but the entire legacy graph projection is quarantined from model-facing context and never backfilled.
 
-Never promote `exposed` to `demonstrated` merely because an explanation was delivered.
+Model output uses bounded `observation_candidates`, never `GraphMutation`. Candidates are stored with the reviewed
+response as expiring audit-only annotations and create no evidence. Code-owned immutable plans bind task, episode,
+context, representation, retry, and reviewed transfer lineage; observations supply typed per-concept rubric results.
+Versioned rules derive separate knowledge and interest projections. The shared runtime/Director input boundary strips
+those projections before model calls, so they cannot yet change recommendations.
+
+See `EVIDENCE_RULES.md` for the full projection semantics and `EVIDENCE_SPINE_MIGRATION.md` for rebuild/recovery.
 
 ## Epistemic states
 
@@ -35,6 +39,8 @@ Never promote `exposed` to `demonstrated` merely because an explanation was deli
 ## Claims
 
 Claims retain confidence plus supporting and contradicting evidence. Context audits should challenge stale or weak claims rather than letting them silently harden into truth.
+
+See `LEARNER_MODEL_CONSTITUTION.md` for the required event → annotation → evidence → claim → projection chain.
 
 `nodes.evidence_count` and `edges.evidence_count` are mention counts for navigation and retrieval. They are not independent-evidence counts, interest scores, or mastery estimates.
 
@@ -55,15 +61,18 @@ The inspector includes family text and therefore stays local. Its graph-health s
 ## Retrieval depths
 
 0. identity/current request only
-1. direct recent observations + direct school/topic state
-2. related questions/concepts/interests + recent experiences
-3. broader graph neighborhood + edges
-4. longitudinal evidence + claims/hypotheses/contradictions
+1. recent eligible episodes + active school signals
+2. related eligible episodes + recent experience metadata
+3. a broader eligible episode window; legacy nodes and edges remain quarantined
+4. longitudinal eligible episodes; legacy claims remain quarantined
 
 Depth is selected by workflow policy and is itself evaluated.
 
 ## Current limits
 
-Schema upgrades do not silently reinterpret older events. Historical evidence without episode membership is reported as `legacy_unreviewed_count` and cannot establish a new durable pattern until explicitly revisited. Context-driven proactive suggestions remain disabled.
+Schema upgrades do not silently reinterpret older events. Historical evidence without episode membership is reported as
+`legacy_unreviewed_count` and cannot establish a new durable pattern until explicitly revisited. Every non-minimal context
+has a hard 48,000-character serialized budget over the complete event plus context. Phase 1 snapshots contain no raw
+evidence text and are removed before every model call. Context-driven proactive suggestions remain disabled.
 
 This release does not add embeddings, a graph database, probabilistic mastery, or unsolicited suggestions. Those are research-track options only after the episode foundation is trustworthy and auditable.

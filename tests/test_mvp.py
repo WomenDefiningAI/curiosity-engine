@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
-from curiosity_engine.artifacts import ArtifactService, render_pdf
+from curiosity_engine.artifacts import render_pdf
 from curiosity_engine.context_builder import build_context
 from curiosity_engine.contracts import CriticResult, Event, GenericOutput, GraphMutation, PullThreadOutput
 from curiosity_engine.db import SCHEMA_VERSION, connect, init_db
 from curiosity_engine.graph import add_child, add_school_signal, capture_question
+from curiosity_engine.learning_artifacts import LearningArtifactService
 from curiosity_engine.openai_backend import OpenAIBackend
 from curiosity_engine.printer import approve_artifact, print_artifact
 from curiosity_engine.providers import AnthropicBackend, OpenRouterBackend
@@ -39,6 +43,91 @@ def artifact_spec(tier: str = "A") -> dict:
             "facts": [{"claim": "The Moon is distant.", "certainty": "established", "source": "test"}]
         }
     return spec
+
+
+def test_init_db_lock_order_does_not_deadlock_governed_artifact_and_visual_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The visual init path must wait outside `_INIT_LOCK` for artifact work."""
+
+    from curiosity_engine import db as db_module
+
+    database = tmp_path / "db.sqlite"
+    init_db(database)
+    db_module._INITIALIZED_DATABASES.clear()
+    lifecycle = threading.RLock()
+    artifact_has_lifecycle = threading.Event()
+    visual_is_waiting = threading.Event()
+    failures: list[BaseException] = []
+
+    @contextmanager
+    def controlled_lifecycle(*_args: Any, **_kwargs: Any):
+        if threading.current_thread().name == "visual-init":
+            visual_is_waiting.set()
+        if not lifecycle.acquire(timeout=1):
+            raise TimeoutError("lifecycle lock acquisition timed out")
+        try:
+            yield
+        finally:
+            lifecycle.release()
+
+    monkeypatch.setattr(db_module, "managed_data_lifecycle", controlled_lifecycle)
+
+    def artifact_path() -> None:
+        try:
+            with controlled_lifecycle(database):
+                artifact_has_lifecycle.set()
+                if not visual_is_waiting.wait(timeout=1):
+                    raise TimeoutError("visual initializer did not reach the lifecycle boundary")
+                db_module.init_db(database)
+        except BaseException as exc:
+            failures.append(exc)
+
+    def visual_path() -> None:
+        try:
+            if not artifact_has_lifecycle.wait(timeout=1):
+                raise TimeoutError("artifact did not reach the lifecycle boundary")
+            db_module.init_db(database)
+        except BaseException as exc:
+            failures.append(exc)
+
+    artifact_thread = threading.Thread(target=artifact_path, name="artifact-generation")
+    visual_thread = threading.Thread(target=visual_path, name="visual-init")
+    artifact_thread.start()
+    visual_thread.start()
+    artifact_thread.join(timeout=3)
+    visual_thread.join(timeout=3)
+
+    assert not artifact_thread.is_alive()
+    assert not visual_thread.is_alive()
+    assert failures == []
+
+
+def test_current_database_initialization_is_cached_within_the_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hot request paths must not repeat lifecycle recovery and schema work."""
+
+    from curiosity_engine import db as db_module
+
+    database = tmp_path / "db.sqlite"
+    init_db(database)
+    lifecycle_entries = 0
+
+    @contextmanager
+    def counted_lifecycle(*_args: Any, **_kwargs: Any):
+        nonlocal lifecycle_entries
+        lifecycle_entries += 1
+        yield
+
+    monkeypatch.setattr(db_module, "managed_data_lifecycle", counted_lifecycle)
+
+    for _ in range(10):
+        assert db_module.init_db(database) is None
+
+    assert lifecycle_entries == 0
 
 
 def test_profile_update_preserves_graph(tmp_path: Path):
@@ -144,7 +233,15 @@ def test_pdf_approval_is_bound_to_exact_bytes(tmp_path: Path):
     db = tmp_path / "db.sqlite"
     init_db(db)
     add_child(db, "child-a", "Demo Child")
-    artifact = ArtifactService(db, tmp_path / "output").create(child_id="child-a", spec=artifact_spec())
+    CuriosityHarness(db, ReasoningEngine(StubBackend())).dispatch(
+        Event(
+            id="evt-print-approval", type="child_question", child_id="child-a", text="Why does the Moon look far away?"
+        )
+    )
+    artifact = LearningArtifactService(db, tmp_path / "output", backend=StubBackend()).create_from_event(
+        event_id="evt-print-approval",
+        artifact_type="worksheet",
+    )
     approval = approve_artifact(db, artifact["artifact_id"])
     dry_run = print_artifact(db, artifact["artifact_id"], approval["approval_id"])
     assert dry_run["status"] == "dry-run"
@@ -165,7 +262,7 @@ class FakeResponses:
     def create(self, **kwargs):
         self.request = kwargs
         return type(
-            "Response", (), {"output_text": json.dumps({"summary": "ok", "graph_updates": [], "actions": []})}
+            "Response", (), {"output_text": json.dumps({"summary": "ok", "observation_candidates": [], "actions": []})}
         )()
 
 
@@ -207,7 +304,7 @@ def test_openai_adapter_enables_bounded_web_search_and_keeps_sources():
                 "nugget": "Height and weight measure different kinds of size.",
                 "next_possible_concepts": ["measurement"],
                 "physical_extension": None,
-                "graph_updates": [],
+                "observation_candidates": [],
                 "actions": [],
                 "resource_refs": [],
             }
@@ -242,7 +339,7 @@ def test_openai_candidate_with_overlong_hook_uses_reasoning_repair_round():
         "nugget": "Engineers must choose a measurement before comparing size.",
         "next_possible_concepts": ["measurement", "scale"],
         "physical_extension": None,
-        "graph_updates": [],
+        "observation_candidates": [],
         "actions": [],
         "resource_refs": [],
     }
@@ -271,11 +368,11 @@ def test_openai_candidate_with_overlong_hook_uses_reasoning_repair_round():
 
 
 def test_graph_mutation_requires_kind_specific_fields():
-    with pytest.raises(ValidationError, match="set_knowledge_state requires node_id and knowledge_state"):
+    with pytest.raises(ValidationError):
         GraphMutation.model_validate({"kind": "set_knowledge_state"})
 
 
-class IncompleteGraphUpdateBackend(StubBackend):
+class LegacyGraphUpdateBackend(StubBackend):
     def complete(self, *, role, system, payload, response_model):
         result = super().complete(
             role=role,
@@ -289,17 +386,18 @@ class IncompleteGraphUpdateBackend(StubBackend):
 
 
 def test_invalid_optional_graph_shape_does_not_drop_response():
-    result = ReasoningEngine(IncompleteGraphUpdateBackend()).run(
+    result = ReasoningEngine(LegacyGraphUpdateBackend()).run(
         policy=ReasoningPolicy("pull_thread", 2),
         context={"child": {"grade": "1st"}},
         event={"type": "child_question", "text": "How does electricity work?"},
     )
 
     assert result.output["hook"]
-    assert result.output["graph_updates"] == []
+    assert "graph_updates" not in result.output
+    assert result.output["observation_candidates"] == []
 
 
-class MissingGraphTargetBackend(StubBackend):
+class HiddenLearnerStateBackend(StubBackend):
     def complete(self, *, role, system, payload, response_model):
         result = super().complete(
             role=role,
@@ -310,33 +408,35 @@ class MissingGraphTargetBackend(StubBackend):
         if response_model is PullThreadOutput:
             result["graph_updates"] = [
                 {
-                    "kind": "set_knowledge_state",
-                    "node_id": 999_999,
-                    "knowledge_state": "exposed",
+                    "kind": "upsert_node",
+                    "node_kind": "concept",
+                    "label": "electricity",
+                    "state": {"knowledge_state": "demonstrated"},
                 }
             ]
         return result
 
 
-def test_missing_optional_graph_target_does_not_drop_response(tmp_path: Path):
+def test_hidden_learner_state_does_not_create_graph_effect(tmp_path: Path):
     db = tmp_path / "db.sqlite"
     init_db(db)
     add_child(db, "child-a", "Demo Child", 2020, "1st")
     harness = CuriosityHarness(
         db,
-        reasoning_engine=ReasoningEngine(MissingGraphTargetBackend()),
+        reasoning_engine=ReasoningEngine(HiddenLearnerStateBackend()),
     )
 
-    result = harness.dispatch(
-        Event(type="child_question", child_id="child-a", text="How does electricity work?")
-    )
+    result = harness.dispatch(Event(type="child_question", child_id="child-a", text="How does electricity work?"))
 
     assert result.status == "completed"
     assert result.output["hook"]
-    assert any(update["status"] == "skipped_invalid" for update in result.graph_updates)
     with connect(db) as conn:
+        hidden = conn.execute(
+            "SELECT COUNT(*) FROM graph_effects WHERE mutation_json LIKE '%knowledge_state%'"
+        ).fetchone()[0]
         failed = conn.execute("SELECT COUNT(*) FROM graph_effects WHERE status='failed'").fetchone()[0]
-        assert failed == 1
+        assert hidden == 0
+        assert failed == 0
 
 
 def test_contract_repair_does_not_consume_semantic_revision_budget():
@@ -377,7 +477,7 @@ def test_contract_repair_does_not_consume_semantic_revision_budget():
                 "nugget": nugget,
                 "next_possible_concepts": ["measurement"],
                 "physical_extension": None,
-                "graph_updates": [],
+                "observation_candidates": [],
                 "actions": [],
                 "resource_refs": [],
             }
@@ -398,6 +498,49 @@ def test_contract_repair_does_not_consume_semantic_revision_budget():
     assert backend.critic_calls == 2
     assert result.revision_rounds == 2
     assert "operated machine may not be a robot" in result.output["nugget"]
+
+
+def test_final_resource_only_rejection_removes_links_instead_of_withholding_answer():
+    class ResourceOnlyBackend(StubBackend):
+        name = "resource-repair-test"
+        model = "resource-repair-test-v1"
+
+        def complete(self, *, role, system, payload, response_model):
+            del role, system
+            if response_model is CriticResult:
+                if payload["candidate"].get("resource_refs"):
+                    return {
+                        "verdict": "reject",
+                        "concerns": ["The listed resource links do not directly support the visible answer."],
+                        "required_changes": ["Remove the unrelated resource references or omit sources."],
+                    }
+                return {"verdict": "pass", "concerns": [], "required_changes": []}
+            return {
+                "hook": "Nobody wrote down who said the very first version of this word.",
+                "show": "Old writing gives us clues, not the name of the first speaker.",
+                "ask": "What kind of old clue might survive?",
+                "nugget": "Words can develop across groups of people over a long time.",
+                "next_possible_concepts": ["language change"],
+                "physical_extension": None,
+                "observation_candidates": [],
+                "actions": [],
+                "resource_refs": ["https://example.test/unrelated"],
+            }
+
+    result = ReasoningEngine(ResourceOnlyBackend()).run(
+        policy=ReasoningPolicy(
+            "pull_thread",
+            2,
+            critic_roles=("critic_factual",),
+            max_revision_rounds=1,
+        ),
+        context={"child": {"grade": "1st"}},
+        event={"type": "child_question", "text": "Who decided the first word?"},
+    )
+
+    assert result.output["hook"].startswith("Nobody wrote down")
+    assert result.output["resource_refs"] == []
+    assert result.recovery_strategy == "remove_unrelated_sources"
 
 
 def test_final_semantic_revision_rebuilds_without_anchoring_on_rejected_draft():
@@ -635,7 +778,12 @@ def test_anthropic_adapter_uses_native_messages_and_validates_schema():
             block = type(
                 "Block",
                 (),
-                {"model_dump": lambda self: {"type": "text", "text": json.dumps({"summary": "ok", "graph_updates": [], "actions": []})}},
+                {
+                    "model_dump": lambda self: {
+                        "type": "text",
+                        "text": json.dumps({"summary": "ok", "observation_candidates": [], "actions": []}),
+                    }
+                },
             )()
             return type("Response", (), {"content": [block]})()
 
@@ -660,7 +808,9 @@ def test_openrouter_adapter_uses_chat_completions_and_privacy_routing():
 
         def create(self, **kwargs):
             self.request = kwargs
-            message = type("Message", (), {"content": json.dumps({"summary": "ok", "graph_updates": [], "actions": []})})()
+            message = type(
+                "Message", (), {"content": json.dumps({"summary": "ok", "observation_candidates": [], "actions": []})}
+            )()
             return type("Response", (), {"choices": [type("Choice", (), {"message": message})()]})()
 
     completions = Completions()
@@ -676,9 +826,7 @@ def test_openrouter_adapter_uses_chat_completions_and_privacy_routing():
     provider = request["extra_body"]["provider"]
     assert result["summary"] == "ok"
     assert request["response_format"]["type"] == "json_schema"
-    assert request["tools"] == [
-        {"type": "openrouter:web_search", "parameters": {"max_results": 5}}
-    ]
+    assert request["tools"] == [{"type": "openrouter:web_search", "parameters": {"max_results": 5}}]
     assert provider == {
         "require_parameters": True,
         "allow_fallbacks": False,
@@ -750,6 +898,83 @@ def test_web_onboarding_question_and_csrf(tmp_path: Path):
     assert response.headers["location"] == "/#artifacts"
 
 
+def test_local_eval_lab_records_output_judgment_without_child_evidence(tmp_path: Path):
+    db = tmp_path / "db.sqlite"
+    app = create_app(db, tmp_path / "output")
+    client = TestClient(app)
+    token = app.state.csrf
+    client.post(
+        "/children",
+        data={"csrf": token, "child_id": "child-a", "name": "Demo Child", "grade": "1st"},
+    )
+    CuriosityService(db, tmp_path / "output").ask(
+        child_id="child-a",
+        text="How do long-neck dinosaurs reach leaves?",
+        source="slack_parent_report",
+    )
+    with connect(db) as conn:
+        event_id = conn.execute("SELECT id FROM events").fetchone()[0]
+        observations_before = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+
+    page = client.get("/evals")
+    assert page.status_code == 200
+    assert "How do long-neck dinosaurs reach leaves?" in page.text
+    assert "No imagination art" in page.text
+    assert "Activity proposed; no aid released" in page.text
+    assert "Best response shape" in page.text
+    assert "Best visual mix" in page.text
+    saved = client.post(
+        f"/evals/{event_id}",
+        data={
+            "csrf": token,
+            "response_rating": "needs_work",
+            "visual_rating": "missing_needed",
+            "preferred_response_shape": "learning_thread",
+            "preferred_visual_mix": "both",
+            "note": "Make the leaves into usable targets.",
+        },
+        follow_redirects=False,
+    )
+    assert saved.status_code == 303
+    assert saved.headers["location"] == "/evals"
+    generated = client.post(
+        "/evals/generate-activity-aids",
+        data={"csrf": token},
+    )
+    assert generated.status_code == 200
+    assert "Generated 1 activity aid(s)" in generated.text
+    assert "Printable tool for doing the activity" in generated.text
+    generated_again = client.post(
+        "/evals/generate-activity-aids",
+        data={"csrf": token},
+    )
+    assert "Generated 0 activity aid(s); 1 already existed" in generated_again.text
+    with connect(db) as conn:
+        evaluation = dict(conn.execute("SELECT * FROM output_evaluations").fetchone())
+        artifact = dict(conn.execute("SELECT * FROM artifacts").fetchone())
+        assert conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == observations_before
+        assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
+    assert evaluation["event_id"] == event_id
+    assert evaluation["response_rating"] == "needs_work"
+    assert evaluation["visual_rating"] == "missing_needed"
+    assert evaluation["preferred_response_shape"] == "learning_thread"
+    assert evaluation["preferred_visual_mix"] == "both"
+    assert evaluation["note"] == "Make the leaves into usable targets."
+    artifact_spec = json.loads(artifact["spec_json"])
+    assert artifact_spec["printable"]["kind"] == "reach_comparison"
+    assert [piece["label"] for piece in artifact_spec["printable"]["pieces"]] == [
+        "NEAR LEAF",
+        "MIDDLE LEAF",
+        "FAR LEAF",
+        "SHORT NECK",
+        "LONG NECK",
+        "HELP USED?",
+    ]
+    assert "same start" in json.dumps(artifact_spec).casefold()
+    assert "no climbing or stretching" in artifact_spec["safety"].casefold()
+
+
 def test_migration_backup_and_schema_version(tmp_path: Path):
     db = tmp_path / "legacy.sqlite"
     conn = sqlite3.connect(db)
@@ -795,6 +1020,32 @@ def test_feedback_is_recorded_as_observation_not_trait(tmp_path: Path):
         assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM observations WHERE kind='feedback'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0
+        stored = conn.execute(
+            "SELECT pedagogy_plan_id,pedagogy_plan_hash FROM artifacts WHERE id=?",
+            (artifact["artifact_id"],),
+        ).fetchone()
+        assert stored["pedagogy_plan_id"] and stored["pedagogy_plan_hash"]
+
+
+def test_response_artifact_lookup_returns_the_latest_repair(tmp_path: Path):
+    service = CuriosityService(tmp_path / "db.sqlite", tmp_path / "output")
+    service.add_child("child-a", "Demo Child", 2020, "1st")
+    response = service.ask(
+        child_id="child-a",
+        text="Can we make a creature build plan?",
+        event_id="evt_artifact_repair",
+    )
+    assert response["status"] == "completed"
+    first_spec = {**artifact_spec(), "title": "First Draft", "source_event_id": "evt_artifact_repair"}
+    final_spec = {**artifact_spec(), "title": "Final Repair", "source_event_id": "evt_artifact_repair"}
+    first = service.create_artifact("child-a", first_spec)
+    final = service.create_artifact("child-a", final_spec)
+
+    resolved = service.create_artifact_from_response("evt_artifact_repair")
+
+    assert resolved["duplicate"] is True
+    assert resolved["artifact_id"] == final["artifact_id"]
+    assert resolved["artifact_id"] != first["artifact_id"]
 
 
 def test_response_feedback_is_bound_to_the_completed_child_response(tmp_path: Path):

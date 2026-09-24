@@ -1,0 +1,40 @@
+[
+  {
+    "id": "quick-answer-model-call-budget",
+    "kind": "quick_answer_model_calls",
+    "max_model_calls": 3,
+    "must": ["complete an ordinary answer with one plan, one generation, and one combined quality review"],
+    "must_not": ["fan out into separate safety, evidence, accessibility, context, and effort critics"]
+  },
+  {
+    "id": "learning-thread-model-call-budget",
+    "kind": "pull_thread_model_calls",
+    "max_model_calls": 4,
+    "must": ["complete a richer learning thread with one plan, one generation, and two focused reviews"],
+    "must_not": ["fan out across the retired mandatory critic stack"]
+  },
+  {
+    "id": "quick-answer-is-text-first",
+    "kind": "quick_answer_text_first",
+    "must": ["finish an ordinary answer without starting image work", "honor an explicit diagram request"],
+    "must_not": ["add decorative latency by default"]
+  },
+  {
+    "id": "missing-answer-never-becomes-filler",
+    "kind": "no_generic_completion_message",
+    "must": ["show an actionable parent-facing failure when no answer exists"],
+    "must_not": ["send a generic conversational fragment as if work completed"]
+  },
+  {
+    "id": "try-another-is-useful-and-text-first",
+    "kind": "retry_is_substantive_and_text_first",
+    "must": ["give a substantively different reviewed explanation", "offer a concrete optional learning move"],
+    "must_not": ["return transition filler", "start an unrequested image job"]
+  },
+  {
+    "id": "investigable-question-opens-learning",
+    "kind": "investigable_question_routes_to_explore",
+    "must": ["recognize a what-might-happen-if question as an invitation to predict and test", "allow a useful child-friendly supporting diagram"],
+    "must_not": ["flatten it into a plain answer", "require a standalone topic illustration"]
+  }
+]

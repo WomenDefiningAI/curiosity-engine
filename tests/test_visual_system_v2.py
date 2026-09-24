@@ -1,0 +1,26 @@
+"""Representative sourced-image and worksheet visual contracts."""
+
+import legacy_visual_system_v2 as legacy
+
+test_visual_plan_suppresses_parent_chat_and_separates_photo_from_printable = (
+    legacy.test_visual_plan_suppresses_parent_chat_and_separates_photo_from_printable
+)
+test_researched_photo_is_preserved_as_a_safe_model_visual = (
+    legacy.test_researched_photo_is_preserved_as_a_safe_model_visual
+)
+test_research_service_checks_rights_reviews_and_reuses_private_cache = (
+    legacy.test_research_service_checks_rights_reviews_and_reuses_private_cache
+)
+test_pass_review_requires_subject_match = legacy.test_pass_review_requires_subject_match
+test_public_query_rejects_private_context_without_known_family_names = (
+    legacy.test_public_query_rejects_private_context_without_known_family_names
+)
+test_processed_science_image_requires_visible_context_note = (
+    legacy.test_processed_science_image_requires_visible_context_note
+)
+test_researched_visual_job_persists_strategy_and_visible_provenance = (
+    legacy.test_researched_visual_job_persists_strategy_and_visible_provenance
+)
+test_matching_choices_are_stably_shuffled_off_the_answer_rows = (
+    legacy.test_matching_choices_are_stably_shuffled_off_the_answer_rows
+)

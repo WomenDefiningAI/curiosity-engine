@@ -1,0 +1,714 @@
+{
+  "version": "parent-usefulness-v1",
+  "status": "baseline_captured_model_reviewed",
+  "candidate_input_field": "input",
+  "cases": [
+    {
+      "id": "PU01",
+      "split": "development",
+      "topic_family": "cups-and-balance",
+      "situation": "start_now",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "im making dinner. kid wants a challenge. 5 min, just the big plastic cups already out. give me one thing we can start now"
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "One concrete first action using the available cups.",
+          "A playable child-sized challenge with little adult preparation and a clear stopping point."
+        ],
+        "common_misses": [
+          "A list of options or a balance lecture.",
+          "New supplies, worksheets, or a generic safety preamble."
+        ],
+        "parent_burden_to_watch": "Parent must invent the challenge or leave dinner to prepare it.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU02",
+      "split": "development",
+      "topic_family": "melting",
+      "situation": "quick_answer",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We are late for school. Why did the little ice piece melt before the big one? Give me something short I can say out loud."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A short, concrete explanation of the comparison.",
+          "Wording a parent can say without translating it."
+        ],
+        "common_misses": [
+          "A full experiment or vocabulary lesson.",
+          "A materially misleading simplification."
+        ],
+        "parent_burden_to_watch": "Parent must translate or shorten the explanation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU03",
+      "split": "development",
+      "topic_family": "rhyming",
+      "situation": "pre_reader_play",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Can you give us a silly rhyming game while we wait? No paper and my kid cannot read yet."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A playable spoken game with actual starting words.",
+          "A playful turn the child can take without reading."
+        ],
+        "common_misses": [
+          "Only telling the parent to think of rhymes.",
+          "Writing, flashcards, or a formal test."
+        ],
+        "parent_burden_to_watch": "Parent must invent the words and rules.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU04",
+      "split": "development",
+      "topic_family": "body-and-movement",
+      "situation": "start_now",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "I am exhausted. We have three minutes before bath. One tiny movement game, no setup."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "One brief game with bodies and the existing space.",
+          "Simple parent words and an obvious end."
+        ],
+        "common_misses": [
+          "Multiple options, hidden materials, or a prolonged lesson.",
+          "Repeated confirmation before giving the game."
+        ],
+        "parent_burden_to_watch": "Parent must choose among options or prepare anything.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU05",
+      "split": "development",
+      "topic_family": "sorting-laundry",
+      "situation": "siblings",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          },
+          {
+            "label": "child-2",
+            "grade": "2"
+          }
+        ],
+        "parent_turns": [
+          "Both kids want to help with the clean socks. Make it one little game they can do together. The younger one does not read."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "One shared activity with a meaningful way for each child to participate.",
+          "Uses existing socks and requires no reading."
+        ],
+        "common_misses": [
+          "Two separate lesson plans.",
+          "Adult judging or elaborate scoring."
+        ],
+        "parent_burden_to_watch": "Parent must run two activities or constantly referee.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU06",
+      "split": "development",
+      "topic_family": "shape-hunt",
+      "situation": "pre_reader_play",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We are looking for shapes around the living room. Make this more fun, but no worksheet and no writing."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A specific playful move extending the hunt.",
+          "Pointing, movement, or spoken participation works."
+        ],
+        "common_misses": [
+          "A printed chart, writing, or quiz at each find.",
+          "Generic instructions with no actual game."
+        ],
+        "parent_burden_to_watch": "Parent must create a recording system or redesign the hunt.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU07",
+      "split": "development",
+      "topic_family": "block-creatures",
+      "situation": "open_play",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "My kid made a strange creature out of blocks. Give me one playful thing to say that helps the story keep going."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "One usable imaginative prompt tied to the creature.",
+          "Room for the child to decide what happens."
+        ],
+        "common_misses": [
+          "A construction challenge, test, or assessment.",
+          "An explanation of developmental skills."
+        ],
+        "parent_burden_to_watch": "Parent must convert pedagogy advice into actual words.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU08",
+      "split": "development",
+      "topic_family": "park-observation",
+      "situation": "context_capture",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Just saving this: we spent ages watching ants carry crumbs at the park today."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Brief acknowledgment respecting a context-only note."
+        ],
+        "common_misses": [
+          "An unsolicited lesson, printable, or interrogation.",
+          "A claim of mastery or a durable child trait."
+        ],
+        "parent_burden_to_watch": "Parent must manage unwanted follow-up work.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU09",
+      "split": "development",
+      "topic_family": "moon-distance",
+      "situation": "quick_answer",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "Why does the Moon look like it is coming with us in the car? One simple explanation please."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A concrete near/far explanation that answers the question.",
+          "Short enough to read aloud naturally."
+        ],
+        "common_misses": [
+          "An unnecessary activity or decorative-image delay.",
+          "A generic statement that never explains apparent movement."
+        ],
+        "parent_burden_to_watch": "Parent must find or invent the actual explanation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU10",
+      "split": "development",
+      "topic_family": "nature-clues",
+      "situation": "printable",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a one-page picture clue hunt for our walk: leaves, stones, and sticks. My kid does not read yet. We want to point at the page and find things."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "The delivered page visibly supports finding the actual three kinds of objects.",
+          "Large targets, little reading, and no parent drawing required."
+        ],
+        "common_misses": [
+          "A prose scavenger-hunt plan in a PDF.",
+          "Decorative nature art without usable clue targets."
+        ],
+        "parent_burden_to_watch": "Parent must draw the clues or explain every box.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU11",
+      "split": "development",
+      "topic_family": "paint-mixing",
+      "situation": "printable",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We have washable paint and are going to mix two colors. Make a visual prediction-and-result page. Leave the result for us to discover."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A visible action/setup cue and generous prediction/result spaces.",
+          "The child can record observed color without writing; response roles are clear.",
+          "Preserves discovery."
+        ],
+        "common_misses": [
+          "A printed answer spoiling the observation.",
+          "Refusing the sensory topic or substituting a generic fair-test page."
+        ],
+        "parent_burden_to_watch": "Parent must reconstruct the setup or redraw response areas.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU12",
+      "split": "development",
+      "topic_family": "paper-making",
+      "situation": "start_now",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "Give us one playful thing to build with this single sheet of paper. We have no scissors or tape."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A concrete build using the available material.",
+          "A clear way to try or enjoy the result."
+        ],
+        "common_misses": [
+          "Extra materials or advance preparation.",
+          "A list of possibilities without usable instructions."
+        ],
+        "parent_burden_to_watch": "Parent must search for instructions or missing supplies.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU13",
+      "split": "development",
+      "topic_family": "nature-clues-repair",
+      "situation": "revision",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a one-page picture clue hunt for leaves, stones, and sticks. It is for a child who cannot read yet.",
+          "Keep those same clues, but make the pictures much bigger and remove the writing lines."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Final page visibly enlarges the same clues and removes writing lines.",
+          "Preserves the original usable activity and delivers the revised page."
+        ],
+        "common_misses": [
+          "A new activity or substituted clues.",
+          "Only saying the page changed."
+        ],
+        "parent_burden_to_watch": "Parent must repeat the correction or fix the page.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU14",
+      "split": "development",
+      "topic_family": "sound-idea-novelty",
+      "situation": "revision",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "Give us one little game about the sounds we can hear in this room.",
+          "Another idea please. Something we do differently, not the same listening game with different sounds."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A substantively different child action that still explores sound.",
+          "Enough concrete content to begin."
+        ],
+        "common_misses": [
+          "Renaming the same listening activity.",
+          "Abandoning the subject."
+        ],
+        "parent_burden_to_watch": "Parent must invent the promised alternative.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU15",
+      "split": "development",
+      "topic_family": "plants-shorter",
+      "situation": "revision",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Help me explain why plants need light.",
+          "That is too much to read. Keep the same idea but give me two sentences I can say to my kindergartener. No activity."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Core idea preserved in two short spoken sentences.",
+          "Final turn respects no activity."
+        ],
+        "common_misses": [
+          "Repeating the long explanation or adding a quiz.",
+          "Unsupported simplification."
+        ],
+        "parent_burden_to_watch": "Parent must shorten and fact-check it again.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU16",
+      "split": "development",
+      "topic_family": "parent-language",
+      "situation": "ordinary_help",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "My kid keeps asking why when I explain things. Give me one natural thing to say when I do not know the answer."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Actual parent words honestly acknowledging uncertainty and preserving curiosity.",
+          "Brief support without requiring teaching preparation."
+        ],
+        "common_misses": [
+          "A behavior-management lecture or child profile.",
+          "Turning parent support into a lesson."
+        ],
+        "parent_burden_to_watch": "Parent must translate advice into a natural reply.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU17",
+      "split": "holdout",
+      "topic_family": "shadows",
+      "situation": "open_play",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We noticed our shadows outside. One funny thing to try right here, no supplies and no worksheet."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "An immediate playful action tied to visible shadows.",
+          "Enough direction to try it without a lecture."
+        ],
+        "common_misses": [
+          "A page, supplies, or formal trials.",
+          "A misleading explanation of what the activity demonstrates."
+        ],
+        "parent_burden_to_watch": "Parent must devise the action or over-organize play.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU18",
+      "split": "holdout",
+      "topic_family": "pretend-restaurant",
+      "situation": "siblings",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          },
+          {
+            "label": "child-2",
+            "grade": "2"
+          }
+        ],
+        "parent_turns": [
+          "The kids are playing restaurant. Help them keep going together with one little twist. Please do not turn it into a math lesson."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A concrete role/story twist in the existing shared play.",
+          "Both children participate without adult preparation."
+        ],
+        "common_misses": [
+          "Required counting, worksheets, or competition.",
+          "Separate school-style tasks."
+        ],
+        "parent_burden_to_watch": "Parent must manage the game or undo an unwanted lesson.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU19",
+      "split": "holdout",
+      "topic_family": "magnet-observation",
+      "situation": "printable",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "We have a large toy magnet and a few objects to try. Make a visual page for guessing what it will attract and showing what happened."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Visible setup/action and usable prediction/result spaces.",
+          "Clear labels and roles; observations remain open."
+        ],
+        "common_misses": [
+          "An answer key presented as if objects were tested.",
+          "A generic Predict/Try/Notice banner as the only activity visual."
+        ],
+        "parent_burden_to_watch": "Parent must explain or draw the testing surface.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU20",
+      "split": "holdout",
+      "topic_family": "rhythm",
+      "situation": "pre_reader_play",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a short clapping game we can do now. My kid does not read music. Give us the actual pattern to start with."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A concrete starting pattern through simple spoken/visual cues.",
+          "A brief turn or playful variation."
+        ],
+        "common_misses": [
+          "Advice to create a rhythm without providing one.",
+          "Notation needing another lesson first."
+        ],
+        "parent_burden_to_watch": "Parent must invent or translate the pattern.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU21",
+      "split": "holdout",
+      "topic_family": "invented-story-sequence",
+      "situation": "printable",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a picture-card story about a lost mitten finding its way home. We want to put the cards in order and tell it together. Very little reading."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Delivered cards supply actual events with recognizable visual differences.",
+          "Usable sequencing and shared-storytelling layout."
+        ],
+        "common_misses": [
+          "Telling the parent to draw the cards.",
+          "Text-heavy cards with tiny decoration."
+        ],
+        "parent_burden_to_watch": "Parent must make the story materials or read every event.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU22",
+      "split": "holdout",
+      "topic_family": "toy-route",
+      "situation": "start_now",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We have a toy car and cushions on the floor. Give us a tiny adventure with an actual route to follow. No printing."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A concrete short route/adventure using supplied objects.",
+          "A few usable spoken directions."
+        ],
+        "common_misses": [
+          "A planning worksheet or list of ideas without a route.",
+          "Setup longer than the play."
+        ],
+        "parent_burden_to_watch": "Parent must invent the route and story.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "PU23",
+      "split": "holdout",
+      "topic_family": "sharing-blocks",
+      "situation": "printable",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "Make a visual challenge about sharing seven big blocks between two toy animals. Let us find different ways."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Requested quantities represented accurately.",
+          "Usable space/pieces for multiple arrangements without excessive writing."
+        ],
+        "common_misses": [
+          "Incorrect or confusing counts.",
+          "One printed winning answer closing exploration."
+        ],
+        "parent_burden_to_watch": "Parent must correct quantities or create the visual task.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PU24",
+      "split": "holdout",
+      "topic_family": "cloud-shapes",
+      "situation": "quick_answer",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "My kid thinks a cloud looks like a rabbit. Help me explain how a cloud can change shape, without spoiling the pretend rabbit story."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A brief child-ready explanation of changing cloud shape.",
+          "Room for imaginative interpretation."
+        ],
+        "common_misses": [
+          "Correcting pretend play or replacing it with a lesson.",
+          "A poetic answer that never explains the change."
+        ],
+        "parent_burden_to_watch": "Parent must balance explanation and pretend play alone.",
+        "rendered_artifact_required": false
+      }
+    }
+  ]
+}

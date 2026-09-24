@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .collection_policy import require_collection_enabled_in_transaction
 from .contracts import GraphMutation, GraphMutationKind
 from .db import connect, jdump, jload, utcnow
 from .episodes import child_episode_context
@@ -37,6 +38,7 @@ def upsert_node(
     now = utcnow()
     canonical = key(label)
     with connect(db) as conn:
+        require_collection_enabled_in_transaction(conn, child_id)
         row = conn.execute(
             "SELECT id,state_json FROM nodes WHERE child_id=? AND kind=? AND canonical_key=?",
             (child_id, kind, canonical),
@@ -61,6 +63,7 @@ def add_edge(
 ) -> None:
     now = utcnow()
     with connect(db) as conn:
+        require_collection_enabled_in_transaction(conn, child_id)
         row = conn.execute(
             "SELECT id,metadata_json FROM edges WHERE child_id=? AND source_node_id=? AND relation=? AND target_node_id=?",
             (child_id, source, relation, target),
@@ -90,6 +93,7 @@ def add_observation(
     event_id: str | None = None,
 ) -> int:
     with connect(db) as conn:
+        require_collection_enabled_in_transaction(conn, child_id)
         cur = conn.execute(
             "INSERT INTO observations(child_id,kind,text,source,confidence,occurred_at,metadata_json,event_id) VALUES(?,?,?,?,?,?,?,?)",
             (child_id, kind, text, source, confidence, utcnow(), jdump(metadata or {}), event_id),
@@ -125,6 +129,7 @@ def add_school_signal(
             raise ValueError("expires_at must include a timezone")
         expires_at = parsed_expiry.astimezone(UTC).isoformat()
     with connect(db) as conn:
+        require_collection_enabled_in_transaction(conn, child_id)
         conn.execute(
             "INSERT INTO school_signals(child_id,category,value,source_ref,observed_at,expires_at,confidence) VALUES(?,?,?,?,?,?,?)",
             (child_id, category, value, source_ref, utcnow(), expires_at, confidence),
@@ -170,9 +175,15 @@ def child_context(db: str | Path, child_id: str, limit: int = 100) -> dict[str, 
 def apply_graph_mutation(conn, mutation: GraphMutation, default_child_id: str | None = None) -> dict[str, Any]:
     """Apply one validated, allowlisted graph effect inside the caller's transaction."""
 
-    child_id = mutation.child_id or default_child_id
+    if mutation.child_id and default_child_id and mutation.child_id != default_child_id:
+        raise ValueError("graph mutation child does not match the bound event child")
+    child_id = default_child_id or mutation.child_id
     if not child_id:
         raise ValueError("graph mutation requires child_id")
+    require_collection_enabled_in_transaction(conn, child_id)
+    forbidden_state = {"knowledge_state", "mastery", "mastery_state", "interest_phase", "proficiency"}
+    if forbidden_state.intersection(mutation.state):
+        raise ValueError("learner and interest state may be written only by versioned projection code")
     now = utcnow()
     if mutation.kind == GraphMutationKind.ADD_OBSERVATION:
         if not mutation.observation_kind or not mutation.text:
@@ -228,6 +239,14 @@ def apply_graph_mutation(conn, mutation: GraphMutation, default_child_id: str | 
             )
             node_id = int(cur.lastrowid)
         for evidence_id in mutation.evidence_ids:
+            evidence = conn.execute(
+                "SELECT id FROM evidence WHERE id=? AND child_id=?",
+                (evidence_id, child_id),
+            ).fetchone()
+            if not evidence:
+                # Model-suggested graph links are optional. Never let a stale or
+                # invented evidence identifier abort the reviewed family response.
+                continue
             conn.execute(
                 "INSERT OR IGNORE INTO node_evidence(node_id,evidence_id,stance,created_at) VALUES(?,?,?,?)",
                 (node_id, evidence_id, "supports", now),
@@ -236,6 +255,14 @@ def apply_graph_mutation(conn, mutation: GraphMutation, default_child_id: str | 
     if mutation.kind == GraphMutationKind.ADD_EDGE:
         if mutation.source_node_id is None or mutation.target_node_id is None or not mutation.relation:
             raise ValueError("add_edge requires source_node_id, target_node_id, and relation")
+        owned_nodes = conn.execute(
+            "SELECT COUNT(*) AS count FROM nodes WHERE child_id=? AND id IN (?,?)",
+            (child_id, mutation.source_node_id, mutation.target_node_id),
+        ).fetchone()
+        if not owned_nodes or int(owned_nodes["count"]) != len(
+            {mutation.source_node_id, mutation.target_node_id}
+        ):
+            raise ValueError("edge endpoints must belong to the bound child")
         conn.execute(
             """INSERT INTO edges(child_id,source_node_id,relation,target_node_id,metadata_json,created_at,last_seen,evidence_count)
                VALUES(?,?,?,?,?,?,?,1)
@@ -252,17 +279,4 @@ def apply_graph_mutation(conn, mutation: GraphMutation, default_child_id: str | 
             ),
         )
         return {"edge": "applied"}
-    if mutation.kind == GraphMutationKind.SET_KNOWLEDGE_STATE:
-        if mutation.node_id is None or mutation.knowledge_state is None:
-            raise ValueError("set_knowledge_state requires node_id and knowledge_state")
-        row = conn.execute(
-            "SELECT state_json FROM nodes WHERE id=? AND child_id=?", (mutation.node_id, child_id)
-        ).fetchone()
-        if not row:
-            raise ValueError("knowledge-state target node not found")
-        state = jload(row["state_json"])
-        state["knowledge_state"] = mutation.knowledge_state
-        state["knowledge_state_updated_at"] = now
-        conn.execute("UPDATE nodes SET state_json=?,last_seen=? WHERE id=?", (jdump(state), now, mutation.node_id))
-        return {"node_id": mutation.node_id, "knowledge_state": mutation.knowledge_state}
     raise ValueError(f"unsupported graph mutation: {mutation.kind}")

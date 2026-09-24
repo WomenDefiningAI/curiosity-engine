@@ -2,19 +2,29 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "pedagogy_episode",
+      "version": "1",
+      "description": "Plan one bounded K–2 learning episode from a reviewed strategy registry before generation.",
+      "output_kinds": ["answer", "artifact", "visual"],
+      "skill_ids": ["pedagogy-router-k2"],
+      "tool_names": [],
+      "approval": "none",
+      "expected_latency": "short"
+    },
+    {
       "id": "parent_chat",
-      "version": "2",
+      "version": "3",
       "description": "Understand ordinary parent conversation in a learning thread and choose a bounded next action.",
       "output_kinds": ["answer", "interaction"],
-      "skill_ids": ["parent-revision", "visual-selection-k2"],
+      "skill_ids": ["parent-revision"],
       "tool_names": ["search_thread_outputs", "update_thread_preference", "record_thread_context", "continue_learning_thread", "revise_learning_thread", "create_learning_artifact", "propose_weekly_checkin", "record_response_feedback"],
       "approval": "none",
       "expected_latency": "short"
     },
     {
       "id": "artifact_worksheet",
-      "version": "1",
-      "description": "Create a real one-page elementary worksheet with typed tasks and usable answer spaces.",
+      "version": "2",
+      "description": "Create a playful one-page elementary worksheet from 13 child-usable mechanics, with optional vetted public observation imagery.",
       "output_kinds": ["artifact", "visual"],
       "skill_ids": ["worksheet-k2", "visual-selection-k2"],
       "tool_names": ["create_learning_artifact"],
@@ -32,8 +42,18 @@
       "expected_latency": "background"
     },
     {
-      "id": "artifact_challenge",
+      "id": "artifact_reference",
       "version": "1",
+      "description": "Create a compact child-facing comparison, sequence, parts, or observation reference page without worksheet mechanics.",
+      "output_kinds": ["artifact", "visual"],
+      "skill_ids": ["reference-page-k2", "visual-selection-k2"],
+      "tool_names": ["create_learning_artifact"],
+      "approval": "none",
+      "expected_latency": "background"
+    },
+    {
+      "id": "artifact_challenge",
+      "version": "2",
       "description": "Create a story-led elementary challenge with constraints, multiple paths, and graduated hints.",
       "output_kinds": ["artifact", "visual"],
       "skill_ids": ["mystery-challenge-k2", "visual-selection-k2"],
@@ -53,11 +73,31 @@
     }
   ],
   "skills": [
+    {"id": "pedagogy-router-k2", "version": "1", "description": "Select one proportionate K–2 strategy without inferred learner-state adaptation.", "instructions_path": "capabilities/skills/pedagogy-router-k2.md", "required_tools": []},
+    {"id": "answer-and-wonder-k2", "version": "1", "description": "Answer plainly and offer one optional observation or wonder.", "instructions_path": "capabilities/skills/answer-and-wonder-k2.md", "required_tools": []},
+    {"id": "guided-inquiry-k2", "version": "1", "description": "Guide a bounded predict-test-explain loop.", "instructions_path": "capabilities/skills/guided-inquiry-k2.md", "required_tools": []},
+    {"id": "compare-connect-k2", "version": "1", "description": "Compare, classify, and connect concrete examples.", "instructions_path": "capabilities/skills/compare-connect-k2.md", "required_tools": []},
+    {"id": "model-practice-fade-k2", "version": "1", "description": "Model one example, support practice, and fade help.", "instructions_path": "capabilities/skills/model-practice-fade-k2.md", "required_tools": []},
+    {"id": "dialogic-reading-k2", "version": "1", "description": "Use shared-reading prompts that expand meaning-making.", "instructions_path": "capabilities/skills/dialogic-reading-k2.md", "required_tools": []},
+    {"id": "teach-back-k2", "version": "1", "description": "Invite explanation through equivalent response modes.", "instructions_path": "capabilities/skills/teach-back-k2.md", "required_tools": []},
+    {"id": "retrieval-revisit-k2", "version": "1", "description": "Use low-pressure recall and nearby application.", "instructions_path": "capabilities/skills/retrieval-revisit-k2.md", "required_tools": []},
+    {"id": "make-design-iterate-k2", "version": "1", "description": "Use a bounded make-test-improve loop.", "instructions_path": "capabilities/skills/make-design-iterate-k2.md", "required_tools": []},
+    {"id": "plan-check-reflect-k2", "version": "1", "description": "Add a compact plan-check-reflect support loop.", "instructions_path": "capabilities/skills/plan-check-reflect-k2.md", "required_tools": []},
+    {"id": "udl-representation-k2", "version": "1", "description": "Offer equivalent access and response modes.", "instructions_path": "capabilities/skills/udl-representation-k2.md", "required_tools": []},
+    {"id": "metacognitive-closure-k2", "version": "1", "description": "End cleanly without pressure or continuation mechanics.", "instructions_path": "capabilities/skills/metacognitive-closure-k2.md", "required_tools": []},
+    {"id": "general-learning-k2", "version": "1", "description": "Apply concrete general K–2 language and action guidance.", "instructions_path": "capabilities/skills/general-learning-k2.md", "required_tools": []},
+    {"id": "early-science-k2", "version": "1", "description": "Apply early-science observation and evidence guidance.", "instructions_path": "capabilities/skills/early-science-k2.md", "required_tools": []},
+    {"id": "early-math-k2", "version": "1", "description": "Apply early-math representation and reasoning guidance.", "instructions_path": "capabilities/skills/early-math-k2.md", "required_tools": []},
+    {"id": "early-literacy-k2", "version": "1", "description": "Apply meaning-first early-literacy guidance.", "instructions_path": "capabilities/skills/early-literacy-k2.md", "required_tools": []},
+    {"id": "early-writing-k2", "version": "1", "description": "Apply early-writing composition and revision guidance.", "instructions_path": "capabilities/skills/early-writing-k2.md", "required_tools": []},
+    {"id": "source-sense-k2", "version": "1", "description": "Apply observation, source, claim, and uncertainty guidance.", "instructions_path": "capabilities/skills/source-sense-k2.md", "required_tools": []},
+    {"id": "sensitive-support-k2", "version": "1", "description": "Apply calm, concrete, non-diagnostic sensitive support.", "instructions_path": "capabilities/skills/sensitive-support-k2.md", "required_tools": []},
     {"id": "parent-revision", "version": "2", "description": "Interpret natural parent feedback, recall earlier thread outputs, and revise only the requested components.", "instructions_path": "capabilities/skills/parent-revision.md", "required_tools": ["search_thread_outputs", "update_thread_preference", "continue_learning_thread", "revise_learning_thread", "create_learning_artifact"]},
-    {"id": "worksheet-k2", "version": "1", "description": "Design a child-usable K–2 worksheet rather than prose arranged on a page.", "instructions_path": "capabilities/skills/worksheet-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "worksheet-k2", "version": "2", "description": "Choose among 13 child-usable K–2 worksheet mechanics and preserve usable work space.", "instructions_path": "capabilities/skills/worksheet-k2.md", "required_tools": ["create_learning_artifact"]},
     {"id": "hands-on-activity-k2", "version": "1", "description": "Design a fast-starting activity with a playful observation loop.", "instructions_path": "capabilities/skills/hands-on-activity-k2.md", "required_tools": ["create_learning_artifact"]},
-    {"id": "mystery-challenge-k2", "version": "1", "description": "Design a story, mission, constraints, and hints that preserve child agency.", "instructions_path": "capabilities/skills/mystery-challenge-k2.md", "required_tools": ["create_learning_artifact"]},
-    {"id": "visual-selection-k2", "version": "1", "description": "Choose comparison, sequence, parts, observation target, or decorative story art based on learning value.", "instructions_path": "capabilities/skills/visual-selection-k2.md", "required_tools": []},
+    {"id": "reference-page-k2", "version": "1", "description": "Design a compact look-at comparison or sequence page without turning it into a worksheet.", "instructions_path": "capabilities/skills/reference-page-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "mystery-challenge-k2", "version": "2", "description": "Design a story-led challenge with a child-usable trial grid, design plan, or reflection surface.", "instructions_path": "capabilities/skills/mystery-challenge-k2.md", "required_tools": ["create_learning_artifact"]},
+    {"id": "visual-selection-k2", "version": "2", "description": "Choose vetted real imagery, deterministic teaching graphics, printables, or decorative art from the learning purpose.", "instructions_path": "capabilities/skills/visual-selection-k2.md", "required_tools": []},
     {"id": "weekly-parent-checkin", "version": "1", "description": "Collect low-effort weekly reflection without inflating the child context graph.", "instructions_path": "capabilities/skills/weekly-parent-checkin.md", "required_tools": ["propose_weekly_checkin"]}
   ]
 }

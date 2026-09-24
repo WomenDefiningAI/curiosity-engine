@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "EU01",
+      "split": "development",
+      "topic_family": "preschool_body_play",
+      "situation": "everyday_parent",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "Pre-K"
+          }
+        ],
+        "parent_turns": [
+          "My three-year-old is restless while I fold laundry. Give us one little pretend game we can start right here. No props, no counting, and I cannot read a long explanation."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "One short playable loop with a first move and an easy stop.",
+          "Fits a three-year-old; no required counting, reading, or props."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU02",
+      "split": "development",
+      "topic_family": "mixed_age_cooperation",
+      "situation": "everyday_parent",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "Pre-K"
+          },
+          {
+            "label": "child-2",
+            "grade": "2"
+          }
+        ],
+        "parent_turns": [
+          "My three-year-old and seven-year-old both want to play with our six big blocks. Give them one cooperative building game where both have a real job. No winner, no extra materials, and no writing."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Both children have useful age-appropriate roles in one shared build.",
+          "No competition or burdensome parent arbitration."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU03",
+      "split": "development",
+      "topic_family": "two_minute_wait",
+      "situation": "everyday_parent",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We have two minutes before leaving and no materials handy. Give me one silly game to say aloud and play with my five-year-old. Two short sentences, please."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Exactly two short sentences supply an immediately playable game.",
+          "No setup, extra supplies, follow-up menu or lengthy lesson."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU04",
+      "split": "development",
+      "topic_family": "phone_only_movement",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "Pre-K"
+          }
+        ],
+        "parent_turns": [
+          "Make two big picture choices for my three-year-old: stretch tall like a giraffe or curl small like a hedgehog. We only have my phone, no printer. Show the body positions clearly so we can copy one. No worksheet boxes."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Two recognizable animals visibly enact distinct body positions.",
+          "Usable by pointing on a phone; no paper-dependent action or response boxes."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "EU05",
+      "split": "development",
+      "topic_family": "pictured_construction",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Show my five-year-old how to make a little paper tunnel from one sheet with one fold. We have no scissors or tape. Use big before-and-after pictures showing which way the paper stands, with very short instructions."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Images show a coherent, physically possible flat-to-folded-to-standing sequence.",
+          "The final crease is above the two open edges resting on the surface; steps are complete.",
+          "No invented cuts, joins, supplies or mechanically impossible fold."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "EU06",
+      "split": "development",
+      "topic_family": "repair_with_same_supplies",
+      "situation": "everyday_parent",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "parent_turns": [
+          "Give us one playful thing to build with one sheet of paper. We have no scissors or tape.",
+          "That is too tricky for us. Give us a much simpler build that works with the same sheet, and tell me exactly how to start."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A simpler mechanically workable build is delivered in the same conversation.",
+          "All essential steps and a first play action are supplied using the original materials."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU07",
+      "split": "development",
+      "topic_family": "two_cup_build",
+      "situation": "everyday_parent",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We only have two large plastic cups. Give my five-year-old one tiny building challenge and one thing to change after trying it. No extra supplies or scorekeeping."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "A physically workable structure and one concrete modification using only two cups.",
+          "No glue, tape, marbles, coins or hidden supplies."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU08",
+      "split": "development",
+      "topic_family": "small_visual_revisions",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a big picture-choice page with a snail, a butterfly and a ladybug. My five-year-old will point to the one with a shell, the one with big wings, and the one with spots. No writing.",
+          "Keep these exact pictures, remove any answer boxes, and make the pictures bigger.",
+          "Keep that layout. Replace only the snail with a turtle, still showing a shell. Keep the butterfly and ladybug pictures exactly the same."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Each revision changes the requested component while preserving the others.",
+          "Pictures remain clear and useful, with no required child writing.",
+          "Replacement changes actual art, not only a label; unchanged art is reused."
+        ],
+        "common_misses": [
+          "Parent must supply missing steps, redraw visuals, find extra materials or repeat the request."
+        ],
+        "parent_burden_to_watch": "Explain, supply or repair beyond the stated situation.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "EU09",
+      "split": "development",
+      "topic_family": "open_shape_followups",
+      "situation": "free_form_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We have been looking at triangles and squares. Just keeping you in the loop.",
+          "Could you give us a few different ways to explore those together?",
+          "Why is that still a square when we turn it onto a corner? And can we try something without drawing?"
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "The saved shapes context carries into two or three distinct immediately playable ideas.",
+          "The open follow-up answers rotation invariance and gives a no-drawing action without requiring a menu."
+        ],
+        "common_misses": [
+          "A menu, one rigid lesson, dropped topic, repeated activity or refusal instead of answering the open follow-up."
+        ],
+        "parent_burden_to_watch": "Repeating the topic or repairing missing parts of the reply.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU10",
+      "split": "development",
+      "topic_family": "open_visual_followups",
+      "situation": "free_form_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "My five-year-old is curious about shadows. What changes if we move a toy closer to our flashlight, and why?",
+          "Can you show that with pictures so she can compare the two positions?",
+          "What if we move the light instead and leave the toy still?"
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Answers both the prediction and cause for the flashlight/toy setup.",
+          "The follow-up delivers actual comparison pictures, then answers the next open question in the same physical setting."
+        ],
+        "common_misses": [
+          "A menu, one rigid lesson, dropped topic, repeated activity or refusal instead of answering the open follow-up."
+        ],
+        "parent_burden_to_watch": "Repeating the topic or repairing missing parts of the reply.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "EU11",
+      "split": "development",
+      "topic_family": "several_contextual_questions",
+      "situation": "free_form_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "We noticed some fallen leaves float in a bowl and some sink. Just saving that observation.",
+          "What might make them behave differently, and what are a couple of ways we could check?",
+          "Could we do the second idea without tearing the leaves?"
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Provides plausible qualified explanations and two distinct doable checks, without fabricating an observed cause.",
+          "Resolves the second idea from its own prior answer and adapts it while honoring the no-tearing constraint."
+        ],
+        "common_misses": [
+          "A menu, one rigid lesson, dropped topic, repeated activity or refusal instead of answering the open follow-up."
+        ],
+        "parent_burden_to_watch": "Repeating the topic or repairing missing parts of the reply.",
+        "rendered_artifact_required": false
+      }
+    },
+    {
+      "id": "EU12",
+      "split": "development",
+      "topic_family": "topic_switch_and_adaptation",
+      "situation": "free_form_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Why does a magnet stick to our fridge?",
+          "Now something different: give us one tiny pretend game about space with no props.",
+          "How could we play that sitting down, and what can my three-year-old do while the older one leads?"
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Moves from magnet explanation to a complete space game when requested.",
+          "The open seated/sibling follow-up adapts that specific game with roles and no extra supplies."
+        ],
+        "common_misses": [
+          "A menu, one rigid lesson, dropped topic, repeated activity or refusal instead of answering the open follow-up."
+        ],
+        "parent_burden_to_watch": "Repeating the topic or repairing missing parts of the reply.",
+        "rendered_artifact_required": false
+      }
+    }
+  ]
+}
