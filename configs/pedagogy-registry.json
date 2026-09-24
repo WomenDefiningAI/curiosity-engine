@@ -1,0 +1,177 @@
+{
+  "version": "2026-09-02.1",
+  "strategies": [
+    {
+      "id": "pedagogy-router-k2",
+      "version": "1",
+      "kind": "router",
+      "enabled": true,
+      "description": "Choose one proportionate teaching strategy without using inferred learner state.",
+      "instructions_path": "capabilities/skills/pedagogy-router-k2.md"
+    },
+    {
+      "id": "answer-and-wonder-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Answer the question plainly, then offer one optional observation or wonder.",
+      "instructions_path": "capabilities/skills/answer-and-wonder-k2.md",
+      "allowed_intents": ["direct_answer", "answer_and_wonder", "sensitive_support"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2", "sensitive-support-k2"],
+      "compatible_supporting": [],
+      "evidence_templates": ["not-collected", "explain-observation"],
+      "artifact_affordances": ["worksheet", "reference", "activity", "challenge"],
+      "required_critics": ["critic_plan_fidelity"]
+    },
+    {
+      "id": "guided-inquiry-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Guide a predict-test-explain loop with a fair, visible comparison.",
+      "instructions_path": "capabilities/skills/guided-inquiry-k2.md",
+      "allowed_intents": ["guided_inquiry"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["predict-test-explain", "not-collected"],
+      "artifact_affordances": ["worksheet", "activity", "challenge"],
+      "required_critics": ["critic_plan_fidelity", "critic_evidence"]
+    },
+    {
+      "id": "compare-connect-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Compare, classify, and connect examples using one meaningful attribute at a time.",
+      "instructions_path": "capabilities/skills/compare-connect-k2.md",
+      "allowed_intents": ["compare_connect"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["compare-classify", "not-collected"],
+      "artifact_affordances": ["worksheet", "reference", "activity"],
+      "required_critics": ["critic_plan_fidelity", "critic_evidence"]
+    },
+    {
+      "id": "model-practice-fade-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Show one example, support one try, then fade help without lowering the idea.",
+      "instructions_path": "capabilities/skills/model-practice-fade-k2.md",
+      "allowed_intents": ["practice_with_scaffolds"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["explain-observation", "not-collected"],
+      "artifact_affordances": ["worksheet", "activity"],
+      "required_critics": ["critic_plan_fidelity", "critic_accessibility"]
+    },
+    {
+      "id": "dialogic-reading-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Use short shared-reading prompts that expand the child's meaning-making.",
+      "instructions_path": "capabilities/skills/dialogic-reading-k2.md",
+      "allowed_intents": ["dialogic_reading"],
+      "allowed_overlays": ["general-learning-k2", "early-literacy-k2", "early-writing-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["teach-back", "not-collected"],
+      "artifact_affordances": ["worksheet", "reference"],
+      "required_critics": ["critic_plan_fidelity", "critic_accessibility"]
+    },
+    {
+      "id": "teach-back-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Invite the child to explain through speech, drawing, pointing, or demonstration.",
+      "instructions_path": "capabilities/skills/teach-back-k2.md",
+      "allowed_intents": ["teach_back"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["teach-back", "not-collected"],
+      "artifact_affordances": ["worksheet", "reference"],
+      "required_critics": ["critic_plan_fidelity", "critic_evidence"]
+    },
+    {
+      "id": "retrieval-revisit-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Revisit an explicitly named idea with low-pressure recall and nearby application.",
+      "instructions_path": "capabilities/skills/retrieval-revisit-k2.md",
+      "allowed_intents": ["retrieval_revisit"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["retrieval-application", "not-collected"],
+      "artifact_affordances": ["worksheet"],
+      "required_critics": ["critic_plan_fidelity", "critic_evidence"]
+    },
+    {
+      "id": "make-design-iterate-k2",
+      "version": "1",
+      "kind": "primary",
+      "enabled": true,
+      "description": "Turn a question into a bounded make-test-improve loop with ordinary materials.",
+      "instructions_path": "capabilities/skills/make-design-iterate-k2.md",
+      "allowed_intents": ["make_design_iterate"],
+      "allowed_overlays": ["general-learning-k2", "early-science-k2", "early-math-k2", "early-literacy-k2", "early-writing-k2", "source-sense-k2"],
+      "compatible_supporting": ["plan-check-reflect-k2"],
+      "evidence_templates": ["design-iterate", "not-collected"],
+      "artifact_affordances": ["worksheet", "activity", "challenge"],
+      "required_critics": ["critic_plan_fidelity", "critic_evidence", "critic_parent_effort"]
+    },
+    {
+      "id": "plan-check-reflect-k2",
+      "version": "1",
+      "kind": "supporting",
+      "enabled": true,
+      "description": "Add a brief plan-check-reflect loop without turning reflection into a test.",
+      "instructions_path": "capabilities/skills/plan-check-reflect-k2.md",
+      "allowed_intents": ["guided_inquiry", "compare_connect", "practice_with_scaffolds", "dialogic_reading", "teach_back", "retrieval_revisit", "make_design_iterate"]
+    },
+    {
+      "id": "udl-representation-k2",
+      "version": "1",
+      "kind": "foundation",
+      "enabled": true,
+      "description": "Offer equivalent ways to take in information and respond.",
+      "instructions_path": "capabilities/skills/udl-representation-k2.md"
+    },
+    {
+      "id": "metacognitive-closure-k2",
+      "version": "1",
+      "kind": "foundation",
+      "enabled": true,
+      "description": "Close the episode cleanly with optional, non-urgent future noticing.",
+      "instructions_path": "capabilities/skills/metacognitive-closure-k2.md"
+    }
+  ],
+  "overlays": [
+    {"id": "general-learning-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "General early-elementary concrete-language guidance.", "instructions_path": "capabilities/skills/general-learning-k2.md"},
+    {"id": "early-science-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Observation, prediction, mechanism, evidence, and honest uncertainty.", "instructions_path": "capabilities/skills/early-science-k2.md"},
+    {"id": "early-math-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Concrete quantities, representations, comparison, and explanation.", "instructions_path": "capabilities/skills/early-math-k2.md"},
+    {"id": "early-literacy-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Meaning, sound, vocabulary, and shared reading without fluency assumptions.", "instructions_path": "capabilities/skills/early-literacy-k2.md"},
+    {"id": "early-writing-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Oral rehearsal, drawing, composing, and revision with a scribe option.", "instructions_path": "capabilities/skills/early-writing-k2.md"},
+    {"id": "source-sense-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Distinguish observation, source, claim, uncertainty, and perspective.", "instructions_path": "capabilities/skills/source-sense-k2.md"},
+    {"id": "sensitive-support-k2", "version": "1", "kind": "overlay", "enabled": true, "description": "Concrete, non-diagnostic, parent-mediated support for sensitive questions.", "instructions_path": "capabilities/skills/sensitive-support-k2.md"}
+  ],
+  "concepts": [
+    {"id": "general-question-and-explanation", "version": 1, "label": "question and explanation", "domain": "general"},
+    {"id": "science-observation-and-evidence", "version": 1, "label": "observation and evidence", "domain": "science"},
+    {"id": "math-relationships-and-patterns", "version": 1, "label": "relationships and patterns", "domain": "math"},
+    {"id": "literacy-meaning-and-language", "version": 1, "label": "meaning and language", "domain": "literacy"},
+    {"id": "writing-communication-and-revision", "version": 1, "label": "communication and revision", "domain": "writing"},
+    {"id": "world-source-and-perspective", "version": 1, "label": "source and perspective", "domain": "world"},
+    {"id": "social-emotional-observation-and-repair", "version": 1, "label": "observation and repair", "domain": "social_emotional"}
+  ],
+  "evidence_templates": [
+    {"id": "not-collected", "version": "1", "enabled": true, "description": "No assessment or evidence is collected for this episode.", "rubric_id": null, "rubric_version": null},
+    {"id": "explain-observation", "version": "1", "enabled": true, "description": "Explain one visible observation with assistance captured.", "rubric_id": "rubric-explain-observation-k2", "rubric_version": 1},
+    {"id": "predict-test-explain", "version": "1", "enabled": true, "description": "Predict, run a fair test, observe, and explain.", "rubric_id": "rubric-predict-test-explain-k2", "rubric_version": 1},
+    {"id": "compare-classify", "version": "1", "enabled": true, "description": "Compare or classify using a named attribute and explain.", "rubric_id": "rubric-compare-classify-k2", "rubric_version": 1},
+    {"id": "teach-back", "version": "1", "enabled": true, "description": "Represent the idea accurately in one accessible response mode.", "rubric_id": "rubric-teach-back-k2", "rubric_version": 1},
+    {"id": "retrieval-application", "version": "1", "enabled": true, "description": "Recall and apply the idea in a nearby context.", "rubric_id": "rubric-retrieval-application-k2", "rubric_version": 1},
+    {"id": "design-iterate", "version": "1", "enabled": true, "description": "Make a design choice, test, notice, and improve with assistance captured.", "rubric_id": "rubric-design-iterate-k2", "rubric_version": 1}
+  ]
+}

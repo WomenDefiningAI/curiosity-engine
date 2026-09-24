@@ -108,6 +108,8 @@ class SessionStore:
         now = utcnow()
         with connect(self.db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if event_id is not None:
+                self._require_event_session(conn, session_id, event_id)
             ordinal = int(
                 conn.execute(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM agent_messages WHERE session_id=?",
@@ -120,8 +122,133 @@ class SessionStore:
                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
                 (message_id, session_id, ordinal, role, kind, content, event_id, jdump(metadata or {}), now),
             )
+            if event_id is not None:
+                conn.execute(
+                    """INSERT INTO agent_message_event_lineage(message_id,event_id)
+                       VALUES(?,?)""",
+                    (message_id, event_id),
+                )
             conn.execute("UPDATE agent_sessions SET updated_at=? WHERE id=?", (now, session_id))
         return message_id
+
+    def attach_event(self, message_id: str, event_id: str) -> None:
+        """Bind one already-persisted message to its deterministic source event."""
+
+        with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            message = conn.execute(
+                "SELECT session_id FROM agent_messages WHERE id=?",
+                (message_id,),
+            ).fetchone()
+            if not message:
+                raise ValueError("message is unavailable or already has an event")
+            self._require_event_session(conn, str(message["session_id"]), event_id)
+            changed = conn.execute(
+                "UPDATE agent_messages SET event_id=? WHERE id=? AND event_id IS NULL",
+                (event_id, message_id),
+            ).rowcount
+            if changed == 1:
+                conn.execute(
+                    """INSERT OR IGNORE INTO agent_message_event_lineage(message_id,event_id)
+                       VALUES(?,?)""",
+                    (message_id, event_id),
+                )
+        if changed != 1:
+            raise ValueError("message is unavailable or already has an event")
+
+    def bind_event_lineage(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        capability_run_id: str,
+        event_id: str,
+        source_message_id: str | None = None,
+        primary: bool = True,
+    ) -> None:
+        """Bind every durable copy produced by one parent-agent turn to its event."""
+
+        with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_event_session(conn, session_id, event_id)
+            ownership = conn.execute(
+                """SELECT e.child_id AS event_child_id,s.child_id AS session_child_id
+                   FROM events e JOIN agent_sessions s ON s.id=? WHERE e.id=?""",
+                (session_id, event_id),
+            ).fetchone()
+            if not ownership:
+                raise ValueError("event or parent-agent session is unavailable")
+            if ownership["event_child_id"] != ownership["session_child_id"]:
+                raise ValueError("event does not belong to the parent-agent session child")
+            if source_message_id is not None:
+                message = conn.execute(
+                    "SELECT event_id FROM agent_messages WHERE id=? AND session_id=?",
+                    (source_message_id, session_id),
+                ).fetchone()
+                if not message:
+                    raise ValueError("parent-agent source message is unavailable")
+                conn.execute(
+                    """INSERT OR IGNORE INTO agent_message_event_lineage(message_id,event_id)
+                       VALUES(?,?)""",
+                    (source_message_id, event_id),
+                )
+                if primary:
+                    conn.execute(
+                        "UPDATE agent_messages SET event_id=? WHERE id=? AND session_id=?",
+                        (event_id, source_message_id, session_id),
+                    )
+            turn = conn.execute(
+                "SELECT 1 FROM agent_turns WHERE id=? AND session_id=?",
+                (turn_id, session_id),
+            ).fetchone()
+            if not turn:
+                raise ValueError("parent-agent turn is unavailable")
+            conn.execute(
+                "INSERT OR IGNORE INTO agent_turn_event_lineage(turn_id,event_id) VALUES(?,?)",
+                (turn_id, event_id),
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO tool_call_event_lineage(tool_call_id,event_id)
+                   SELECT id,? FROM tool_calls WHERE turn_id=? AND session_id=?""",
+                (event_id, turn_id, session_id),
+            )
+            run = conn.execute(
+                "SELECT 1 FROM capability_runs WHERE id=? AND session_id=?",
+                (capability_run_id, session_id),
+            ).fetchone()
+            if not run:
+                raise ValueError("parent-agent capability run is unavailable")
+            conn.execute(
+                """INSERT OR IGNORE INTO capability_run_event_lineage(capability_run_id,event_id)
+                   VALUES(?,?)""",
+                (capability_run_id, event_id),
+            )
+            if primary:
+                conn.execute(
+                    "UPDATE agent_turns SET event_id=? WHERE id=? AND session_id=?",
+                    (event_id, turn_id, session_id),
+                )
+                conn.execute(
+                    "UPDATE capability_runs SET produced_event_id=? WHERE id=? AND session_id=?",
+                    (event_id, capability_run_id, session_id),
+                )
+                release_ids = [
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT id FROM release_units WHERE capability_run_id=?",
+                        (capability_run_id,),
+                    ).fetchall()
+                ]
+                conn.execute(
+                    "UPDATE release_units SET event_id=? WHERE capability_run_id=?",
+                    (event_id, capability_run_id),
+                )
+                for release_id in release_ids:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO release_unit_event_lineage(release_unit_id,event_id)
+                           VALUES(?,?)""",
+                        (release_id, event_id),
+                    )
 
     def history(self, session_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
@@ -139,6 +266,66 @@ class SessionStore:
             for row in rows
         ]
 
+    def evidence_safe_history(self, session_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Omit parent-memory wording before thread context enters a child event."""
+
+        history = self.history(session_id, limit=limit)
+        with connect(self.db_path) as conn:
+            source_rows = conn.execute(
+                """SELECT DISTINCT source.source_message_id,source.memory_key,m.ordinal,
+                          (SELECT MIN(n.ordinal) FROM agent_messages n
+                           WHERE n.session_id=m.session_id AND n.role='user'
+                             AND n.ordinal>m.ordinal) AS next_user_ordinal
+                   FROM (
+                     SELECT source_message_id,memory_key FROM parent_memories
+                     WHERE source_message_id IS NOT NULL
+                     UNION ALL
+                     SELECT source_message_id,'legacy:' || id AS memory_key
+                     FROM agent_session_preference_events
+                   ) source
+                   JOIN agent_messages m ON m.id=source.source_message_id
+                   WHERE m.session_id=?""",
+                (session_id,),
+            ).fetchall()
+            memory_sources = {
+                str(row["source_message_id"]): str(row["memory_key"]) for row in source_rows
+            }
+            memory_reply_spans = [
+                (int(row["ordinal"]), int(row["next_user_ordinal"]) if row["next_user_ordinal"] else None)
+                for row in source_rows
+            ]
+        safe: list[dict[str, Any]] = []
+        for item in history:
+            message_id = str(item["id"])
+            memory_key = memory_sources.get(message_id)
+            ordinal = int(item["ordinal"])
+            item_metadata = item.get("metadata") or {}
+            is_memory_inspection = (
+                item.get("kind") == "parent_memory_inspection"
+                or bool(item_metadata.get("memory_refs"))
+            )
+            is_memory_reply = item["role"] == "assistant" and any(
+                source_ordinal < ordinal
+                and (next_user_ordinal is None or ordinal < next_user_ordinal)
+                for source_ordinal, next_user_ordinal in memory_reply_spans
+            )
+            if memory_key or is_memory_reply or is_memory_inspection:
+                safe.append(
+                    {
+                        **item,
+                        "kind": "parent_memory_operation",
+                        "content": "[parent memory wording omitted from child evidence]",
+                        "metadata": {
+                            "memory_key": memory_key,
+                            "source_message_id": message_id if memory_key else None,
+                            "inspection_redacted": is_memory_inspection,
+                        },
+                    }
+                )
+            else:
+                safe.append(item)
+        return safe
+
     def latest_event_id(self, session_id: str) -> str | None:
         with connect(self.db_path) as conn:
             row = conn.execute(
@@ -146,6 +333,21 @@ class SessionStore:
                    JOIN events e ON e.id=m.event_id AND e.status='completed'
                    JOIN responses r ON r.event_id=m.event_id AND r.status='completed'
                    WHERE m.session_id=? AND m.event_id IS NOT NULL
+                   ORDER BY m.ordinal DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+        return str(row["event_id"]) if row else None
+
+    def latest_source_event_id(self, session_id: str) -> str | None:
+        """Return the newest authorized learning response or context-only source in this thread."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT m.event_id FROM agent_messages m
+                   JOIN events e ON e.id=m.event_id AND e.status='completed'
+                   LEFT JOIN responses r ON r.event_id=e.id AND r.status='completed'
+                   WHERE m.session_id=? AND m.event_id IS NOT NULL
+                     AND (e.type='context_input' OR r.event_id IS NOT NULL)
                    ORDER BY m.ordinal DESC LIMIT 1""",
                 (session_id,),
             ).fetchone()
@@ -194,9 +396,7 @@ class SessionStore:
                     ref_id=artifact_id,
                     kind="artifact",
                     title=title[:180],
-                    snippet=(
-                        f"{artifact.get('artifact_type', 'artifact')}: {title}"
-                    )[:500],
+                    snippet=(f"{artifact.get('artifact_type', 'artifact')}: {title}")[:500],
                     event_id=str(result["event_id"]) if result.get("event_id") else None,
                     artifact_id=artifact_id,
                 )
@@ -223,7 +423,9 @@ class SessionStore:
         """Search only the current thread's bounded output index without model calls."""
 
         candidates = self.output_index(session_id, limit=40)
-        terms = [term for term in "".join(ch if ch.isalnum() else " " for ch in query.casefold()).split() if len(term) >= 3]
+        terms = [
+            term for term in "".join(ch if ch.isalnum() else " " for ch in query.casefold()).split() if len(term) >= 3
+        ]
         if not terms:
             return candidates[: max(1, min(limit, 5))]
         ranked: list[tuple[int, int, dict[str, Any]]] = []
@@ -289,6 +491,12 @@ class SessionStore:
                     now,
                 ),
             )
+            if operation == "clear":
+                conn.execute(
+                    """UPDATE agent_session_preference_events SET value=NULL
+                       WHERE session_id=? AND category=? AND operation='set'""",
+                    (session_id, category),
+                )
             rows = conn.execute(
                 """SELECT category,operation,value,source_message_id
                    FROM agent_session_preference_events WHERE session_id=? ORDER BY ordinal""",
@@ -298,15 +506,15 @@ class SessionStore:
             for row in rows:
                 if row["operation"] == "clear":
                     active.pop(str(row["category"]), None)
-                else:
+                elif row["value"]:
                     active[str(row["category"])] = ThreadPreference(
                         category=str(row["category"]),
                         value=str(row["value"]),
                         source_message_id=str(row["source_message_id"]),
                     )
-            session_row = conn.execute(
-                "SELECT summary_json FROM agent_sessions WHERE id=?", (session_id,)
-            ).fetchone()
+                else:
+                    active.pop(str(row["category"]), None)
+            session_row = conn.execute("SELECT summary_json FROM agent_sessions WHERE id=?", (session_id,)).fetchone()
             if not session_row:
                 raise KeyError(session_id)
             summary = jload(session_row["summary_json"])
@@ -332,11 +540,60 @@ class SessionStore:
         }
 
     def active_preferences(self, session_id: str) -> list[dict[str, Any]]:
-        session = self.session(session_id)
-        summary = session.get("summary") or {}
-        raw = summary.get("parent_agent") if isinstance(summary, dict) else None
-        state = ParentSessionState.model_validate(raw or {})
-        return [item.model_dump(mode="json") for item in state.preferences]
+        """Return the effective legacy preferences with exact source lineage.
+
+        Phase 4 writes new preferences to the parent-memory ledger, but old
+        installations can still contain these append-only preference events.
+        Reconstructing them from the event log keeps the event ID and value hash
+        available for capability-run binding instead of trusting a summary copy.
+        """
+
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT id,ordinal,category,operation,value,source_message_id
+                   FROM agent_session_preference_events
+                   WHERE session_id=? ORDER BY ordinal""",
+                (session_id,),
+            ).fetchall()
+        active: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            category = str(row["category"])
+            if row["operation"] == "clear" or not row["value"]:
+                active.pop(category, None)
+                continue
+            value = str(row["value"])
+            active[category] = {
+                "category": category,
+                "value": value,
+                "source_message_id": str(row["source_message_id"]),
+                "preference_event_id": str(row["id"]),
+                "content_hash": sha256(value.encode()).hexdigest(),
+            }
+        return list(active.values())
+
+    def active_parent_memories(self, session_id: str) -> list[dict[str, Any]]:
+        """Recall explicit parent memory with a visible, code-owned reason."""
+
+        from .adaptation import ParentMemoryLedger
+
+        return ParentMemoryLedger(self.db_path).recall(session_id=session_id)[:24]
+
+    def compacted_context(
+        self,
+        session_id: str,
+        *,
+        compact_after: int = 16,
+        keep_recent: int = 6,
+    ) -> dict[str, Any]:
+        """Return inspectable structured continuity plus a few raw turns."""
+
+        from .adaptation import ThreadCompactor
+
+        return ThreadCompactor(self.db_path).context(
+            session_id,
+            compact_after=compact_after,
+            keep_recent=keep_recent,
+        )
 
     def start_turn(self, session_id: str, request: dict[str, Any], *, policy_hash: str) -> dict[str, Any]:
         turn_id = f"turn_{uuid4().hex[:20]}"
@@ -385,15 +642,21 @@ class SessionStore:
         decision: str,
         status: str,
         result: dict[str, Any] | None = None,
+        event_id: str | None = None,
+        source_message_id: str | None = None,
+        capability_run_id: str | None = None,
     ) -> str:
         call_id = f"tool_{uuid4().hex[:20]}"
         now = utcnow()
         with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if event_id is not None:
+                self._require_event_session(conn, session_id, event_id)
             conn.execute(
                 """INSERT INTO tool_calls(
                        id,session_id,turn_id,ordinal,tool_name,tool_version,argument_hash,arguments_json,risk,
-                       decision,status,result_json,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       decision,status,result_json,created_at,updated_at,event_id
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     call_id,
                     session_id,
@@ -409,9 +672,92 @@ class SessionStore:
                     jdump(result or {}),
                     now,
                     now,
+                    event_id,
                 ),
             )
+            if event_id is not None:
+                conn.execute(
+                    """INSERT INTO tool_call_event_lineage(tool_call_id,event_id)
+                       VALUES(?,?)""",
+                    (call_id, event_id),
+                )
+                if source_message_id is not None and capability_run_id is not None:
+                    message = conn.execute(
+                        """SELECT 1 FROM agent_messages
+                           WHERE id=? AND session_id=? AND role='user'""",
+                        (source_message_id, session_id),
+                    ).fetchone()
+                    turn = conn.execute(
+                        "SELECT 1 FROM agent_turns WHERE id=? AND session_id=?",
+                        (turn_id, session_id),
+                    ).fetchone()
+                    run = conn.execute(
+                        "SELECT 1 FROM capability_runs WHERE id=? AND session_id=?",
+                        (capability_run_id, session_id),
+                    ).fetchone()
+                    if not message or not turn or not run:
+                        raise ValueError("prebound tool lineage is unavailable")
+                    conn.execute(
+                        "UPDATE agent_messages SET event_id=? WHERE id=?",
+                        (event_id, source_message_id),
+                    )
+                    conn.execute("UPDATE agent_turns SET event_id=? WHERE id=?", (event_id, turn_id))
+                    conn.execute(
+                        "UPDATE capability_runs SET produced_event_id=? WHERE id=?",
+                        (event_id, capability_run_id),
+                    )
+                    for table, column, record_id in (
+                        ("agent_message_event_lineage", "message_id", source_message_id),
+                        ("agent_turn_event_lineage", "turn_id", turn_id),
+                        ("capability_run_event_lineage", "capability_run_id", capability_run_id),
+                    ):
+                        conn.execute(
+                            f"INSERT OR IGNORE INTO {table}({column},event_id) VALUES(?,?)",
+                            (record_id, event_id),
+                        )
         return call_id
+
+    def finish_tool_call(
+        self,
+        call_id: str,
+        *,
+        status: str,
+        result: dict[str, Any],
+        event_id: str | None = None,
+    ) -> None:
+        """Finish a pre-persisted tool call without opening a lineage crash gap."""
+
+        with connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT session_id FROM tool_calls WHERE id=?",
+                (call_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError("tool call is unavailable")
+            if event_id is not None:
+                self._require_event_session(conn, str(row["session_id"]), event_id)
+            conn.execute(
+                """UPDATE tool_calls SET status=?,result_json=?,event_id=COALESCE(?,event_id),updated_at=?
+                   WHERE id=?""",
+                (status, jdump(result), event_id, utcnow(), call_id),
+            )
+            if event_id is not None:
+                conn.execute(
+                    """INSERT OR IGNORE INTO tool_call_event_lineage(tool_call_id,event_id)
+                       VALUES(?,?)""",
+                    (call_id, event_id),
+                )
+
+    @staticmethod
+    def _require_event_session(conn: Any, session_id: str, event_id: str) -> None:
+        owned = conn.execute(
+            """SELECT 1 FROM agent_sessions s JOIN events e ON e.id=?
+               WHERE s.id=? AND s.child_id=e.child_id""",
+            (event_id, session_id),
+        ).fetchone()
+        if not owned:
+            raise ValueError("event does not belong to the parent-agent session child")
 
     @staticmethod
     def _session(row: Any) -> dict[str, Any]:

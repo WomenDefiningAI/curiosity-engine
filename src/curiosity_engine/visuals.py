@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import unicodedata
 from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -12,9 +13,12 @@ from uuid import uuid4
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
-from .contracts import VisualIntent, VisualQAResult
+from .contracts import ImageResearchQuery, VisualIntent, VisualQAResult
 from .db import connect, init_db, jdump, jload, utcnow
+from .image_research import ImageResearchService
 from .openai_image_backend import ImageBackend, configured_image_backend
+from .pedagogy import ApprovedPedagogyPlan, validate_generated_against_plan
+from .personalization import PersonalizationAuthorizationChanged, assert_plan_authorization_in_transaction
 from .trust import validate_response_visual_intent
 
 RENDERER_VERSION = "response-card-v2"
@@ -24,6 +28,19 @@ MAX_DIMENSION = 2_048
 MAX_VISUAL_JOB_ATTEMPTS = 3
 STALE_VISUAL_JOB_MINUTES = 10
 _AUTO_VISUAL_QA = object()
+
+
+class DecorativePrivacyError(ValueError):
+    """Optional generated decoration cannot cross the external-provider boundary."""
+
+
+VISUAL_USEFULNESS_GOALS = {
+    "compare": "make the surrounding code-rendered comparison inviting without depicting or teaching the difference",
+    "sequence": "make the surrounding code-rendered activity sequence inviting without depicting or teaching its order",
+    "notice": "add engaging context for a code-rendered noticing prompt without inventing the feature to notice",
+    "imagine": "add a specific playful scene that supports imagination rather than generic topic objects",
+    "observe": "add engaging context for a code-rendered observation prompt without inventing the evidence",
+}
 
 PUBLIC_PROPER_NOUNS = {"earth", "mars", "moon", "sun"}
 
@@ -128,8 +145,16 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
         draw.arc((left + 12, top + 12, right - 12, bottom - 12), 35, 315, fill=teal, width=10)
         draw.polygon([(right - 7, cy), (right - 34, cy - 15), (right - 30, cy + 17)], fill=teal)
     elif icon == "stop":
-        points = [(cx - 34, top + 6), (cx + 34, top + 6), (right - 6, cy - 34), (right - 6, cy + 34),
-                  (cx + 34, bottom - 6), (cx - 34, bottom - 6), (left + 6, cy + 34), (left + 6, cy - 34)]
+        points = [
+            (cx - 34, top + 6),
+            (cx + 34, top + 6),
+            (right - 6, cy - 34),
+            (right - 6, cy + 34),
+            (cx + 34, bottom - 6),
+            (cx - 34, bottom - 6),
+            (left + 6, cy + 34),
+            (left + 6, cy - 34),
+        ]
         draw.polygon(points, fill=accent, outline=ink)
     elif icon == "look":
         draw.ellipse((left + 4, cy - 32, right - 4, cy + 32), outline=ink, width=7)
@@ -139,10 +164,22 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
         draw.ellipse((left + 5, bottom - 22, left + 25, bottom - 2), fill=PALETTE["sky"], outline=ink, width=4)
         draw.text((cx, cy - 5), "?", font=_font(48, bold=True), fill=accent, anchor="mm")
     elif icon == "try":
-        draw.polygon([(cx - 12, top + 5), (cx + 22, top + 5), (cx + 4, cy - 2),
-                      (cx + 30, cy - 2), (cx - 22, bottom - 5), (cx - 4, cy + 10), (cx - 30, cy + 10)], fill=PALETTE["gold"])
+        draw.polygon(
+            [
+                (cx - 12, top + 5),
+                (cx + 22, top + 5),
+                (cx + 4, cy - 2),
+                (cx + 30, cy - 2),
+                (cx - 22, bottom - 5),
+                (cx - 4, cy + 10),
+                (cx - 30, cy + 10),
+            ],
+            fill=PALETTE["gold"],
+        )
     elif icon == "robot":
-        draw.rounded_rectangle((left + 12, top + 18, right - 12, bottom - 8), 18, fill=PALETTE["sky"], outline=ink, width=6)
+        draw.rounded_rectangle(
+            (left + 12, top + 18, right - 12, bottom - 8), 18, fill=PALETTE["sky"], outline=ink, width=6
+        )
         draw.line((cx, top + 18, cx, top + 2), fill=ink, width=5)
         draw.ellipse((cx - 7, top - 3, cx + 7, top + 11), fill=accent)
         draw.ellipse((cx - 28, cy - 12, cx - 14, cy + 2), fill=teal)
@@ -174,6 +211,62 @@ def _draw_icon(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], icon: 
                 [(right - 8, ice_top - 18), (right - 21, ice_top + 2), (right + 5, ice_top + 2)],
                 fill=teal,
             )
+    elif icon in {"wing_wide", "wing_narrow", "wing_swept", "wing_straight"}:
+        # Simple top views make the geometry—not decorative airplane art—the focus.
+        nose_y = top + 6
+        tail_y = bottom - 8
+        body_left, body_right = cx - 8, cx + 8
+        if icon == "wing_wide":
+            wing = [
+                (left + 5, cy - 16),
+                (body_left, cy - 25),
+                (body_left, cy + 22),
+                (left + 14, cy + 35),
+                (right - 14, cy + 35),
+                (body_right, cy + 22),
+                (body_right, cy - 25),
+                (right - 5, cy - 16),
+            ]
+        elif icon == "wing_narrow":
+            wing = [
+                (left + 30, cy - 8),
+                (body_left, cy - 18),
+                (body_left, cy + 18),
+                (left + 35, cy + 20),
+                (right - 35, cy + 20),
+                (body_right, cy + 18),
+                (body_right, cy - 18),
+                (right - 30, cy - 8),
+            ]
+        elif icon == "wing_swept":
+            wing = [
+                (left + 8, cy - 18),
+                (body_left, cy - 26),
+                (body_left, cy + 27),
+                (left + 25, cy + 47),
+                (right - 25, cy + 47),
+                (body_right, cy + 27),
+                (body_right, cy - 26),
+                (right - 8, cy - 18),
+            ]
+        else:
+            wing = [
+                (left + 8, cy - 13),
+                (body_left, cy - 13),
+                (body_left, cy + 16),
+                (left + 8, cy + 16),
+                (right - 8, cy + 16),
+                (body_right, cy + 16),
+                (body_right, cy - 13),
+                (right - 8, cy - 13),
+            ]
+        draw.polygon(wing, fill=PALETTE["sky"], outline=ink)
+        draw.polygon(
+            [(cx, nose_y), (body_right, cy + 40), (cx, tail_y), (body_left, cy + 40)],
+            fill=teal,
+            outline=ink,
+        )
+        draw.line((cx, nose_y + 8, cx, tail_y - 7), fill=PALETTE["white"], width=3)
     else:
         glyph = "?" if icon == "question" else "✦"
         draw.text((cx, cy), glyph, font=_font(64, bold=True), fill=accent, anchor="mm")
@@ -187,8 +280,6 @@ def render_deterministic_visual(
 ) -> Path:
     if intent.kind not in {"comparison_cards", "activity_sequence"}:
         raise ValueError("deterministic renderer supports comparison and activity cards only")
-    if not _is_curated_deterministic_intent(intent):
-        raise ValueError("deterministic response cards must match a reviewed local template")
     errors = validate_response_visual_intent(intent.model_dump(mode="json"))
     if errors:
         raise ValueError("unsafe response visual: " + "; ".join(errors))
@@ -201,8 +292,6 @@ def render_deterministic_visual(
         mask = Image.new("L", tile.size, 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, 449, 257), 28, fill=255)
         image.paste(tile, (70, 62), mask)
-        draw.rounded_rectangle((88, 270, 274, 306), 12, fill=PALETTE["gold"])
-        draw.text((181, 288), "IMAGINARY ART", font=_font(16, bold=True), fill=PALETTE["ink"], anchor="mm")
         draw.rounded_rectangle((542, 62, 1130, 320), 28, fill=PALETTE["sky"])
         draw.text((580, 92), "LOOK  +  COMPARE  +  WONDER", font=_font(21, bold=True), fill=PALETTE["teal"])
         title_font = _font(42, bold=True)
@@ -233,7 +322,9 @@ def render_deterministic_visual(
     for index, panel in enumerate(panels):
         left = panel_left + index * (panel_width + gap)
         right = left + panel_width
-        draw.rounded_rectangle((left, panel_top, right, panel_bottom), 24, fill=fills[index], outline=PALETTE["ink"], width=4)
+        draw.rounded_rectangle(
+            (left, panel_top, right, panel_bottom), 24, fill=fills[index], outline=PALETTE["ink"], width=4
+        )
         icon_size = min(120, panel_width - 60)
         icon_left = left + (panel_width - icon_size) // 2
         _draw_icon(draw, (icon_left, panel_top + 38, icon_left + icon_size, panel_top + 38 + icon_size), panel.icon)
@@ -303,21 +394,90 @@ def _write_private_png(output_dir: str | Path, data: bytes) -> tuple[Path, int, 
     return target, width, height, {**validation, "byte_count": len(normalized)}
 
 
+def _fit_researched_photo(data: bytes) -> bytes:
+    """Letterbox a reviewed photo for predictable Slack display without cropping evidence."""
+
+    with Image.open(io.BytesIO(data)) as source:
+        photo = ImageOps.contain(source.convert("RGB"), (1120, 820), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (1200, 900), PALETTE["cream"])
+    canvas.paste(photo, ((canvas.width - photo.width) // 2, (canvas.height - photo.height) // 2))
+    output = io.BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
 def _visual_method(intent: VisualIntent, mode: str) -> str | None:
     errors = validate_response_visual_intent(intent.model_dump(mode="json"))
     if errors:
         raise ValueError("unsafe response visual: " + "; ".join(errors))
     if mode == "off":
         return None
+    if intent.kind == "researched_photo":
+        return "deterministic"
     if intent.kind in {"comparison_cards", "activity_sequence"}:
-        if not _is_curated_deterministic_intent(intent):
-            raise ValueError("deterministic response cards must match a reviewed local template")
         if mode == "decorative" and intent.subject:
             return "generative"
         return "deterministic"
-    if intent.kind == "decorative_illustration" and mode == "decorative":
-        return "generative"
     return None
+
+
+def _visual_strategy(intent: VisualIntent, method: str) -> str:
+    if intent.kind == "researched_photo":
+        return "researched"
+    return "generative" if method == "generative" else "deterministic"
+
+
+def _bound_visual_plan(conn: Any, row: Any) -> ApprovedPedagogyPlan | None:
+    plan_id = row["pedagogy_plan_id"]
+    plan_hash = row["pedagogy_plan_hash"]
+    if plan_id is None and plan_hash is None:
+        return None
+    if plan_id is None or plan_hash is None:
+        raise ValueError("visual work has an incomplete pedagogy-plan binding")
+    stored = conn.execute(
+        "SELECT approved_json FROM pedagogy_plans WHERE plan_id=? AND plan_hash=? AND event_id=?",
+        (plan_id, plan_hash, row["event_id"]),
+    ).fetchone()
+    if not stored:
+        raise ValueError("visual work is missing its exact approved pedagogy plan")
+    return ApprovedPedagogyPlan.model_validate(jload(stored["approved_json"]))
+
+
+def _assert_visual_authorized(db_path: str | Path, plan: ApprovedPedagogyPlan | None) -> None:
+    if plan is None:
+        return
+    with connect(db_path) as conn:
+        assert_plan_authorization_in_transaction(conn, plan)
+
+
+def _validate_visual_against_bound_plan(
+    conn: Any,
+    row: Any,
+    intent: VisualIntent,
+    plan: ApprovedPedagogyPlan | None = None,
+) -> None:
+    """Re-check child-visible visual text at enqueue and again before rendering."""
+
+    bound_plan = plan if plan is not None else _bound_visual_plan(conn, row)
+    if bound_plan is None:
+        return
+    response = conn.execute(
+        "SELECT workflow,output_json FROM responses WHERE event_id=? AND status='completed'",
+        (row["event_id"],),
+    ).fetchone()
+    event = conn.execute("SELECT text FROM events WHERE id=?", (row["event_id"],)).fetchone()
+    if not response or not event:
+        raise ValueError("visual work is missing its completed response or source event")
+    output = jload(response["output_json"])
+    output["visual"] = intent.model_dump(mode="json")
+    errors = validate_generated_against_plan(
+        bound_plan,
+        output,
+        workflow=str(response["workflow"]),
+        event_text=str(event["text"]),
+    )
+    if errors:
+        raise ValueError("response visual violates its approved plan: " + "; ".join(errors))
 
 
 def _contains_word(text: str, word: str) -> bool:
@@ -338,12 +498,6 @@ def _is_social_inference_question(question: str) -> bool:
     return has_person and _contains_any_word(lowered, SOCIAL_INFERENCE_VERBS)
 
 
-def should_attempt_decorative_visual(question: str, mode: str) -> bool:
-    """Ask for one privacy-minimized decorative visual when the household opted in."""
-
-    return mode == "decorative" and bool(question.strip()) and not _is_social_inference_question(question)
-
-
 def _robot_comparison_intent() -> VisualIntent:
     return VisualIntent(
         kind="comparison_cards",
@@ -358,9 +512,9 @@ def _robot_comparison_intent() -> VisualIntent:
         ),
         subject="a playful group of whimsical imaginary robots posing together like friendly storybook explorers",
         panels=[
-            {"label": "TALLEST", "detail": "Compare height.", "icon": "height"},
-            {"label": "HEAVIEST", "detail": "Compare weight.", "icon": "weight"},
-            {"label": "STRONGEST", "detail": "Compare the job it can do.", "icon": "strength"},
+            {"label": "TALLEST", "detail": "Height from bottom to top.", "icon": "height"},
+            {"label": "HEAVIEST", "detail": "Total weight.", "icon": "weight"},
+            {"label": "STRONGEST", "detail": "The work it can do.", "icon": "strength"},
         ],
         not_to_scale=True,
     )
@@ -402,12 +556,58 @@ def _water_expansion_intent() -> VisualIntent:
             "then frozen ice rising above that same line with an upward arrow. A final card asks the child to "
             "compare the two levels."
         ),
-        subject="cheerful imaginary ice crystals exploring a colorful paper science table",
         panels=[
             {"label": "BEFORE", "detail": "Water starts at the marker line.", "icon": "water"},
             {"label": "AFTER FREEZING", "detail": "Ice rises above the same line.", "icon": "ice"},
             {"label": "COMPARE", "detail": "Point to where the level changed.", "icon": "look"},
         ],
+    )
+
+
+def _ice_floating_intent() -> VisualIntent:
+    return VisualIntent(
+        kind="comparison_cards",
+        purpose="compare",
+        knowledge_role="supportive",
+        title="Why does ice float?",
+        pedagogical_value="Connects water's roomier frozen pattern to lower density and a visible floating ice cube.",
+        caption="The same water spreads into a roomier pattern when it freezes, so the ice is less dense and floats.",
+        alt_text=(
+            "Three comparison cards show liquid water packed close together, ice in a roomier pattern, and an ice "
+            "cube floating with most of the cube below the water line and a small part above it."
+        ),
+        panels=[
+            {"label": "LIQUID WATER", "detail": "Water particles stay closer together.", "icon": "water"},
+            {"label": "FROZEN ICE", "detail": "The frozen pattern leaves more open space.", "icon": "ice"},
+            {
+                "label": "ICE FLOATS",
+                "detail": "Less-dense ice rides with a little part above the line.",
+                "icon": "look",
+            },
+        ],
+        not_to_scale=True,
+    )
+
+
+def _wing_variations_intent() -> VisualIntent:
+    return VisualIntent(
+        kind="comparison_cards",
+        purpose="compare",
+        knowledge_role="supportive",
+        title="Four ways a wing can change",
+        pedagogical_value="Gives an early reader four distinct top-view wing shapes to compare before testing.",
+        caption="Change one wing shape at a time. Keep the paper, folds, and throw the same.",
+        alt_text=(
+            "Four labeled top-view paper-airplane diagrams compare wide, narrow, swept-back, and straight wings. "
+            "A reminder says to keep the paper, folds, and throw the same when testing."
+        ),
+        panels=[
+            {"label": "WIDE", "detail": "Long from side to side.", "icon": "wing_wide"},
+            {"label": "NARROW", "detail": "Shorter from side to side.", "icon": "wing_narrow"},
+            {"label": "SWEPT", "detail": "Angles back toward the tail.", "icon": "wing_swept"},
+            {"label": "STRAIGHT", "detail": "Front edge crosses straight.", "icon": "wing_straight"},
+        ],
+        not_to_scale=True,
     )
 
 
@@ -439,16 +639,37 @@ def infer_safe_visual_revision(
 ) -> VisualIntent | None:
     """Select a reviewed local diagram for an explicit visual-only parent revision."""
 
-    if not re.search(r"\b(?:diagram|picture|visual|image|draw|show)\b", revision.casefold()):
+    lowered_revision = revision.casefold()
+    if not re.search(r"\b(?:diagram|picture|visual|image|draw|show)\b", lowered_revision):
         return None
+    # "Better visual" is meaningful feedback but not enough information to select an
+    # instructional diagram safely. Let the conversation ask what the visual should do.
+    if not re.search(
+        r"\b(?:diagram|why|explain|compare|before|after|change|changes|bigger|expand|expands|expansion|line|"
+        r"variation|variations|wide|narrow|swept|straight)\b",
+        lowered_revision,
+    ):
+        return None
+    prior_visual = output.get("visual") if isinstance(output.get("visual"), dict) else {}
     context = " ".join(
         [
             question,
+            str(output.get("answer") or ""),
+            str(output.get("parent_response") or ""),
+            str(output.get("notice") or ""),
+            str(output.get("question_back") or ""),
             str(output.get("hook") or ""),
             str(output.get("show") or ""),
             str(output.get("nugget") or ""),
+            str(prior_visual.get("subject") or ""),
+            str(prior_visual.get("caption") or ""),
         ]
     ).casefold()
+    named_wings = {word for word in ("wide", "narrow", "swept", "straight") if _contains_word(lowered_revision, word)}
+    if len(named_wings) >= 2 and _contains_any_word(context, {"airplane", "airplanes", "wing", "wings"}):
+        return _wing_variations_intent()
+    if _contains_word(context, "water") and _contains_any_word(context, {"float", "floats", "floating"}):
+        return _ice_floating_intent()
     if _contains_word(context, "water") and _contains_any_word(
         context, {"freeze", "freezes", "freezing", "frozen", "ice"}
     ):
@@ -469,7 +690,7 @@ def normalize_response_visual(question: str, output: dict[str, Any]) -> VisualIn
             intent = None
         if (
             intent is not None
-            and intent.kind == "decorative_illustration"
+            and intent.kind in {"comparison_cards", "activity_sequence", "researched_photo"}
             and not validate_response_visual_intent(intent.model_dump(mode="json"))
         ):
             return intent
@@ -494,16 +715,28 @@ def enqueue_response_visual(
         _validate_decorative_privacy(db_path, event_id, intent)
     now = utcnow()
     job_id = f"visual_job_{uuid4().hex[:16]}"
+    strategy = _visual_strategy(intent, method)
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        response = conn.execute(
+            "SELECT event_id,pedagogy_plan_id,pedagogy_plan_hash FROM responses WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        plan_id = response["pedagogy_plan_id"] if response else None
+        plan_hash = response["pedagogy_plan_hash"] if response else None
+        if response:
+            plan = _bound_visual_plan(conn, response)
+            assert_plan_authorization_in_transaction(conn, plan)
+            _validate_visual_against_bound_plan(conn, response, intent, plan)
         existing = conn.execute("SELECT id FROM visual_jobs WHERE event_id=?", (event_id,)).fetchone()
         if existing:
             return str(existing["id"])
         conn.execute(
             """INSERT INTO visual_jobs(
-                 id,event_id,intent_json,method,status,attempts,available_at,created_at,updated_at
-               ) VALUES(?,?,?,?,'queued',0,?,?,?)""",
-            (job_id, event_id, intent.model_dump_json(), method, now, now, now),
+                 id,event_id,intent_json,method,strategy,status,attempts,available_at,created_at,updated_at,
+                 pedagogy_plan_id,pedagogy_plan_hash
+               ) VALUES(?,?,?,?,?,'queued',0,?,?,?,?,?)""",
+            (job_id, event_id, intent.model_dump_json(), method, strategy, now, now, now, plan_id, plan_hash),
         )
     return job_id
 
@@ -533,6 +766,8 @@ def _is_curated_deterministic_intent(intent: VisualIntent) -> bool:
         _robot_comparison_intent(),
         _robot_activity_intent(),
         _water_expansion_intent(),
+        _ice_floating_intent(),
+        _wing_variations_intent(),
     )
 
 
@@ -557,18 +792,19 @@ def _decorative_prompt(intent: VisualIntent) -> str:
     if not subject:
         raise ValueError("decorative illustration subject is empty")
     hybrid_boundary = (
-        " This art is decorative beside a code-rendered learning card. Keep every robot similar in visual size, "
-        "avoid factual comparisons or real robot designs, and leave the teaching to the separate card."
+        " This art will decorate a separate code-rendered learning card. Keep it relevant and engaging, avoid "
+        "depicting the comparison, sequence, mechanism, or answer, and leave all teaching to the separate card."
         if intent.kind in {"comparison_cards", "activity_sequence"}
         else ""
     )
+    if "robot" in subject.casefold():
+        hybrid_boundary += " Keep every robot similar in visual size and avoid apparent real robot designs."
     return (
         "Create one playful, warm children's-book illustration for an elementary learner. "
         f"Scene: {subject}. No words, letters, numbers, captions, labels, diagrams, charts, measurements, "
         "or exact-count teaching. Do not depict a real child, real family, logo, worksheet, or copyrighted character. "
         "Use a lively cut-paper collage style, expressive faces, cheerful colors, tactile shapes, clear focus, "
-        "and generous empty space."
-        + hybrid_boundary
+        "and generous empty space." + hybrid_boundary
     )
 
 
@@ -586,7 +822,11 @@ def _review_generated_art(intent: VisualIntent, png_bytes: bytes, backend: Any |
     result = backend.complete(
         role="visual_qa",
         system=(
-            "Inspect this generated decorative region before it can reach an elementary-age child. Fail if it "
+            "Inspect this generated decoration before it is embedded inside a code-rendered learning artifact for "
+            "an elementary-age child. It must match the validated generic subject, feel warm and engaging, suit the "
+            "declared decoration goal, and avoid invented details that imply a factual misconception. The generated "
+            "layer is intentionally decorative: code will add the accurate labels, panels, ordering, and learning "
+            "move later. Fail irrelevant, confusing, frightening, unsafe, or misleading decoration. Also fail if it "
             "contains words, letters, numbers, logos, recognizable copyrighted characters, frightening or unsafe "
             "imagery, real-person likenesses, factual labels, diagrams, measurements, or an apparent real robot "
             "design. For a robot learning card, also fail if robot size differences imply a factual comparison."
@@ -594,8 +834,10 @@ def _review_generated_art(intent: VisualIntent, png_bytes: bytes, backend: Any |
         payload={
             "visual_intent": {
                 "kind": intent.kind,
+                "purpose": intent.purpose,
                 "knowledge_role": intent.knowledge_role,
                 "subject": intent.subject,
+                "usefulness_goal": VISUAL_USEFULNESS_GOALS[intent.purpose],
             },
             "image_data_urls": ["data:image/png;base64," + b64encode(png_bytes).decode("ascii")],
         },
@@ -607,29 +849,161 @@ def _review_generated_art(intent: VisualIntent, png_bytes: bytes, backend: Any |
     return review
 
 
+def _privacy_normalized(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _unicode_words(value: str) -> list[str]:
+    return re.findall(r"[^\W_]+", _privacy_normalized(value), flags=re.UNICODE)
+
+
+def _contains_private_term(text: str, tokens: list[str]) -> bool:
+    if not tokens:
+        return False
+    pattern = r"(?<![\w])" + r"[\W_]+".join(re.escape(token) for token in tokens) + r"(?![\w])"
+    return re.search(pattern, text, flags=re.UNICODE) is not None
+
+
+def _source_identity_candidates(value: str) -> set[str]:
+    """Find request tokens that should not be echoed into an external art prompt."""
+
+    normalized_source = unicodedata.normalize("NFKC", value)
+    words = re.findall(r"[^\W_]+", normalized_source, flags=re.UNICODE)
+    candidates = {
+        _privacy_normalized(word)
+        for word in words
+        if any(ord(character) > 127 for character in word)
+    }
+    candidates.update(
+        _privacy_normalized(match.group(1))
+        for match in re.finditer(r"\b([^\W\d_]+)[’']s\b", normalized_source, flags=re.UNICODE)
+    )
+    name_contexts = (
+        r"\b(?:named|called|for)\s+([^\W\d_]+)",
+        r"\b(?:inspired\s+by|based\s+on|featuring)\s+([^\W\d_]+)",
+        r"\b([^\W\d_]+)\s+(?:and|with)\s+(?:his|her|their)\b",
+        r"\b(?:picture|image|illustration|drawing|portrait|visual|diagram)\s+"
+        r"(?:of|about|with|showing|depicting|featuring)\s+([^\W\d_]+)",
+        r"\b(?:picture|image|illustration|drawing|portrait|visual|diagram)\s+that\s+"
+        r"(?:shows|depicts|features)\s+([^\W\d_]+)",
+        r"\b(?:my|our|the)\s+(?:child|kid|daughter|son|student|friend|classmate)\s+"
+        r"(?:(?:named|called)\s+)?([^\W\d_]+)",
+        r"\b(?:draw|show|depict|illustrate)\s+(?:(?:me|us)\s+)?"
+        r"(?:(?:a|an)\s+(?:picture|image|illustration)\s+of\s+)?([^\W\d_]+)",
+    )
+    for pattern in name_contexts:
+        candidates.update(
+            _privacy_normalized(match.group(1))
+            for match in re.finditer(pattern, normalized_source, flags=re.IGNORECASE | re.UNICODE)
+        )
+    return {
+        token
+        for token in candidates
+        if token
+        and token not in PUBLIC_PROPER_NOUNS
+        and token
+        not in {
+            "a",
+            "an",
+            "can",
+            "could",
+            "diagram",
+            "he",
+            "here",
+            "how",
+            "image",
+            "it",
+            "let",
+            "me",
+            "picture",
+            "please",
+            "show",
+            "she",
+            "that",
+            "the",
+            "there",
+            "us",
+            "visual",
+            "what",
+            "when",
+            "where",
+            "who",
+            "why",
+        }
+    }
+
+
 def _validate_decorative_privacy(db_path: str | Path, event_id: str, intent: VisualIntent) -> None:
     """Reject known household identities and proper nouns before a scene reaches an image provider."""
 
-    subject = str(intent.subject or "").casefold()
+    panel_text = " ".join(f"{panel.label} {panel.detail}" for panel in intent.panels)
+    authored_text = _privacy_normalized(
+        " ".join(
+            (
+                intent.title,
+                intent.pedagogical_value,
+                intent.caption,
+                intent.alt_text,
+                str(intent.subject or ""),
+                panel_text,
+            )
+        )
+    )
+    authored_words = set(_unicode_words(authored_text))
+    if (
+        any(marker in authored_text for marker in ("<@", "@", "/users/", "private/", "http://", "https://"))
+        or any(character.isdigit() for character in authored_text)
+        or authored_words
+        & {
+            "address",
+            "classmate",
+            "daughter",
+            "email",
+            "family",
+            "home",
+            "hospital",
+            "mother",
+            "father",
+            "school",
+            "son",
+            "street",
+            "teacher",
+            "therapy",
+        }
+    ):
+        raise DecorativePrivacyError("visual intent contains private family or identifying context")
     with connect(db_path) as conn:
         event = conn.execute("SELECT text FROM events WHERE id=?", (event_id,)).fetchone()
         private_names = [
             str(row[0])
             for row in conn.execute("SELECT name FROM children UNION ALL SELECT display_name FROM parent_principals")
+            if row[0]
         ]
     for name in private_names:
-        tokens = [token for token in re.findall(r"[a-z]+", name.casefold()) if len(token) >= 3]
-        if any(re.search(rf"\b{re.escape(token)}\b", subject) for token in tokens):
-            raise ValueError("decorative subject overlaps a private household identity")
+        tokens = _unicode_words(name)
+        if _contains_private_term(authored_text, tokens):
+            raise DecorativePrivacyError("decorative subject overlaps a private household identity")
+        if any(_contains_private_term(authored_text, [token]) for token in tokens):
+            raise DecorativePrivacyError("decorative subject overlaps a private household identity")
     if event:
-        proper_nouns = {
-            token.casefold()
-            for token in re.findall(r"\b[A-Z][a-z]{2,}\b", str(event["text"]))
+        event_words = re.findall(
+            r"[^\W_]+",
+            unicodedata.normalize("NFKC", str(event["text"])),
+            flags=re.UNICODE,
+        )
+        source_identity_candidates = _source_identity_candidates(str(event["text"]))
+        source_identity_candidates.update(
+            {
+            _privacy_normalized(token)
+            for token in event_words
+            if token[:1].isupper()
             if token.casefold() not in PUBLIC_PROPER_NOUNS
             and token.casefold() not in {"can", "could", "does", "draw", "how", "is", "please", "show", "what", "why"}
-        }
-        if any(re.search(rf"\b{re.escape(token)}\b", subject) for token in proper_nouns):
-            raise ValueError("decorative subject overlaps a proper name from the family request")
+            }
+        )
+        provider_subject = _privacy_normalized(str(intent.subject or ""))
+        if any(_contains_private_term(provider_subject, [token]) for token in source_identity_candidates):
+            raise DecorativePrivacyError("decorative subject overlaps a proper name from the family request")
 
 
 def process_visual_jobs(
@@ -680,21 +1054,128 @@ def process_visual_jobs(
     results: list[dict[str, str]] = []
     for raw in rows:
         row = dict(raw)
+        plan: ApprovedPedagogyPlan | None = None
+        authorization_error: Exception | None = None
         with connect(db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            claimed = conn.execute(
-                """UPDATE visual_jobs SET status='processing',attempts=attempts+1,updated_at=?
-                   WHERE id=? AND status='queued'""",
-                (utcnow(), row["id"]),
-            )
+            fresh = conn.execute(
+                "SELECT * FROM visual_jobs WHERE id=? AND status='queued'",
+                (row["id"],),
+            ).fetchone()
+            if not fresh:
+                claimed = None
+            else:
+                try:
+                    plan = _bound_visual_plan(conn, fresh)
+                    assert_plan_authorization_in_transaction(conn, plan)
+                    candidate_intent = VisualIntent.model_validate(jload(fresh["intent_json"]))
+                    _validate_visual_against_bound_plan(conn, fresh, candidate_intent, plan)
+                except (PersonalizationAuthorizationChanged, TypeError, ValueError) as exc:
+                    authorization_error = exc
+                    error = f"{exc.__class__.__name__}: {str(exc)[:500]}"
+                    conn.execute(
+                        "UPDATE visual_jobs SET status='failed',last_error=?,updated_at=? WHERE id=?",
+                        (error, utcnow(), row["id"]),
+                    )
+                    conn.execute(
+                        """UPDATE slack_file_outbox SET status='expired',
+                             last_error='visual authorization changed',updated_at=?
+                           WHERE visual_job_id=? AND status='waiting_asset'""",
+                        (utcnow(), row["id"]),
+                    )
+                    claimed = None
+                else:
+                    claimed = conn.execute(
+                        """UPDATE visual_jobs SET status='processing',attempts=attempts+1,updated_at=?
+                           WHERE id=? AND status='queued'""",
+                        (utcnow(), row["id"]),
+                    )
+        if authorization_error is not None:
+            results.append({"job_id": str(row["id"]), "status": "failed"})
+            continue
+        if claimed is None:
+            continue
         if claimed.rowcount != 1:
             continue
         path: Path | None = None
         try:
+            def authorization_preflight(bound_plan: ApprovedPedagogyPlan | None = plan) -> None:
+                _assert_visual_authorized(db_path, bound_plan)
+
+            def authorization_transaction_assertion(
+                conn: Any,
+                bound_plan: ApprovedPedagogyPlan | None = plan,
+            ) -> None:
+                assert_plan_authorization_in_transaction(conn, bound_plan)
+
+            authorization_preflight()
             intent = VisualIntent.model_validate(jload(row["intent_json"]))
             provenance: dict[str, Any] = {"family_data_sent": False}
             asset_method = str(row["method"])
-            if row["method"] == "deterministic":
+            strategy = str(row.get("strategy") or row["method"])
+            title = intent.title
+            caption = intent.caption
+            alt_text = intent.alt_text
+            if strategy == "researched":
+                if resolved_visual_qa_backend is _AUTO_VISUAL_QA:
+                    resolved_visual_qa_backend = _configured_visual_qa_backend()
+                purpose = {
+                    "notice": "observe",
+                    "observe": "observe",
+                    "compare": "compare",
+                    "imagine": "spark",
+                }.get(intent.purpose, "observe")
+                with connect(db_path) as conn:
+                    source_event = conn.execute(
+                        "SELECT text FROM events WHERE id=?", (str(row["event_id"]),)
+                    ).fetchone()
+                researched = ImageResearchService(
+                    db_path,
+                    output_dir,
+                    review_backend=resolved_visual_qa_backend,
+                    authorization_preflight=authorization_preflight,
+                    authorization_transaction_assertion=authorization_transaction_assertion,
+                ).find(
+                    ImageResearchQuery(
+                        query=str(intent.research_query),
+                        purpose=purpose,
+                        preferred_sources=intent.preferred_sources,
+                    ),
+                    private_source_text=str(source_event["text"]) if source_event else None,
+                )
+                authorization_preflight()
+                raw_bytes = _fit_researched_photo(Path(researched.local_path).read_bytes())
+                renderer = "public-image-research-v2"
+                title = researched.title
+                caption = (
+                    f"{researched.caption[:300]}\n"
+                    f"Source: {researched.rights.attribution} - {researched.rights.license_name} - "
+                    f"{researched.rights.canonical_url}"
+                )[:900]
+                alt_text = researched.alt_text
+                provenance = {
+                    "private_context_sent": False,
+                    "response_topic_sent": True,
+                    "strategy": "researched",
+                    "source": researched.rights.source_name,
+                    "source_item_id": researched.rights.source_item_id,
+                    "canonical_url": researched.rights.canonical_url,
+                    "creator": researched.rights.creator,
+                    "license": researched.rights.license_name,
+                    "license_url": researched.rights.license_url,
+                    "attribution": researched.rights.attribution,
+                    "rights_status": researched.rights.rights_status,
+                    "rights_metadata_sha256": researched.rights.metadata_sha256,
+                    "visual_qa": researched.safety.verdict,
+                    "representation_type": researched.safety.representation_type,
+                    "representation_context_note": researched.safety.context_note,
+                    "visual_qa_provider": getattr(resolved_visual_qa_backend, "name", "unknown"),
+                    "visual_qa_model": getattr(resolved_visual_qa_backend, "model", None),
+                    "transformations": researched.transformations,
+                    "delivery_transform": "letterboxed without crop on a 1200x900 Slack canvas",
+                }
+            elif row["method"] == "deterministic":
+                authorization_preflight()
                 temporary = Path(output_dir).resolve() / "visuals" / f".render-{uuid4().hex}.png"
                 temporary.parent.mkdir(parents=True, exist_ok=True)
                 temporary.parent.chmod(0o700)
@@ -710,12 +1191,20 @@ def process_visual_jobs(
                     backend = image_backend or configured_image_backend()
                     if backend is None:
                         raise RuntimeError("decorative image generation is not configured")
+                    authorization_preflight()
+                    # Household identities can change while a queued job waits.
+                    # Re-check the exact provider-bound intent immediately before
+                    # any prompt leaves the computer.
+                    _validate_decorative_privacy(db_path, str(row["event_id"]), intent)
                     generated = backend.generate(_decorative_prompt(intent))
+                    authorization_preflight()
                     normalized_art, _art_width, _art_height, _art_validation = _validated_png(generated.data)
                     if resolved_visual_qa_backend is _AUTO_VISUAL_QA:
                         resolved_visual_qa_backend = _configured_visual_qa_backend()
                     reviewer = resolved_visual_qa_backend
+                    authorization_preflight()
                     qa = _review_generated_art(intent, normalized_art, reviewer)
+                    authorization_preflight()
                     if hybrid:
                         art = Image.open(io.BytesIO(normalized_art)).convert("RGB")
                         temporary = Path(output_dir).resolve() / "visuals" / f".render-{uuid4().hex}.png"
@@ -744,6 +1233,8 @@ def process_visual_jobs(
                         "visual_qa_provider": getattr(reviewer, "name", "unknown"),
                         "visual_qa_model": getattr(reviewer, "model", None),
                     }
+                except PersonalizationAuthorizationChanged:
+                    raise
                 except Exception:
                     if not hybrid:
                         raise
@@ -765,27 +1256,27 @@ def process_visual_jobs(
                         "generated_art_embedded": False,
                         "visual_qa": "not_passed",
                     }
+            authorization_preflight()
             path, width, height, validation = _write_private_png(output_dir, raw_bytes)
             asset_id = f"visual_asset_{uuid4().hex[:16]}"
             asset_hash = sha256(path.read_bytes()).hexdigest()
             created = utcnow()
             with connect(db_path) as conn:
                 conn.execute("BEGIN IMMEDIATE")
+                authorization_transaction_assertion(conn)
                 conn.execute(
                     """INSERT INTO visual_assets(
-                       id,job_id,event_id,method,trust_tier,renderer_version,path,filename,mime_type,
-                       width,height,byte_count,sha256,title,caption,alt_text,provenance_json,validation_json,created_at
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       id,job_id,event_id,method,strategy,trust_tier,renderer_version,path,filename,mime_type,
+                       width,height,byte_count,sha256,title,caption,alt_text,provenance_json,validation_json,created_at,
+                       pedagogy_plan_id,pedagogy_plan_hash
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         asset_id,
                         row["id"],
                         row["event_id"],
                         asset_method,
-                        (
-                            "A"
-                            if asset_method == "generative" and intent.kind == "decorative_illustration"
-                            else "B"
-                        ),
+                        strategy,
+                        ("A" if asset_method == "generative" and intent.kind == "decorative_illustration" else "B"),
                         renderer,
                         str(path),
                         path.name,
@@ -794,12 +1285,14 @@ def process_visual_jobs(
                         height,
                         path.stat().st_size,
                         asset_hash,
-                        intent.title,
-                        intent.caption,
-                        intent.alt_text,
+                        title,
+                        caption,
+                        alt_text,
                         jdump(provenance),
                         jdump(validation),
                         created,
+                        row["pedagogy_plan_id"],
+                        row["pedagogy_plan_hash"],
                     ),
                 )
                 conn.execute(
@@ -815,15 +1308,32 @@ def process_visual_jobs(
         except Exception as exc:
             if path is not None:
                 path.unlink(missing_ok=True)
+            attempt_number = int(row["attempts"]) + 1
+            permanent = isinstance(
+                exc,
+                (PersonalizationAuthorizationChanged, ValueError, TypeError, FileNotFoundError, PermissionError),
+            )
+            retrying = not permanent and attempt_number < MAX_VISUAL_JOB_ATTEMPTS
             with connect(db_path) as conn:
-                conn.execute(
-                    "UPDATE visual_jobs SET status='failed',last_error=?,updated_at=? WHERE id=?",
-                    (f"{exc.__class__.__name__}: {str(exc)[:500]}", utcnow(), row["id"]),
-                )
-                conn.execute(
-                    """UPDATE slack_file_outbox SET status='expired',last_error='visual preparation failed',updated_at=?
-                       WHERE visual_job_id=? AND status='waiting_asset'""",
-                    (utcnow(), row["id"]),
-                )
-            results.append({"job_id": str(row["id"]), "status": "failed"})
+                error = f"{exc.__class__.__name__}: {str(exc)[:500]}"
+                if retrying:
+                    available_at = (
+                        datetime.now(UTC) + timedelta(seconds=min(60, 5 * (2 ** (attempt_number - 1))))
+                    ).isoformat()
+                    conn.execute(
+                        """UPDATE visual_jobs SET status='queued',available_at=?,last_error=?,updated_at=?
+                           WHERE id=?""",
+                        (available_at, error, utcnow(), row["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE visual_jobs SET status='failed',last_error=?,updated_at=? WHERE id=?",
+                        (error, utcnow(), row["id"]),
+                    )
+                    conn.execute(
+                        """UPDATE slack_file_outbox SET status='expired',last_error='visual preparation failed',updated_at=?
+                           WHERE visual_job_id=? AND status='waiting_asset'""",
+                        (utcnow(), row["id"]),
+                    )
+            results.append({"job_id": str(row["id"]), "status": "retrying" if retrying else "failed"})
     return results

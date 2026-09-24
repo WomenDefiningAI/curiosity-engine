@@ -8,18 +8,58 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import __version__
 from .config import family_home, repository_root
+from .db import init_db
+from .deletion_ledger import (
+    BACKUP_IDENTITY_NAME,
+    BACKUP_SOURCES_NAME,
+    LEDGER_NAME,
+    MANAGED_RESTORES_NAME,
+    RESTORE_MARKER_NAME,
+    assert_backup_root_registration_complete,
+    backup_root_database_identity,
+    backup_root_deletion_manifest,
+    backup_root_lifecycle,
+    backup_roots_lifecycle,
+    database_deletion_conflicts,
+    deletion_manifest,
+    import_replay_tombstones,
+    initialize_backup_root_metadata,
+    managed_data_lifecycle,
+    managed_restore_marker,
+    mark_backup_root_registration_pending,
+    merge_deletion_manifest,
+    prepare_restored_database_registration,
+    reconcile_database_deletions,
+    recover_interrupted_restore_paths,
+    register_backup_root,
+    register_managed_restore,
+    sync_registered_backup_sources,
+    unregister_managed_restore,
+)
+from .research_authority_ledger import (
+    assert_research_authority_image,
+    backup_authority_roots,
+    install_backup_research_authority,
+    sync_registered_backup_authority,
+)
+from .research_authority_ledger import ledger_path as research_authority_path
 
 BACKUP_FORMAT = "curiosity-family-backup"
-BACKUP_FORMAT_VERSION = 1
+BACKUP_FORMAT_VERSION = 2
+LEGACY_BACKUP_FORMAT_VERSION = 1
 BACKUP_ROOT_MARKER = ".curiosity-backup-root.json"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_PREFIX = "curiosity-backup-"
+RESEARCH_AUTHORITY_BACKUP_PATH = PurePosixPath(
+    "data/curiosity.db.research-authority.json"
+)
 SETUP_ALLOWLIST = ("brain.json", "status.json")
 SECRET_MARKERS = (
     b"OPENAI_API_KEY",
@@ -76,13 +116,33 @@ def _ensure_external_backup_root(path: str | Path, repo_root: str | Path, *, cre
             current = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BackupError("backup root marker is unreadable") from exc
-        if current != expected:
+        compatible = current == expected or current == {
+            "format": BACKUP_FORMAT,
+            "format_version": LEGACY_BACKUP_FORMAT_VERSION,
+        }
+        if not compatible:
             raise BackupError("destination is not a compatible Curiosity Engine backup root")
     elif existed and any(candidate.iterdir()):
         raise BackupError("destination is not an initialized Curiosity Engine backup root")
     elif create:
         _write_json(marker, expected)
+        try:
+            initialize_backup_root_metadata(candidate)
+        except RuntimeError as exc:
+            marker.unlink(missing_ok=True)
+            raise BackupError("backup root authority metadata could not be initialized") from exc
     return candidate
+
+
+def _backup_root_marker(root: Path) -> dict[str, Any]:
+    marker = root / BACKUP_ROOT_MARKER
+    try:
+        value = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackupError("backup root marker is unreadable") from exc
+    if not isinstance(value, dict):
+        raise BackupError("backup root marker is invalid")
+    return value
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -135,7 +195,7 @@ def _copy_private_file(source: Path, destination: Path) -> dict[str, Any]:
     }
 
 
-def _tree_files(source: Path) -> list[Path]:
+def _tree_files(source: Path, *, excluded_top_level: frozenset[str] = frozenset()) -> list[Path]:
     if not source.exists():
         return []
     if source.is_symlink() or not source.is_dir():
@@ -144,6 +204,9 @@ def _tree_files(source: Path) -> list[Path]:
     for item in sorted(source.rglob("*")):
         if item.is_symlink():
             raise BackupError(f"symbolic links are not allowed in backup sources: {item.name}")
+        relative = item.relative_to(source)
+        if relative.parts and relative.parts[0] in excluded_top_level:
+            continue
         if item.is_file():
             if item.suffix.casefold() == ".env":
                 raise BackupError("credential-like .env files must not be stored in resources or output")
@@ -153,9 +216,15 @@ def _tree_files(source: Path) -> list[Path]:
     return files
 
 
-def _copy_tree(source: Path, destination: Path, snapshot_root: Path) -> list[dict[str, Any]]:
+def _copy_tree(
+    source: Path,
+    destination: Path,
+    snapshot_root: Path,
+    *,
+    excluded_top_level: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for item in _tree_files(source):
+    for item in _tree_files(source, excluded_top_level=excluded_top_level):
         target = destination / item.relative_to(source)
         record = _copy_private_file(item, target)
         record["path"] = target.relative_to(snapshot_root).as_posix()
@@ -163,7 +232,7 @@ def _copy_tree(source: Path, destination: Path, snapshot_root: Path) -> list[dic
     return records
 
 
-def _sqlite_backup(source: Path, destination: Path) -> int:
+def _sqlite_backup(source: Path, destination: Path) -> tuple[int, str]:
     if source.is_symlink() or not source.is_file():
         raise BackupError("family database does not exist or is not a regular file")
     _owner_only_directory(destination.parent)
@@ -178,9 +247,14 @@ def _sqlite_backup(source: Path, destination: Path) -> int:
     with _open_sqlite_read_only(destination) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        identities = connection.execute(
+            "SELECT singleton,database_id FROM family_database_identity"
+        ).fetchall()
     if integrity != "ok":
         raise BackupError("database snapshot failed its integrity check")
-    return version
+    if len(identities) != 1 or int(identities[0][0]) != 1:
+        raise BackupError("database snapshot has no stable family identity")
+    return version, str(identities[0][1])
 
 
 def _open_sqlite_read_only(path: Path) -> sqlite3.Connection:
@@ -194,6 +268,103 @@ def _snapshot_id() -> tuple[str, str]:
     return f"{SNAPSHOT_PREFIX}{stamp}-{secrets.token_hex(3)}", created_at
 
 
+def _database_identity(database: Path) -> str:
+    try:
+        with _open_sqlite_read_only(database) as connection:
+            rows = connection.execute(
+                "SELECT singleton,database_id FROM family_database_identity"
+            ).fetchall()
+    except sqlite3.DatabaseError as exc:
+        raise BackupError("family database identity is unreadable") from exc
+    if len(rows) != 1 or int(rows[0][0]) != 1 or not isinstance(rows[0][1], str):
+        raise BackupError("family database has no stable identity")
+    return str(rows[0][1])
+
+
+def _adopt_legacy_backup_root(
+    root: Path,
+    *,
+    database: Path,
+    private: Path,
+    output: Path,
+    repo: Path,
+) -> None:
+    """Authenticate a v1 root before making it deletion-authoritative."""
+
+    marker = _backup_root_marker(root)
+    current = {"format": BACKUP_FORMAT, "format_version": BACKUP_FORMAT_VERSION}
+    legacy = {"format": BACKUP_FORMAT, "format_version": LEGACY_BACKUP_FORMAT_VERSION}
+    if marker == current:
+        return
+    if marker != legacy:
+        raise BackupError("destination is not a compatible Curiosity Engine backup root")
+
+    database_identity = _database_identity(database)
+    for partial in root.iterdir():
+        if partial.is_dir() and partial.name.startswith(".partial-"):
+            raise BackupError("legacy backup root has an interrupted snapshot; adoption refused")
+    for snapshot in _snapshots(root):
+        manifest = _load_manifest(snapshot)
+        if manifest.get("format_version") != LEGACY_BACKUP_FORMAT_VERSION:
+            raise BackupError("legacy backup root contains a non-legacy snapshot")
+        verification = verify_snapshot(snapshot.name, backup_root=root, repo_root=repo)
+        if verification["status"] != "pass":
+            raise BackupError("legacy backup verification failed; adoption refused")
+        source_roots = manifest.get("source_roots", {})
+        if source_roots.get("private") != str(private) or source_roots.get("output") != str(output):
+            raise BackupError("legacy backup sources do not match this family")
+        manifest_identity = manifest.get("database_identity")
+        if manifest_identity is not None and manifest_identity != database_identity:
+            raise BackupError("legacy backup belongs to a different family database")
+
+    sources_path = root / BACKUP_SOURCES_NAME
+    restores_path = root / MANAGED_RESTORES_NAME
+    ledger_path = root / LEDGER_NAME
+    authority_paths = (sources_path, restores_path, ledger_path)
+    if any(path.exists() for path in authority_paths) and not all(
+        path.exists() for path in authority_paths
+    ):
+        raise BackupError("legacy backup authority metadata is incomplete")
+    if not sources_path.exists():
+        try:
+            initialize_backup_root_metadata(root)
+        except RuntimeError as exc:
+            raise BackupError("legacy backup authority metadata could not be initialized") from exc
+    else:
+        try:
+            sources = json.loads(sources_path.read_text(encoding="utf-8"))
+            restores = json.loads(restores_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackupError("legacy backup authority metadata is unreadable") from exc
+        if sources != {
+            "format": "curiosity-backup-source-registry",
+            "version": 1,
+            "databases": [],
+        } or restores != {
+            "format": "curiosity-managed-restore-registry",
+            "version": 1,
+            "restores": [],
+        }:
+            raise BackupError("legacy backup authority metadata is not safely adoptable")
+        try:
+            legacy_deletions = backup_root_deletion_manifest(root)
+        except RuntimeError as exc:
+            raise BackupError("legacy backup deletion metadata is invalid") from exc
+        if any(legacy_deletions[kind] for kind in legacy_deletions):
+            raise BackupError("legacy backup deletion metadata is not safely adoptable")
+    if (root / BACKUP_IDENTITY_NAME).exists():
+        try:
+            if backup_root_database_identity(root) != database_identity:
+                raise BackupError("legacy backup belongs to a different family database")
+        except RuntimeError as exc:
+            raise BackupError("legacy backup identity is invalid") from exc
+    # A current-format marker makes this root eligible for restore. Publish a
+    # durable barrier first; registration will clear it only after the active
+    # database's deletion manifest has been synchronized.
+    mark_backup_root_registration_pending(root, database, database_identity)
+    _write_json(root / BACKUP_ROOT_MARKER, current)
+
+
 def create_snapshot(
     *,
     db_path: str | Path,
@@ -201,6 +372,45 @@ def create_snapshot(
     output_dir: str | Path,
     backup_root: str | Path | None = None,
     repo_root: str | Path | None = None,
+    _test_hook: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    repo = Path(repo_root).resolve() if repo_root else repository_root()
+    database = Path(db_path).expanduser().resolve()
+    private = Path(private_dir).expanduser().resolve()
+    output = Path(output_dir).expanduser().resolve()
+    init_db(database)
+    root = _ensure_external_backup_root(backup_root or default_backup_root(repo), repo, create=True)
+    with backup_root_lifecycle(root):
+        _adopt_legacy_backup_root(
+            root,
+            database=database,
+            private=private,
+            output=output,
+            repo=repo,
+        )
+    with managed_data_lifecycle(database, extra_backup_roots=(root,)):
+        # A killed deletion can leave verified bytes in the private quarantine
+        # after its database transaction committed. Recover them before any
+        # source walk, then still exclude the internal journal defensively.
+        init_db(database)
+        return _create_snapshot_locked(
+            db_path=database,
+            private_dir=private_dir,
+            output_dir=output_dir,
+            backup_root=root,
+            repo_root=repo,
+            _test_hook=_test_hook,
+        )
+
+
+def _create_snapshot_locked(
+    *,
+    db_path: str | Path,
+    private_dir: str | Path,
+    output_dir: str | Path,
+    backup_root: str | Path | None = None,
+    repo_root: str | Path | None = None,
+    _test_hook: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     repo = Path(repo_root).resolve() if repo_root else repository_root()
     root = _ensure_external_backup_root(backup_root or default_backup_root(repo), repo, create=True)
@@ -219,6 +429,20 @@ def create_snapshot(
         raise BackupError("output directory may not contain private setup credentials")
     if _is_within(database, output):
         raise BackupError("output directory may not contain the family database")
+    register_backup_root(
+        database,
+        root,
+        _test_hook=_test_hook,
+        _before_complete=lambda: sync_registered_backup_authority(
+            database,
+            allow_registration_pending=True,
+        ),
+    )
+    sync_registered_backup_authority(database)
+    # Registration makes an adopted root deletion-authoritative. Reconcile it
+    # immediately so deletions made while a v1 root was undiscoverable erase
+    # its legacy images before this command can report success.
+    reconcile_database_deletions(database)
 
     snapshot_id, created_at = _snapshot_id()
     final = root / snapshot_id
@@ -226,7 +450,9 @@ def create_snapshot(
     partial.chmod(0o700)
     try:
         database_target = partial / "data" / "curiosity.db"
-        schema_version = _sqlite_backup(database, database_target)
+        schema_version, database_identity = _sqlite_backup(database, database_target)
+        if _test_hook is not None:
+            _test_hook("after_database_copy")
         files = [
             {
                 "path": "data/curiosity.db",
@@ -234,8 +460,28 @@ def create_snapshot(
                 "sha256": _sha256(database_target),
             }
         ]
+        authority_source = research_authority_path(database)
+        if not authority_source.is_file() or authority_source.is_symlink():
+            raise BackupError("research-authority ledger is unavailable for backup")
+        authority_target = research_authority_path(database_target)
+        authority_record = _copy_private_file(authority_source, authority_target)
+        authority_record["path"] = authority_target.relative_to(partial).as_posix()
+        files.append(authority_record)
+        try:
+            assert_research_authority_image(database_target, authority_target)
+        except RuntimeError as exc:
+            raise BackupError(
+                "database and research-authority ledger changed during backup"
+            ) from exc
         files.extend(_copy_tree(private / "resources", partial / "resources", partial))
-        files.extend(_copy_tree(output, partial / "output", partial))
+        files.extend(
+            _copy_tree(
+                output,
+                partial / "output",
+                partial,
+                excluded_top_level=frozenset({".family-delete-journal"}),
+            )
+        )
         for name in SETUP_ALLOWLIST:
             source = private / "setup" / name
             if source.exists():
@@ -255,6 +501,7 @@ def create_snapshot(
             "created_at": created_at,
             "snapshot_id": snapshot_id,
             "database_schema_version": schema_version,
+            "database_identity": database_identity,
             "source_roots": {
                 "private": str(private),
                 "output": str(output),
@@ -267,7 +514,17 @@ def create_snapshot(
             "credentials_included": False,
         }
         _write_json(partial / MANIFEST_NAME, manifest)
+        sync_registered_backup_sources(root)
+        conflicts = database_deletion_conflicts(
+            database_target,
+            backup_root_deletion_manifest(root),
+            snapshot_created_at=created_at,
+        )
+        if conflicts:
+            raise BackupError("source contains data already covered by a deletion tombstone")
         _harden_tree(partial)
+        if _test_hook is not None:
+            _test_hook("before_publish")
         os.replace(partial, final)
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True)
@@ -316,6 +573,13 @@ def backup_status(
 ) -> dict[str, Any]:
     repo = Path(repo_root).resolve() if repo_root else repository_root()
     root = _ensure_external_backup_root(backup_root or default_backup_root(repo), repo, create=False)
+    if root.is_dir() and _backup_root_marker(root).get("format_version") == LEGACY_BACKUP_FORMAT_VERSION:
+        return {
+            "status": "upgrade_required",
+            "backup_root": str(root),
+            "snapshots": len(_snapshots(root)),
+            "next_action": "run curiosity backup create to authenticate and adopt this legacy root",
+        }
     snapshots = _snapshots(root)
     if not snapshots:
         return {
@@ -331,9 +595,16 @@ def backup_status(
         created_at = manifest.get("created_at")
         if (
             manifest.get("format") != BACKUP_FORMAT
-            or manifest.get("format_version") != BACKUP_FORMAT_VERSION
+            or manifest.get("format_version") not in {
+                LEGACY_BACKUP_FORMAT_VERSION,
+                BACKUP_FORMAT_VERSION,
+            }
             or manifest.get("snapshot_id") != latest.name
             or not isinstance(created_at, str)
+            or (
+                manifest.get("format_version") == BACKUP_FORMAT_VERSION
+                and not isinstance(manifest.get("database_identity"), str)
+            )
             or not isinstance(totals, dict)
             or not isinstance(totals.get("files"), int)
             or not isinstance(totals.get("bytes"), int)
@@ -380,7 +651,10 @@ def _safe_manifest_path(value: Any) -> PurePosixPath:
         raise BackupError("backup manifest may not include credential files")
     if path.parts[0] not in {"data", "resources", "output", "setup"}:
         raise BackupError("backup manifest contains an unsupported file location")
-    if path.parts[0] == "data" and path != PurePosixPath("data/curiosity.db"):
+    if path.parts[0] == "data" and path not in {
+        PurePosixPath("data/curiosity.db"),
+        RESEARCH_AUTHORITY_BACKUP_PATH,
+    }:
         raise BackupError("backup manifest contains an unsupported database file")
     if path.parts[0] == "setup" and (len(path.parts) != 2 or path.name not in SETUP_ALLOWLIST):
         raise BackupError("backup manifest contains a non-allowlisted setup file")
@@ -399,12 +673,17 @@ def verify_snapshot(
     errors: list[str] = []
     try:
         manifest = _load_manifest(selected)
+        format_version = manifest.get("format_version")
         if manifest.get("format") != BACKUP_FORMAT:
             errors.append("unsupported backup format")
-        if manifest.get("format_version") != BACKUP_FORMAT_VERSION:
+        if format_version not in {LEGACY_BACKUP_FORMAT_VERSION, BACKUP_FORMAT_VERSION}:
             errors.append("unsupported backup format version")
         if manifest.get("snapshot_id") != selected.name:
             errors.append("snapshot ID does not match its directory")
+        if format_version == BACKUP_FORMAT_VERSION and not isinstance(
+            manifest.get("database_identity"), str
+        ):
+            errors.append("database identity is missing")
         if manifest.get("credentials_included") is not False:
             errors.append("credential exclusion marker is missing")
         source_roots = manifest.get("source_roots")
@@ -475,10 +754,36 @@ def verify_snapshot(
             with _open_sqlite_read_only(database) as connection:
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
                 schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+                tables = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                identities = (
+                    connection.execute(
+                        "SELECT singleton,database_id FROM family_database_identity"
+                    ).fetchall()
+                    if "family_database_identity" in tables
+                    else []
+                )
             if integrity != "ok":
                 errors.append("database integrity check failed")
             if schema_version != manifest.get("database_schema_version"):
                 errors.append("database schema version does not match the manifest")
+            if format_version == BACKUP_FORMAT_VERSION:
+                if (
+                    len(identities) != 1
+                    or int(identities[0][0]) != 1
+                    or str(identities[0][1]) != manifest.get("database_identity")
+                ):
+                    errors.append("database identity does not match the manifest")
+            elif identities and (
+                len(identities) != 1
+                or int(identities[0][0]) != 1
+                or manifest.get("database_identity") not in {None, str(identities[0][1])}
+            ):
+                errors.append("legacy database identity is invalid")
         else:
             errors.append("database snapshot is missing")
     except (BackupError, OSError, sqlite3.DatabaseError) as exc:
@@ -499,6 +804,37 @@ def _rebase_path(value: str, old_root: Path, new_root: Path) -> str:
     except ValueError:
         return value
     return str(new_root / relative)
+
+
+def _bind_restored_database_identity(database: Path, database_identity: str) -> None:
+    """Attach an adopted legacy image to its authenticated backup root."""
+
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS family_database_identity (
+               singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+               database_id TEXT NOT NULL UNIQUE,
+               created_at TEXT NOT NULL
+               )"""
+        )
+        rows = connection.execute(
+            "SELECT singleton,database_id FROM family_database_identity ORDER BY singleton"
+        ).fetchall()
+        if not rows:
+            connection.execute(
+                "INSERT INTO family_database_identity(singleton,database_id,created_at) VALUES(1,?,?)",
+                (database_identity, datetime.now(UTC).isoformat()),
+            )
+        elif len(rows) != 1 or int(rows[0][0]) != 1 or str(rows[0][1]) != database_identity:
+            raise BackupError("legacy database belongs to a different family")
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _rebase_restored_database(database: Path, manifest: dict[str, Any], target_private: Path) -> int:
@@ -569,6 +905,54 @@ def restore_snapshot(
     target_private: str | Path | None = None,
     backup_root: str | Path | None = None,
     repo_root: str | Path | None = None,
+    _test_hook: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    repo = Path(repo_root).resolve() if repo_root else repository_root()
+    root = _ensure_external_backup_root(backup_root or default_backup_root(repo), repo, create=False)
+    if _backup_root_marker(root).get("format_version") != BACKUP_FORMAT_VERSION:
+        raise BackupError("legacy backup root must be adopted with curiosity backup create before restore")
+    # Preserve the original registration barrier even when a process died
+    # before it could create the research-authority peer ledger.
+    try:
+        assert_backup_root_registration_complete(root)
+    except RuntimeError as exc:
+        raise BackupError("backup root registration is incomplete; restore refused") from exc
+    try:
+        authority_roots = backup_authority_roots(root)
+    except RuntimeError as exc:
+        raise BackupError("backup research-authority ledger is unreadable") from exc
+    if root not in authority_roots:
+        raise BackupError("backup research-authority peer-root membership is incomplete")
+    try:
+        with backup_roots_lifecycle(authority_roots):
+            try:
+                assert_backup_root_registration_complete(root)
+                if backup_authority_roots(root) != authority_roots:
+                    raise RuntimeError("backup research-authority peer-root membership changed")
+            except RuntimeError as exc:
+                raise BackupError("backup root registration is incomplete; restore refused") from exc
+            return _restore_snapshot_locked(
+                snapshot,
+                target_private=target_private,
+                backup_root=root,
+                repo_root=repo,
+                _test_hook=_test_hook,
+            )
+    except BackupError:
+        raise
+    except RuntimeError as exc:
+        if "deletion" in str(exc):
+            raise BackupError("backup deletion ledger is unreadable; restore refused") from exc
+        raise BackupError("backup root authority metadata is unreadable; restore refused") from exc
+
+
+def _restore_snapshot_locked(
+    snapshot: str | None = None,
+    *,
+    target_private: str | Path | None = None,
+    backup_root: str | Path | None = None,
+    repo_root: str | Path | None = None,
+    _test_hook: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     repo = Path(repo_root).resolve() if repo_root else repository_root()
     root = _ensure_external_backup_root(backup_root or default_backup_root(repo), repo, create=False)
@@ -587,14 +971,64 @@ def restore_snapshot(
     target = raw_target.resolve()
     if _is_within(target, root):
         raise BackupError("restore target may not be inside the backup destination")
+    try:
+        recover_interrupted_restore_paths(root, target, snapshot=selected.name)
+    except RuntimeError as exc:
+        raise BackupError("interrupted restore metadata is unsafe; restore refused") from exc
     if target.exists() or target.is_symlink():
         raise BackupError("restore target already exists; choose a new empty path")
     _create_owner_only_parents(target.parent)
     partial = target.parent / f".{target.name}.partial-{secrets.token_hex(3)}"
-    _owner_only_directory(partial)
+    staging_registered = False
+    target_registered = False
     target_reserved = False
+    target_published = False
     try:
         manifest = _load_manifest(selected)
+        format_version = int(manifest["format_version"])
+        database_identity = (
+            str(manifest["database_identity"])
+            if format_version == BACKUP_FORMAT_VERSION
+            else backup_root_database_identity(root)
+        )
+        try:
+            sync_registered_backup_sources(root)
+            current_deletions = backup_root_deletion_manifest(root)
+        except RuntimeError as exc:
+            raise BackupError("backup deletion ledger is unreadable; restore refused") from exc
+        default_database = repo / "private" / "data" / "curiosity.db"
+        if default_database.parent.exists():
+            active_manifest = deletion_manifest(default_database)
+            for kind, records in active_manifest.items():
+                current_deletions[kind].update(records)
+        snapshot_created_at = str(manifest["created_at"])
+        if database_deletion_conflicts(
+            selected / "data" / "curiosity.db",
+            current_deletions,
+            snapshot_created_at=snapshot_created_at,
+            expected_database_identity=(
+                database_identity if format_version == BACKUP_FORMAT_VERSION else None
+            ),
+            require_database_identity=format_version == BACKUP_FORMAT_VERSION,
+        ):
+            raise BackupError("backup contains data deleted after the snapshot; restore refused")
+        _owner_only_directory(partial)
+        restore_marker = managed_restore_marker(
+            root,
+            snapshot=selected.name,
+            snapshot_created_at=snapshot_created_at,
+            database_identity=database_identity,
+        )
+        _write_json(partial / RESTORE_MARKER_NAME, restore_marker)
+        register_managed_restore(
+            root,
+            partial,
+            snapshot=selected.name,
+            snapshot_created_at=snapshot_created_at,
+            database_identity=database_identity,
+            state="staging",
+        )
+        staging_registered = True
         for entry in manifest["files"]:
             relative = _safe_manifest_path(entry["path"])
             source = selected.joinpath(*relative.parts)
@@ -602,22 +1036,100 @@ def restore_snapshot(
             copied = _copy_private_file(source, destination)
             if copied["bytes"] != entry["bytes"] or copied["sha256"] != entry["sha256"]:
                 raise BackupError("backup changed during restore; nothing was restored")
+        if _test_hook is not None:
+            _test_hook("before_rebase")
+        if format_version == LEGACY_BACKUP_FORMAT_VERSION:
+            _bind_restored_database_identity(
+                partial / "data" / "curiosity.db",
+                database_identity,
+            )
         paths_rebased = _rebase_restored_database(partial / "data" / "curiosity.db", manifest, target)
+        try:
+            restored_database = partial / "data" / "curiosity.db"
+            authority_roots = backup_authority_roots(root)
+            with managed_data_lifecycle(
+                restored_database,
+                extra_backup_roots=authority_roots,
+            ):
+                install_backup_research_authority(
+                    restored_database,
+                    root,
+                )
+        except RuntimeError as exc:
+            raise BackupError("backup research-authority ledger is unreadable") from exc
+        try:
+            sync_registered_backup_sources(root)
+            final_deletions = backup_root_deletion_manifest(root)
+        except RuntimeError as exc:
+            raise BackupError("backup deletion ledger is unreadable; restore refused") from exc
+        for kind, records in current_deletions.items():
+            final_deletions[kind].update(records)
+        if database_deletion_conflicts(
+            partial / "data" / "curiosity.db",
+            final_deletions,
+            snapshot_created_at=snapshot_created_at,
+            expected_database_identity=database_identity,
+        ):
+            raise BackupError("backup contains data deleted during restore; restore refused")
+        merge_deletion_manifest(partial / "data" / "curiosity.db", final_deletions)
+        with sqlite3.connect(partial / "data" / "curiosity.db") as restored_connection:
+            import_replay_tombstones(restored_connection, final_deletions)
+        active_private = repo / "private"
+        active = target == active_private
+        if active:
+            try:
+                prepare_restored_database_registration(
+                    partial / "data" / "curiosity.db",
+                    target / "data" / "curiosity.db",
+                    root,
+                )
+            except RuntimeError as exc:
+                raise BackupError("active restore could not inherit its backup-root registration") from exc
+        register_managed_restore(
+            root,
+            target,
+            snapshot=selected.name,
+            snapshot_created_at=snapshot_created_at,
+            database_identity=database_identity,
+            state="pending",
+        )
+        target_registered = True
         _harden_tree(partial)
+        if _test_hook is not None:
+            _test_hook("before_publish")
         target.mkdir(mode=0o700)
         target_reserved = True
+        if _test_hook is not None:
+            _test_hook("after_target_reservation")
         os.replace(partial, target)
+        target_published = True
+        if _test_hook is not None:
+            _test_hook("after_publish")
+        register_managed_restore(
+            root,
+            target,
+            snapshot=selected.name,
+            snapshot_created_at=snapshot_created_at,
+            database_identity=database_identity,
+            state="published",
+        )
+        unregister_managed_restore(root, partial)
+        staging_registered = False
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True)
-        if target_reserved:
+        if target_published:
+            shutil.rmtree(target, ignore_errors=True)
+        elif target_reserved:
             try:
                 target.rmdir()
             except OSError:
                 pass
+        if target_registered:
+            unregister_managed_restore(root, target)
+        if staging_registered:
+            unregister_managed_restore(root, partial)
         raise
 
-    active_private = repo / "private"
-    active = target == active_private
     return {
         "status": "restored",
         "snapshot": selected.name,

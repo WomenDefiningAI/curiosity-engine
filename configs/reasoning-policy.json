@@ -1,11 +1,20 @@
 {
   "version": "1.0",
   "workflows": {
+    "quick_answer": {
+      "context_depth": 2,
+      "budget": "fast",
+      "generator_role": "reasoning",
+      "critics": ["family_usefulness"],
+      "max_revision_rounds": 1,
+      "final_recovery": "rebuild_from_scratch",
+      "allowed_tools": ["graph_read", "web_search"]
+    },
     "pull_thread": {
       "context_depth": 2,
       "budget": "fast",
       "generator_role": "reasoning",
-      "critics": ["factual", "pedagogy", "context"],
+      "critics": ["family_usefulness", "pedagogy"],
       "max_revision_rounds": 2,
       "final_recovery": "rebuild_from_scratch",
       "allowed_tools": ["graph_read", "web_search"]

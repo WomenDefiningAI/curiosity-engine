@@ -9,7 +9,11 @@ from typing import Any
 
 from .config import family_home, family_workspace, private_root
 
-SERVICE_NAMES = ("curiosity-engine-slack.service", "curiosity-engine-worker.service")
+SERVICE_NAMES = (
+    "curiosity-engine-slack.service",
+    "curiosity-engine-worker.service",
+    "curiosity-engine-dashboard.service",
+)
 
 
 def _quote_systemd(value: str | Path) -> str:
@@ -58,6 +62,21 @@ def unit_definitions(executable: str | Path | None = None) -> dict[str, str]:
         "curiosity-engine-worker.service": _unit(
             [command, "worker", "--forever", "--db", str(db)],
             description="Curiosity Engine scheduled work runner",
+        ),
+        "curiosity-engine-dashboard.service": _unit(
+            [
+                command,
+                "serve",
+                "--db",
+                str(db),
+                "--output-dir",
+                str(output),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8766",
+            ],
+            description="Curiosity Engine private local review dashboard",
         ),
     }
 

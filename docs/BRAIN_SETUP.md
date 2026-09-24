@@ -1,5 +1,25 @@
 # LLM brain setup
 
+## Optional fast text review with JEV
+
+Set `CURIOSITY_TEXT_REVIEW=jev` in the runtime environment and place `TYPESAFE_API_KEY`
+in owner-only `private/setup/typesafe.env` (`chmod 600`). `CURIOSITY_TYPESAFE_KEY_FILE`
+can point to a separate owner-only file. The default `configured` setting retains
+the existing critics, so a TypeSafe account is optional.
+
+This sends the bounded parent request, relevant request context and draft reply to
+TypeSafe's pinned `jev-1.13.0`. One sequential request replaces the text critics for
+ordinary answers and learning threads. Ready drafts proceed; edits/rework use the
+existing bounded correction loop. API errors remain errors without another judge
+or hidden retry. Generation, photo inspection, actual-page visual review and
+consequential workflows keep their existing provider routes. Set the option back
+to `configured` and restart the runtime to revert.
+
+The same readiness choices power the [human comparison reader](HARNESS_EXPERIMENTS.md).
+Text ratings do not certify pictures, parent approval or child learning. Human
+picture review should consider concept clarity and appeal to a young child;
+optional stylistic preferences are not failures.
+
 Slack is only the transport. The brain is one or more model APIs; local code still controls context, schemas, critics, retries, storage, and side effects.
 
 Provider APIs are the supported runtime because they have explicit model IDs, request contracts, timeouts, and billing. Coding-agent operation is an [experimental attended option](CODING_AGENT_RUNTIME.md).
@@ -59,7 +79,7 @@ curiosity visual mode --mode decorative
 curiosity visual test --live
 ```
 
-The paid test sends one fixed, family-free hybrid-card prompt and stores the result under ignored private output. The maintained OpenAI adapter uses medium-quality square output for family-facing art. Another configured image provider is reported as not runtime-ready instead of silently falling back to the reasoning model.
+The paid test sends one fixed, family-free hybrid-card prompt and stores the result under ignored private output. Ordinary Slack decoration keeps the maintained OpenAI adapter's medium-quality square default. Challenge pages request one high-quality landscape image from the same configured model, using a fixed family-free prompt; code still owns all text, diagrams, and response areas. Another configured image provider is reported as not runtime-ready instead of silently falling back to the reasoning model.
 
 ## Acceptance before recommendation
 

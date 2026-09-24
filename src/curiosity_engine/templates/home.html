@@ -13,7 +13,7 @@
       <h1>Curiosity Engine</h1>
       <p class="subtitle">Slack is the daily front door. This private page is for setup, review, and paper downloads.</p>
     </div>
-    <span class="privacy">Private on this Mac</span>
+    <div class="header-actions"><span class="privacy">Private locally</span><a class="text-link" href="/evals">Open Visual Eval Lab</a></div>
   </header>
 
   <section class="journey" aria-label="How Curiosity Engine works">
@@ -54,6 +54,28 @@
       <div><p class="eyebrow">DAILY ACCESS</p><h2>Use Slack to catch the moment</h2><p>Run <code>curiosity slack run</code>, then DM the paired bot or explicitly mention it in a paired family channel.</p></div>
       <div class="setup-stat"><strong>{{ state.onboarding.bindings|length }}</strong><span>Slack binding(s)</span></div>
     </section>
+
+    {% if state.thread_compactions %}
+    <section class="panel wide tone-think" id="thread-compactions">
+      <div class="section-head"><div><p class="eyebrow">CONTEXT CONTINUITY</p><h2>Inspectable thread compactions</h2></div><span class="count">{{ state.thread_compactions|length }}</span></div>
+      <p class="fine">Each immutable snapshot stores references and hashes—not child traits, learner evidence, artifact contents, or raw parent text. Current statuses below are refreshed from their source records.</p>
+      {% for item in state.thread_compactions %}
+      <details class="evidence-card">
+        <summary><strong>{{ item.transport }} thread</strong> · through message {{ item.immutable.covers_through_ordinal }} · {{ item.state }}</summary>
+        <dl class="evidence-meta">
+          <div><dt>Snapshot</dt><dd><code>{{ item.immutable.compaction_id }}</code></dd></div>
+          <div><dt>Hash</dt><dd><code>{{ item.immutable.summary_hash }}</code></dd></div>
+          <div><dt>Memory refs</dt><dd>{{ item.runtime_summary.constraint_refs|length }}</dd></div>
+          <div><dt>Recent raw turns</dt><dd>{{ item.recent_message_count }}</dd></div>
+        </dl>
+        <h3>Fresh decision status</h3>
+        {% for decision in item.runtime_summary.decisions %}<p><code>{{ decision.tool_call_id }}</code> · {{ decision.tool_name }} · {{ decision.status }}</p>{% else %}<p class="empty">No governed decisions in this snapshot.</p>{% endfor %}
+        <h3>Fresh output status</h3>
+        {% for output in item.runtime_summary.output_pointers %}<p><code>{{ output.release_unit_id }}</code> · {{ output.unit_type }} · {{ output.status }}</p>{% else %}<p class="empty">No release units in this snapshot.</p>{% endfor %}
+      </details>
+      {% endfor %}
+    </section>
+    {% endif %}
 
     {% if state.inbox %}
     <section class="panel wide tone-connect" id="inbox">
@@ -98,14 +120,141 @@
       {% endif %}
     </section>
 
+    <section class="panel wide tone-learn" id="family-model">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">OPEN FAMILY MODEL</p>
+          <h2>What the engine thinks it has seen</h2>
+          <p class="fine">These are revisable inferences—not grades, diagnoses, or permanent labels. Personalization stays shadow-only unless both an operator-reviewed policy and your family opt-in are present.</p>
+        </div>
+        <span class="badge">{% if state.family_model.controls.collection_enabled %}collection on{% else %}collection paused{% endif %}</span>
+      </div>
+
+      <div class="model-controls">
+        <form method="post" action="/family-model/collection">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+          <input type="hidden" name="enabled" value="{% if state.family_model.controls.collection_enabled %}no{% else %}yes{% endif %}">
+          <label>Why are you changing collection? <input name="reason" required maxlength="500" value="Parent changed the learner-model collection setting."></label>
+          <button class="secondary">{% if state.family_model.controls.collection_enabled %}Pause new learning records{% else %}Resume new learning records{% endif %}</button>
+          <p class="fine">A pause stops new learner/profile records. Questions and answers still work and remain under the separate conversation-retention setting.</p>
+        </form>
+        <form method="post" action="/family-model/personalization">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+          <input type="hidden" name="enabled" value="{% if state.family_model.controls.recommendation_use_enabled %}no{% else %}yes{% endif %}">
+          <label>Why are you changing personalization? <input name="reason" required maxlength="500" value="Parent changed the evaluated-personalization setting."></label>
+          <button class="secondary">{% if state.family_model.controls.recommendation_use_enabled %}Turn off personalization{% else %}Opt in to evaluated personalization{% endif %}</button>
+          <p class="fine">Current effect: {% if state.family_model.controls.recommendation_use_effective %}challenge and interest support may be calibrated{% else %}shadow comparison only{% endif %}. Strategy alternatives remain shadow-only.</p>
+        </form>
+        <form method="post" action="/family-model/export">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+          <button class="secondary">Export complete learner-model record</button>
+        </form>
+        <a class="text-link" href="/family-model/child-reflection?child={{ state.selected_child_id|urlencode }}">Preview a child-friendly reflection</a>
+      </div>
+
+      <div class="inference-grid">
+        <div>
+          <h3>Learning inferences</h3>
+          {% for item in state.family_model.inferences.knowledge %}
+          <article class="inference-card">
+            <div class="section-head"><strong>{{ item.label }}</strong><span class="badge">{{ item.display_state }}</span></div>
+            <p>{{ item.explanation }}</p>
+            <details><summary>Why this appears</summary><p>{{ item.why }}</p><p class="meta">Uncertainty: {{ (item.uncertainty * 100)|round|int }}% · rule {{ item.rule_id }}@{{ item.rule_version }}</p></details>
+          </article>
+          {% else %}<p class="empty">No learning inference has enough eligible evidence yet.</p>{% endfor %}
+        </div>
+        <div>
+          <h3>Interest inferences</h3>
+          {% for item in state.family_model.inferences.interests %}
+          <article class="inference-card">
+            <div class="section-head"><strong>{{ item.label }}</strong><span class="badge">{{ item.display_state }}</span></div>
+            <p>{{ item.explanation }}</p>
+            <details><summary>Why this appears</summary><p>{{ item.why }}</p><p class="meta">Uncertainty: {{ (item.uncertainty * 100)|round|int }}% · next review: {{ item.next_review_at or 'no automatic expiry' }}</p></details>
+          </article>
+          {% else %}<p class="empty">No recurring interest inference has enough eligible evidence yet.</p>{% endfor %}
+        </div>
+      </div>
+
+      <h3>Evidence ledger</h3>
+      <p class="fine">Open an item to see its source, why it counted, correction history, and retention controls. Raw source text stays on this local page and never enters model context through this view.</p>
+      {% for item in state.family_model.evidence[:20] %}
+      <details class="evidence-card">
+        <summary><strong>{{ item.concept_label }}</strong> · {{ item.construct|replace('_',' ') }} · {% if item.counted %}counted{% else %}not counted{% endif %}</summary>
+        <p class="source-excerpt">{{ item.source_excerpt }}</p>
+        <p>{{ item.why_counted }}</p>
+        <dl class="evidence-meta">
+          <div><dt>Observed</dt><dd>{{ item.occurred_at }}</dd></div>
+          <div><dt>Result</dt><dd>{{ item.effective_result|replace('_',' ') }}</dd></div>
+          <div><dt>Help</dt><dd>{{ item.effective_assistance_level|replace('_',' ') }}</dd></div>
+          <div><dt>Response</dt><dd>{{ item.response_mode|replace('_',' ') }}</dd></div>
+          <div><dt>Source</dt><dd>{{ item.source_type|replace('_',' ') }}</dd></div>
+          <div><dt>Retain until</dt><dd>{{ item.effective_retain_until or 'no automatic deadline' }}</dd></div>
+        </dl>
+        {% if item.corrections %}<details><summary>Correction history</summary>{% for correction in item.corrections %}<p>{{ correction.action }} · {{ correction.reason }} · {{ correction.created_at }}</p>{% endfor %}</details>{% endif %}
+        <div class="ledger-actions">
+          <form method="post" action="/family-model/evidence/{{ item.evidence_id }}/correct">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+            <input type="hidden" name="action" value="{% if item.active %}exclude{% else %}restore{% endif %}">
+            <label>Reason <input name="reason" required maxlength="500" placeholder="What should the record reflect?"></label>
+            <button class="secondary">{% if item.active %}Exclude this evidence{% else %}Restore this evidence{% endif %}</button>
+          </form>
+          <form method="post" action="/family-model/evidence/{{ item.evidence_id }}/correct">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><input type="hidden" name="action" value="correct">
+            <label>Correct result <select name="result"><option value="correct">Correct</option><option value="partial">Partial</option><option value="incorrect">Incorrect</option><option value="not_observed">Not observed</option><option value="abandoned">Stopped</option></select></label>
+            <label>Correct help level <select name="assistance_level"><option value="none">None</option><option value="clarifying_prompt">Clarifying prompt</option><option value="general_prompt">General prompt</option><option value="hint">Hint</option><option value="worked_example">Worked example</option><option value="joint_completion">Done together</option><option value="direct_answer">Direct answer</option><option value="unknown">Unknown</option></select></label>
+            <label>Reason <input name="reason" required maxlength="500"></label>
+            <button class="secondary">Save correction</button>
+          </form>
+          <form method="post" action="/family-model/sources/{{ item.opportunity_id }}/retention">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+            <label>Delete this source after <select name="days"><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label>
+            <label>Reason <input name="reason" required maxlength="500" value="Parent selected a shorter retention period."></label>
+            <button class="secondary">Set retention</button>
+          </form>
+          <form method="post" action="/family-model/sources/{{ item.opportunity_id }}/delete">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+            <label>Type delete <input name="confirmation" required autocomplete="off"></label>
+            <label>Reason <input name="reason" required maxlength="500"></label>
+            <button class="secondary danger">Delete this learning source</button>
+          </form>
+          <form method="post" action="/family-model/events/{{ item.event_id }}/delete">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+            <label>To also delete the raw source event, type <code>{{ item.event_id }}</code><input name="confirmation" required autocomplete="off"></label>
+            <label>Reason <input name="reason" required maxlength="500"></label>
+            <button class="secondary danger">Delete source event and linked outputs</button>
+            <p class="fine">Removes directly linked local records and private output files. Already delivered Slack copies follow your Slack workspace retention policy.</p>
+          </form>
+        </div>
+      </details>
+      {% else %}<p class="empty">No Phase 1 learning evidence is stored for this child.</p>{% endfor %}
+
+      <details class="model-delete">
+        <summary>Delete all learner-model data for this child</summary>
+        <p class="fine">This removes current and legacy learning evidence, graph/claim inferences, observations, signals, episodes, model runs, and child-reflection responses, then pauses collection. Explicit family preferences plus raw question, reviewed-answer, and transport history follow separate controls and retention contracts.</p>
+        <form method="post" action="/family-model/delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}">
+          <label>Type the child ID <code>{{ state.selected_child_id }}</code><input name="confirmation" required autocomplete="off"></label>
+          <label>Reason <input name="reason" required maxlength="500"></label>
+          <button class="danger">Delete learner-model data</button>
+        </form>
+      </details>
+    </section>
+
     <section class="panel wide tone-think" id="responses">
       <div class="section-head"><div><p class="eyebrow">RECENT THREADS</p><h2>Questions and responses</h2></div></div>
       {% for response in state.responses %}
       <article class="response">
         <p class="question">{{ response.question }}</p>
         {% if response.status == 'completed' %}
+          {% if response.output.parent_response or response.output.answer %}
+          <p style="white-space: pre-wrap">{{ response.output.parent_response or response.output.answer }}</p>
+          {% else %}
           <h3>{{ response.output.hook }}</h3>
           <div class="response-grid"><div><span>SHOW</span><p>{{ response.output.show }}</p></div><div><span>ASK</span><p>{{ response.output.ask }}</p></div><div><span>NUGGET</span><p>{{ response.output.nugget }}</p></div></div>
+          {% endif %}
           {% if response.output.physical_extension %}<p class="extension"><strong>Try it:</strong> {{ response.output.physical_extension.title }} — {{ response.output.physical_extension.instructions|join(' ') }}</p>{% endif %}
           <p class="meta">{{ response.output._reasoning.backend }} · private resources: {{ response.output._reasoning.private_resource_mode }}</p>
           <form method="post" action="/responses/{{ response.event_id }}/artifact"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="child_id" value="{{ state.selected_child_id }}"><button class="secondary">Make a one-page wonder sheet</button></form>

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "family-inspector-provenance-and-isolation",
+    "kind": "inspectable_provenance"
+  },
+  {
+    "id": "parent-correction-recomputes",
+    "kind": "correction_recomputes"
+  },
+  {
+    "id": "child-co-review-is-not-evidence",
+    "kind": "child_review_is_not_evidence"
+  },
+  {
+    "id": "collection-pause-keeps-answering-without-profiling",
+    "kind": "pause_is_service_safe"
+  },
+  {
+    "id": "deleted-event-replay-is-blocked",
+    "kind": "deleted_event_cannot_replay"
+  }
+]

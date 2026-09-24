@@ -1,0 +1,46 @@
+"""Representative family-facing routing journeys.
+
+The exhaustive routing matrix remains in ``legacy_natural_routing_v2.py``.
+"""
+
+import legacy_natural_routing_v2 as legacy
+
+test_quick_answer_is_reviewed_but_retry_can_offer_a_learning_move = (
+    legacy.test_quick_answer_is_reviewed_but_retry_can_offer_a_learning_move
+)
+test_natural_child_wants_an_idea_is_answered_instead_of_saved_as_context = (
+    legacy.test_natural_child_wants_an_idea_is_answered_instead_of_saved_as_context
+)
+test_saved_context_recall_preserves_the_child_and_full_note = (
+    legacy.test_saved_context_recall_preserves_the_child_and_full_note
+)
+test_parent_teacher_writing_request_does_not_create_child_evidence = (
+    legacy.test_parent_teacher_writing_request_does_not_create_child_evidence
+)
+test_context_can_source_an_artifact_without_becoming_graph_evidence = (
+    legacy.test_context_can_source_an_artifact_without_becoming_graph_evidence
+)
+test_parent_observation_is_context_not_an_unsolicited_lesson = (
+    legacy.test_parent_observation_is_context_not_an_unsolicited_lesson
+)
+test_explicit_step_visual_followup_creates_an_activity_card = (
+    legacy.test_explicit_step_visual_followup_creates_an_activity_card
+)
+test_negative_feedback_is_recorded_and_repaired_briefly = (
+    legacy.test_negative_feedback_is_recorded_and_repaired_briefly
+)
+test_clear_natural_child_question_cannot_bypass_reviewed_generation = (
+    legacy.test_clear_natural_child_question_cannot_bypass_reviewed_generation
+)
+test_saved_preference_text_never_leaks_into_child_evidence_and_can_be_forgotten = (
+    legacy.test_saved_preference_text_never_leaks_into_child_evidence_and_can_be_forgotten
+)
+test_initial_artifact_request_creates_a_non_evidence_source_and_reference_page = (
+    legacy.test_initial_artifact_request_creates_a_non_evidence_source_and_reference_page
+)
+test_child_is_wondering_routes_to_answer_not_context_only = (
+    legacy.test_child_is_wondering_routes_to_answer_not_context_only
+)
+test_requested_game_prompts_render_as_ready_to_use_parent_lines = (
+    legacy.test_requested_game_prompts_render_as_ready_to_use_parent_lines
+)

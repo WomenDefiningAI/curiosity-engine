@@ -1,0 +1,16 @@
+{
+  "examples": [
+    {
+      "input": "One game for a preschooler while the parent is occupied.",
+      "output": "A short first action and a repeatable playful response requiring no extra materials.",
+      "use_as_is": "use_as_is",
+      "reason": "The parent can say it and start; no quiz, scoring or record is required."
+    },
+    {
+      "input": "Only my phone; show two movement choices.",
+      "output": "A worksheet that asks the child to draw and cut out choices.",
+      "use_as_is": "would_not_use",
+      "reason": "The requested use cannot happen with the stated device and materials."
+    }
+  ]
+}
