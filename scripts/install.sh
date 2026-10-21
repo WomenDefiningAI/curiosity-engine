@@ -41,7 +41,7 @@ mkdir -p "$CURIOSITY_HOME/private" "$CURIOSITY_HOME/workspace"
 if [ ! -x "$RUNTIME/bin/python" ]; then
   "$PYTHON" -m venv "$RUNTIME"
 fi
-"$RUNTIME/bin/python" -m pip install --upgrade pip
+"$RUNTIME/bin/python" -m pip install --upgrade "pip>=26.2.2"
 "$RUNTIME/bin/python" -m pip install "$INSTALL_TARGET"
 echo "Curiosity Engine installed without cloning a source repository."
 if [ "$NO_SETUP" -eq 0 ]; then
