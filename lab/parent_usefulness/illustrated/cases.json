@@ -1,0 +1,127 @@
+{
+  "version": "illustrated-parent-usefulness-v1",
+  "status": "development_unscored",
+  "cases": [
+    {
+      "id": "IV01",
+      "split": "development",
+      "topic_family": "woodland-identification",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a beautiful illustrated clue page for my nonreading five-year-old: rabbit, hedgehog and snail. We will point to the animal with long ears, prickles or a shell. Big actual animal pictures, no writing needed.",
+          "Keep those same animal pictures, but make them bigger and remove any answer boxes."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Recognizable detailed animal illustrations fill the useful picture areas.",
+          "Clues can be answered by looking at ears, prickles and shell.",
+          "Revision preserves the artwork itself and visibly enlarges it."
+        ],
+        "common_misses": [
+          "Generic vector blobs in place of requested illustrations.",
+          "Pictures regenerated or smaller after enlargement request."
+        ],
+        "parent_burden_to_watch": "Adult must explain or redraw an unclear picture.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "IV02",
+      "split": "development",
+      "topic_family": "story-action",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make four illustrated story cards my five-year-old can arrange and tell aloud: a little dog loses a red boot, looks by a bench, finds it under a tree, and puts it on. Same dog and boot in every picture where they appear. Mix up the cards. No writing activity."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Warm appealing illustrations show clearly different actions.",
+          "Dog and red boot are visually consistent across the story.",
+          "Sequence can be inferred from pictures; page does not print sequence answers."
+        ],
+        "common_misses": [
+          "Four similar portraits with action only in captions.",
+          "Extra boots, inconsistent character, or printed sequence numbers."
+        ],
+        "parent_burden_to_watch": "Adult must explain or redraw an unclear picture.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "IV03",
+      "split": "development",
+      "topic_family": "bean-sprout-comparison",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make an illustrated side-by-side diagram of a dry bean and a sprouting bean for my five-year-old. Big close-up pictures, a few clear labels for the root and shoot, and one short thing I can say. We only want to look and point."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Pictures clearly show dry versus sprouting bean, emerging root and shoot.",
+          "Readable labels sit with the correct pictured structures.",
+          "Illustrations are attractive and concrete enough to support observation."
+        ],
+        "common_misses": [
+          "Generic plant icon replacing actual bean comparison.",
+          "Root/shoot labels disconnected from the pictured structures."
+        ],
+        "parent_burden_to_watch": "Adult must explain or redraw an unclear picture.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "IV04",
+      "split": "development",
+      "topic_family": "strawberry-sharing",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a pretty picture challenge page with exactly six large strawberry pictures to share between two toy animals we already have. My child cannot read. Leave space to try different groups. No scissors and no answer filled in."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Six recognizable appetizing strawberry illustrations, countable at a glance.",
+          "Large blank areas make it possible to point or draw different shares.",
+          "No solved grouping, duplicate fruit embedded inside each repeated token, or cutting required."
+        ],
+        "common_misses": [
+          "More or fewer than six actual fruit objects.",
+          "Decorative fruit that cannot be used for the challenge."
+        ],
+        "parent_burden_to_watch": "Adult must explain or redraw an unclear picture.",
+        "rendered_artifact_required": true
+      }
+    }
+  ]
+}

@@ -14,7 +14,7 @@ from curiosity_engine.brain_config import (
 from curiosity_engine.cli import dump
 from curiosity_engine.db import connect, init_db, utcnow
 from curiosity_engine.interaction import configure_family_lens, onboarding_status, record_onboarding_review
-from curiosity_engine.lab import evaluate
+from curiosity_engine.lab import _run_semantic_case
 from curiosity_engine.onboarding import doctor, run_brain_probe, run_image_generation_probe
 
 
@@ -40,6 +40,26 @@ def test_private_brain_stack_requires_reasoning_vision_ocr_image_and_credentials
     assert status["configured"] is True
     assert status["multimodal_stack_configured"] is True
     assert status["providers"] == ["openai"]
+
+
+def test_brain_configuration_supports_an_independent_recipe_judge_route() -> None:
+    config = configure_api_brain(
+        provider="openai",
+        model="behavior-model",
+        judge_provider="anthropic",
+        judge_model="judge-model",
+        judge_reasoning_effort="high",
+    )
+    assert config.routes["reasoning"].model == "behavior-model"
+    assert config.routes["judge"].provider == "anthropic"
+    assert config.routes["judge"].model == "judge-model"
+    assert config.routes["judge"].reasoning_effort == "high"
+    with pytest.raises(ValueError, match="requires --judge-model"):
+        configure_api_brain(
+            provider="openai",
+            model="behavior-model",
+            judge_provider="anthropic",
+        )
 
 
 def test_brain_template_never_rewrites_existing_credentials(
@@ -196,9 +216,21 @@ def test_offline_lab_never_inherits_private_provider_settings(
     )
     monkeypatch.setenv("CURIOSITY_BACKEND", "openai")
     monkeypatch.setenv("CURIOSITY_MODEL_ENV", str(model_path))
-    report = evaluate(Path(__file__).resolve().parents[1], live_judge=False)
-    assert report["status"] == "pass"
-    assert report["summary"]["failed"] == 0
+    output, failures = _run_semantic_case(
+        "family_usefulness",
+        {
+            "id": "offline-provider-isolation",
+            "workflow": "quick_answer",
+            "input": "Why does ice float?",
+            "quality_contract": {
+                "required_fields": ["answer"],
+                "required_any": [["less dense"], ["floats"]],
+                "forbid_generic_filler": True,
+            },
+        },
+    )
+    assert failures == []
+    assert output["_reasoning"]["backend"] == "deterministic"
 
 
 def test_doctor_fails_safely_outside_a_protected_checkout(

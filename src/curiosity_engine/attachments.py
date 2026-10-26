@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from .db import connect, init_db, jdump, jload, utcnow
-from .transports.contracts import InboundMessage
+from .transports.contracts import MAX_INBOUND_ATTACHMENTS, InboundMessage
 
 
 def persist_inbound_attachments(
@@ -54,7 +54,74 @@ def persist_inbound_attachments(
                     now,
                 ),
             )
-    return attachments_for_event(db_path, binding_id=binding_id, external_event_id=message.external_event_id)
+    assets = attachments_for_event(db_path, binding_id=binding_id, external_event_id=message.external_event_id)
+    by_ref = {asset["external_ref_hash"]: asset for asset in assets}
+    return [by_ref[item.external_ref_hash] for item in message.attachments if item.external_ref_hash in by_ref]
+
+
+def source_photo_assets(db_path: str | Path, event_id: str | None, *, session_id: str) -> list[dict[str, Any]]:
+    """Resolve original photos inside the current session; never accept model paths."""
+    seen: set[str] = set()
+    child_id = None
+    with connect(db_path) as conn:
+        while event_id and event_id not in seen and len(seen) < 24:
+            seen.add(event_id)
+            row = conn.execute(
+                "SELECT child_id,metadata_json FROM events WHERE id=? AND EXISTS "
+                "(SELECT 1 FROM agent_messages WHERE event_id=events.id AND session_id=?)",
+                (event_id, session_id),
+            ).fetchone()
+            if not row or (child_id is not None and row["child_id"] != child_id):
+                break
+            child_id = row["child_id"]
+            assets = conn.execute(
+                """SELECT a.* FROM inbound_assets a JOIN transport_receipts t
+                   ON t.binding_id=a.binding_id AND t.external_event_id=a.external_event_id
+                   AND t.transport='slack' WHERE t.event_id=? AND a.session_id=?
+                   ORDER BY a.created_at,a.rowid LIMIT ?""", (event_id, session_id, MAX_INBOUND_ATTACHMENTS),
+            ).fetchall()
+            if assets:
+                return [_asset(asset) for asset in assets]
+            meta = jload(row["metadata_json"])
+            event_id = meta.get("context_source_event_id") or meta.get("related_event_id") or meta.get("retry_of_event_id")
+    return []
+
+
+def source_photo_context(db_path: str | Path, event_id: str | None) -> list[dict[str, Any]]:
+    """Follow the existing conversation lineage to its most recent photo batch.
+
+    Re-read source records, so deleted sources cannot be recovered from a cache.
+    This is task context, not a claim about what the child understands.
+    """
+    seen: set[str] = set()
+    child_id = None
+    with connect(db_path) as conn:
+        while event_id and event_id not in seen and len(seen) < 24:
+            seen.add(event_id)
+            row = conn.execute("SELECT child_id,metadata_json FROM events WHERE id=?", (event_id,)).fetchone()
+            if not row or (child_id is not None and row["child_id"] != child_id):
+                break
+            child_id = row["child_id"]
+            # Read the original intake batch when available. This also picks up
+            # attachments recovered after a partial intake without rewriting the
+            # parent's event or copying stale observations into another store.
+            assets = conn.execute(
+                """SELECT a.observation_json FROM inbound_assets a
+                   JOIN transport_receipts t ON t.binding_id=a.binding_id
+                     AND t.external_event_id=a.external_event_id AND t.transport='slack'
+                   WHERE t.event_id=? ORDER BY a.created_at,a.rowid LIMIT ?""",
+                (event_id, MAX_INBOUND_ATTACHMENTS),
+            ).fetchall()
+            observations = [jload(asset["observation_json"]) for asset in assets]
+            if observations and all(observations):
+                return observations
+            metadata = jload(row["metadata_json"])
+            photos = metadata.get("parent_shared_image_context") or metadata.get("attachment_context") or []
+            if photos:
+                return [item for item in photos[:MAX_INBOUND_ATTACHMENTS] if isinstance(item, dict)]
+            event_id = (metadata.get("context_source_event_id") or metadata.get("related_event_id")
+                        or metadata.get("retry_of_event_id"))
+    return []
 
 
 def attachments_for_event(
@@ -78,7 +145,7 @@ def attachments_for_inbox(db_path: str | Path, inbox_id: str) -> list[dict[str, 
 
 
 def attachments_for_session(
-    db_path: str | Path, session_id: str, *, limit: int = 3
+    db_path: str | Path, session_id: str, *, limit: int = MAX_INBOUND_ATTACHMENTS
 ) -> list[dict[str, Any]]:
     with connect(db_path) as conn:
         rows = conn.execute(

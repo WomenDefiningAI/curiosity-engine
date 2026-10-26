@@ -1,0 +1,5 @@
+[
+  {"id": "direct-no-evidence", "input": "Just tell me why the Moon looks like it follows us.", "expected_intent": "direct_answer", "expected_evidence": "not_collected", "expect_no_activity": true},
+  {"id": "inquiry-template-only", "input": "What happens if we predict and test which ice cube melts first?", "expected_intent": "guided_inquiry", "expected_evidence": "future_observation_only"},
+  {"id": "teach-back-template-only", "input": "Ask me to teach back how a robot sensor works.", "expected_intent": "teach_back", "expected_strategy": "teach-back-k2", "expected_evidence": "future_observation_only"}
+]

@@ -8,6 +8,8 @@ from pydantic import Field
 
 from ..contracts import StrictModel
 
+MAX_INBOUND_ATTACHMENTS = 10
+
 
 class InboundAttachment(StrictModel):
     """A private, validated transport attachment; never a public asset reference."""
@@ -29,7 +31,7 @@ class InboundMessage(StrictModel):
     text: str = Field(min_length=1, max_length=20_000)
     thread_id: str | None = Field(default=None, max_length=120)
     occurred_at: str | None = Field(default=None, max_length=80)
-    attachments: list[InboundAttachment] = Field(default_factory=list, max_length=3)
+    attachments: list[InboundAttachment] = Field(default_factory=list, max_length=MAX_INBOUND_ATTACHMENTS)
 
     @property
     def payload_hash(self) -> str:

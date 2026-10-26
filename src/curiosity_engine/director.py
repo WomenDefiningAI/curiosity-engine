@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .config import AppConfig
-from .context_builder import build_context
+from .context_builder import build_context, prepare_model_inputs
 from .contracts import DirectorCandidate
 from .db import connect, init_db, jdump, jload, utcnow
 from .reasoning import POLICIES, ReasoningEngine
@@ -115,14 +115,21 @@ class AutonomousDirector:
                     {"type": "scheduled_reflection", "text": "weekly reflection", "metadata": {}},
                     depth=policy.context_depth,
                 )
-                envelope = self.reasoning.run(
-                    policy=policy,
-                    context=context,
-                    event={
+                model_context, model_event, _shadow_diagnostic = prepare_model_inputs(
+                    context,
+                    {
                         "type": "scheduled_reflection",
                         "child_id": child_id,
-                        "text": "Find at most one unusually timely, low-effort learning opportunity; doing nothing is valid.",
+                        "text": (
+                            "Find at most one unusually timely, low-effort learning opportunity; "
+                            "doing nothing is valid."
+                        ),
                     },
+                )
+                envelope = self.reasoning.run(
+                    policy=policy,
+                    context=model_context,
+                    event=model_event,
                 )
                 choice = DirectorCandidate.model_validate(envelope.output["choice"])
                 considered = envelope.output.get("considered", [])

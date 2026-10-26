@@ -1,6 +1,11 @@
 # Bounded autonomy
 
-The autonomous Director exists because important learning opportunities are intersections the parent should not have to explicitly request.
+For the trusted-parent beta, autonomy is not the default product shape. Ordinary assistance ends in a parent-visible
+answer or draft. Child-usable material requires parent review. A durable/background action requires explicit consent
+and provenance. The Director below remains disabled compatibility work and is not a beta launch dependency.
+
+The autonomous Director was built to explore learning opportunities a parent might not explicitly request. That
+hypothesis remains unvalidated and does not override the simpler parent-led workflow.
 
 ## Loop
 

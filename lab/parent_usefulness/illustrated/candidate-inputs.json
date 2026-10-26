@@ -1,0 +1,47 @@
+{
+  "IV01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a beautiful illustrated clue page for my nonreading five-year-old: rabbit, hedgehog and snail. We will point to the animal with long ears, prickles or a shell. Big actual animal pictures, no writing needed.",
+      "Keep those same animal pictures, but make them bigger and remove any answer boxes."
+    ]
+  },
+  "IV02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make four illustrated story cards my five-year-old can arrange and tell aloud: a little dog loses a red boot, looks by a bench, finds it under a tree, and puts it on. Same dog and boot in every picture where they appear. Mix up the cards. No writing activity."
+    ]
+  },
+  "IV03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make an illustrated side-by-side diagram of a dry bean and a sprouting bean for my five-year-old. Big close-up pictures, a few clear labels for the root and shoot, and one short thing I can say. We only want to look and point."
+    ]
+  },
+  "IV04": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a pretty picture challenge page with exactly six large strawberry pictures to share between two toy animals we already have. My child cannot read. Leave space to try different groups. No scissors and no answer filled in."
+    ]
+  }
+}

@@ -1,34 +1,47 @@
 {
-  "release_id": "0.1.0-slack-mvp",
+  "release_id": "0.6.0-research-track-candidate",
   "channel": "alpha",
   "runtime": {
     "harness": "curiosity_engine.runtime.CuriosityHarness",
     "director": "curiosity_engine.director.AutonomousDirector",
     "reasoning_policy": "configs/reasoning-policy.json",
+    "pedagogy_registry": "configs/pedagogy-registry.json",
     "context_policy": "configs/context-policy.json",
     "autonomy_policy": "configs/autonomy-policy.json"
   },
   "components": {
     "context_builder": {"version": "3", "default_pull_thread_depth": 2, "default_weekly_depth": 4, "episode_aware": true},
-    "pull_thread": {"workflow_version": "7", "model_role": "reasoning", "critics": ["critic_factual", "critic_pedagogy", "critic_context"], "visual_intent": true, "final_recovery": "rebuild_from_scratch"},
+    "quick_answer": {"workflow_version": "2", "model_role": "reasoning", "critics": ["critic_family_usefulness"], "visual_intent": "explicit_only", "final_recovery": "rebuild_from_scratch"},
+    "pull_thread": {"workflow_version": "8", "model_role": "reasoning", "critics": ["critic_family_usefulness", "critic_pedagogy"], "visual_intent": "supportive_diagrams_or_explicit", "final_recovery": "rebuild_from_scratch"},
+    "pedagogy_kernel": {"contract_version": "2.1", "validator_version": "2.1", "plan_before_generation": true, "phase1_definitions_materialized": true, "shadow_personalization": true},
+    "family_model": {"view_version": "phase3-v1", "parent_inspectable": true, "correction_and_deletion": true, "retention_controls": true, "child_co_review_optional": true, "child_review_is_evidence": false, "recommendation_use": "operator_and_family_gated"},
+    "adaptation_control": {"version": "phase4-v1", "parent_memory_separate_from_evidence": true, "recipe_human_promotion": true, "structured_compaction": true, "durable_background_runs": true, "parent_confirmed_delivery": true},
+    "evaluated_personalization": {"version": "phase5-v2", "shadow_strategy_selection": true, "calibrated_fields": ["challenge_assumption", "interest_support"], "typed_feedback_only": true, "categorical_replay": true, "finite_outcomes_only": true, "sqlite_replay_guard": true, "exact_decision_binding": true, "exact_concept_version_binding": true, "authorization_epochs": true, "artifact_authorization_fences": true, "observable_behavior_route": true, "independent_judge_identity": true, "full_release_content_manifest": true, "live_judged_candidate_answer": true, "separate_reviewer_and_operator": true, "family_opt_in": true, "auto_promote": false},
+    "research_track": {"version": "phase6-v1", "status": "candidate", "uncertainty_role": "advisory_only", "deterministic_projection_authority": true, "correction_aware": true, "distinct_episode_minimum": 3, "approved_corpus_manifest_required": true, "independent_privacy_review_required": true, "real_calibration_required": true, "synthetic_can_unlock": false, "group_disjoint_holdout": true, "release_content_bound": true, "internal_live_lab_required": true, "separate_reviewer_and_operator": true, "family_opt_in": true, "proactivity_output": "candidate_only", "delivery_enabled": false, "auto_promote": false},
     "weekly_reflection": {"workflow_version": "2", "enabled": false, "model_role": "reasoning", "critics": ["critic_pedagogy", "critic_context", "critic_parent_effort", "critic_factual"]},
-    "artifact_validator": {"version": "2", "model_role": "visual_qa"},
+    "artifact_validator": {"version": "3", "model_role": "visual_qa"},
     "school_context": {"workflow_version": "2", "model_role": "structured_extraction"},
     "resource_index": {"version": "1", "private_by_default": true},
     "jobs": {"version": "1", "durable": true, "max_attempts": 3},
-    "paper_artifacts": {"version": "2", "approval_required": true, "hash_bound": true, "printing_optional": true},
+    "paper_artifacts": {"version": "3", "approval_required": true, "hash_bound": true, "printing_optional": true, "worksheet_archetypes": 13, "researched_images": true},
     "slack_transport": {"version": "2", "pairing_required": true, "socket_mode": true, "durable_visual_uploads": true},
-    "response_visuals": {"version": "5", "one_per_response": true, "tier_c_enabled": false, "deterministic_default": true, "safe_fallbacks": true, "hybrid_decorative_art": true, "generated_art_visual_qa": true, "missing_visual_completion": true}
+    "response_visuals": {"version": "7", "one_primary_visual_per_response": true, "one_distinct_printable_allowed": true, "activity_aid_independent": true, "researched_public_photos": true, "rights_and_child_safety_gate": true, "tier_c_enabled": false, "deterministic_default": true, "safe_fallbacks": true, "automatic_visuals": "supportive_diagrams_only", "standalone_generated_illustrations": false, "generated_art_role": "functional_subjects_with_code_composition", "hybrid_decorative_art": true, "generated_art_visual_qa": true, "missing_visual_completion": "explicit_only"}
   },
   "models": {
     "reasoning": {"capabilities": ["structured_output"]},
     "structured_extraction": {"capabilities": ["structured_output", "vision", "document_ocr"]},
     "image_generation": {"capabilities": ["image_generation"]},
     "visual_qa": {"capabilities": ["structured_output", "vision"]},
+    "critic_family_usefulness": {"capabilities": ["structured_output"]},
     "critic_factual": {"capabilities": ["structured_output"]},
     "critic_pedagogy": {"capabilities": ["structured_output"]},
     "critic_context": {"capabilities": ["structured_output"]},
     "critic_parent_effort": {"capabilities": ["structured_output"]},
+    "critic_plan_fidelity": {"capabilities": ["structured_output"]},
+    "critic_accessibility": {"capabilities": ["structured_output"]},
+    "critic_evidence": {"capabilities": ["structured_output"]},
+    "critic_safety": {"capabilities": ["structured_output"]},
+    "critic_visual": {"capabilities": ["structured_output"]},
     "critic_epistemic": {"capabilities": ["structured_output"]},
     "judge": {"capabilities": ["structured_output"]}
   }

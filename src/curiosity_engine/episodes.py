@@ -300,8 +300,9 @@ def child_episode_context(db_path: str | Path, child_id: str, *, limit: int = 30
                     f"""SELECT m.episode_id,m.event_id,m.relation,m.independence_status,m.learning_scope,
                                m.confidence,m.rationale,e.text,e.source,e.status,e.created_at
                         FROM episode_memberships m JOIN events e ON e.id=m.event_id
-                        WHERE m.episode_id IN ({placeholders}) ORDER BY e.created_at""",
-                    episode_ids,
+                        WHERE m.episode_id IN ({placeholders}) AND e.child_id=?
+                        ORDER BY e.created_at""",
+                    (*episode_ids, child_id),
                 )
             ]
         correction_count = int(
@@ -416,6 +417,22 @@ def apply_episode_correction(
             (target_episode, relation, independence, now, event_id),
         )
         conn.execute("UPDATE evidence SET episode_id=? WHERE event_id=?", (target_episode, event_id))
+        conn.execute(
+            """UPDATE learning_episode_plans SET episode_id=?,updated_at=?
+               WHERE source_event_id=? AND child_id=?""",
+            (target_episode, now, event_id, child_id),
+        )
+        conn.execute(
+            """UPDATE learning_opportunities SET episode_id=?,independence_status=?
+               WHERE event_id=? AND child_id=?""",
+            (target_episode, independence, event_id, child_id),
+        )
+        conn.execute(
+            """UPDATE evidence_records SET episode_id=? WHERE child_id=? AND opportunity_id IN (
+                 SELECT opportunity_id FROM learning_opportunities WHERE event_id=? AND child_id=?
+               )""",
+            (target_episode, child_id, event_id, child_id),
+        )
         observation_rows = conn.execute(
             "SELECT id,metadata_json FROM observations WHERE event_id=?", (event_id,)
         ).fetchall()
@@ -458,6 +475,11 @@ def apply_episode_correction(
         )
         correction_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
         downgraded_claim_ids = revalidate_established_claims(conn, child_id)
+        # Imported locally to keep episode grouping independent from the learner
+        # projector while still rebuilding inside this correction transaction.
+        from .learner_model import recompute_child_projections_in_transaction
+
+        projection = recompute_child_projections_in_transaction(conn, child_id)
     return {
         "correction_id": correction_id,
         "event_id": event_id,
@@ -466,4 +488,5 @@ def apply_episode_correction(
         "relation": relation,
         "independence_status": independence,
         "downgraded_claim_ids": downgraded_claim_ids,
+        "phase1_projection_digest": projection["output_digest"],
     }

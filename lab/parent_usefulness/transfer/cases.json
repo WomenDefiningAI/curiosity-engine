@@ -1,0 +1,114 @@
+{
+  "version": "illustrated-transfer-v1",
+  "status": "transfer_unscored",
+  "cases": [
+    {
+      "id": "TV01",
+      "split": "transfer",
+      "topic_family": "transport-clues",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a beautiful picture clue page for my nonreading five-year-old with a bicycle, a bus and a train. We will point to the one with pedals, the one that carries people on a road and the one that runs on rails. Big pictures, no writing."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Usable as requested with the pictured content, available materials and one short adult read-aloud."
+        ],
+        "common_misses": [
+          "Decoration without the objects, actions or relationships needed to use the page."
+        ],
+        "parent_burden_to_watch": "Adult must redraw, invent instructions or repair incorrect pictures.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "TV02",
+      "split": "transfer",
+      "topic_family": "flower-parts",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a large illustrated flower diagram for my five-year-old, showing roots, stem, leaf and flower, with readable labels pointing at the actual parts. Just one short thing to say and room for us to draw our own flower beside it."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Usable as requested with the pictured content, available materials and one short adult read-aloud."
+        ],
+        "common_misses": [
+          "Decoration without the objects, actions or relationships needed to use the page."
+        ],
+        "parent_burden_to_watch": "Adult must redraw, invent instructions or repair incorrect pictures.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "TV03",
+      "split": "transfer",
+      "topic_family": "ice-challenge",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make a visual ice shape challenge for my five-year-old. We have a wide plastic cup, a narrow plastic cup and water. Show what to set up and leave two big blank spaces to draw what we think will happen. We can put them in the freezer tonight with a grown-up. Do not give away the result."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Usable as requested with the pictured content, available materials and one short adult read-aloud."
+        ],
+        "common_misses": [
+          "Decoration without the objects, actions or relationships needed to use the page."
+        ],
+        "parent_burden_to_watch": "Adult must redraw, invent instructions or repair incorrect pictures.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "TV04",
+      "split": "transfer",
+      "topic_family": "whole-count-sharing",
+      "situation": "illustrated_material",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "parent_turns": [
+          "Make an illustrated sharing mat with exactly eight large seashell pictures and space for our two toy crabs. My five-year-old will point to different shares. No scissors, no writing and do not show a solved answer."
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Usable as requested with the pictured content, available materials and one short adult read-aloud."
+        ],
+        "common_misses": [
+          "Decoration without the objects, actions or relationships needed to use the page."
+        ],
+        "parent_burden_to_watch": "Adult must redraw, invent instructions or repair incorrect pictures.",
+        "rendered_artifact_required": true
+      }
+    }
+  ]
+}

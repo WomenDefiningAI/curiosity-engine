@@ -1,0 +1,18 @@
+[
+  {
+    "id": "memory-separate-and-reversible",
+    "kind": "memory_separate_and_reversible"
+  },
+  {
+    "id": "recipe-human-promotion",
+    "kind": "recipe_human_promotion"
+  },
+  {
+    "id": "structured-compaction",
+    "kind": "structured_compaction"
+  },
+  {
+    "id": "durable-wake-and-delivery",
+    "kind": "durable_wake_and_delivery"
+  }
+]

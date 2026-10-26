@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .artifacts import ArtifactService
 from .db import connect, jdump, jload, utcnow
+from .learning_artifacts import LearningArtifactService
+from .reasoning import StubBackend
 
 
 def list_actions(db_path: str | Path, *, status: str | None = None) -> list[dict[str, Any]]:
@@ -41,7 +42,8 @@ def execute_action(
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            """SELECT a.action_type,a.payload_json,a.status,a.result_json,e.child_id
+            """SELECT a.action_type,a.payload_json,a.status,a.result_json,a.event_id,
+                      a.pedagogy_plan_id,a.pedagogy_plan_hash,e.child_id
                FROM actions a LEFT JOIN events e ON e.id=a.event_id WHERE a.id=?""",
             (action_id,),
         ).fetchone()
@@ -56,11 +58,30 @@ def execute_action(
         if not row["child_id"]:
             raise ValueError("artifact action is missing a child")
         payload = jload(row["payload_json"])
+        if not row["pedagogy_plan_id"] or not row["pedagogy_plan_hash"]:
+            raise ValueError("legacy unplanned artifact actions cannot execute")
+        if not isinstance(payload, dict) or set(payload) != {
+            "artifact_type",
+            "source_event_id",
+            "pedagogy_plan_id",
+            "pedagogy_plan_hash",
+        }:
+            raise ValueError("artifact action is not a code-compiled plan-bound request")
+        if (
+            payload["source_event_id"] != row["event_id"]
+            or payload["pedagogy_plan_id"] != row["pedagogy_plan_id"]
+            or payload["pedagogy_plan_hash"] != row["pedagogy_plan_hash"]
+        ):
+            raise ValueError("artifact action plan lineage does not match its stored authority")
         conn.execute("UPDATE actions SET status='executing',updated_at=? WHERE id=?", (utcnow(), action_id))
     try:
-        spec = payload.get("spec") if isinstance(payload, dict) and "spec" in payload else payload
-        result = ArtifactService(db_path, output_dir).create(
-            child_id=row["child_id"], spec=spec, visual_backend=visual_backend
+        result = LearningArtifactService(
+            db_path,
+            output_dir,
+            backend=visual_backend or StubBackend(),
+        ).create_from_event(
+            event_id=str(row["event_id"]),
+            artifact_type=str(payload["artifact_type"]),
         )
     except Exception as exc:
         with connect(db_path) as conn:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .pedagogy import _contains_candidate_self_harm_direction, _has_powered_appliance_water_action
+
 TRUST_TIERS = {"A", "B", "C"}
 ASSET_METHODS = {"trusted_source", "deterministic", "generative", "none"}
 CERTAINTY_LEVELS = {"established", "likely", "debated", "unknown"}
@@ -143,6 +145,8 @@ def validate_response_visual_intent(intent: dict[str, Any]) -> list[str]:
     if kind == "comparison_cards" and not intent.get("not_to_scale"):
         errors.append("comparison cards must be labeled not to scale")
     if kind in {"comparison_cards", "activity_sequence"}:
+        if role != "supportive":
+            errors.append("deterministic response cards must be supportive")
         panel_text = " ".join(
             str(value)
             for panel in panels
@@ -151,6 +155,26 @@ def validate_response_visual_intent(intent: dict[str, Any]) -> list[str]:
         )
         if any(character.isdigit() for character in panel_text):
             errors.append("MVP deterministic response cards may not teach exact numeric values")
+        lowered_panel_text = panel_text.casefold()
+        if re.search(
+            r"\b(?:bleach|ammonia|drain cleaner|household chemicals?)\b|"
+            r"\b(?:pour|add|mix)\b.{0,40}\b(?:chemical|cleaner|bleach|ammonia|vinegar)\b",
+            lowered_panel_text,
+        ):
+            errors.append("response visual may not direct a child to combine household chemicals")
+        visible_intent = {
+            field: intent.get(field)
+            for field in ("title", "pedagogical_value", "caption", "alt_text", "panels")
+        }
+        if _contains_candidate_self_harm_direction(visible_intent):
+            errors.append("response visual directs the child toward self-harm")
+        visible_text = " ".join(
+            str(fragment)
+            for value in visible_intent.values()
+            for fragment in (value if isinstance(value, list) else [value])
+        )
+        if _has_powered_appliance_water_action(visible_text):
+            errors.append("response visual introduces an unsafe appliance-water action")
     if kind == "decorative_illustration":
         if role != "decorative":
             errors.append("generated illustrations must be decorative")
@@ -160,6 +184,11 @@ def validate_response_visual_intent(intent: dict[str, Any]) -> list[str]:
             errors.append("purchased or public source imagery is not copied into generated illustrations")
         subject = str(intent.get("subject") or "")
         lowered = subject.casefold()
+        authored_text = " ".join(
+            str(intent.get(field) or "")
+            for field in ("title", "pedagogical_value", "caption", "alt_text", "subject")
+        )
+        lowered_authored = authored_text.casefold()
         if not subject.strip():
             errors.append("decorative subject is required")
         if any(marker in lowered for marker in PRIVATE_PROMPT_MARKERS):
@@ -173,6 +202,32 @@ def validate_response_visual_intent(intent: dict[str, Any]) -> list[str]:
             errors.append("decorative subject contains personal relationship, school, home, or health context")
         if any(character.isdigit() for character in subject):
             errors.append("decorative subject may not contain numbers or identifiers")
+        authored_words = set(re.findall(r"[a-z]+", lowered_authored))
+        if any(marker in lowered_authored for marker in PRIVATE_PROMPT_MARKERS):
+            errors.append("decorative intent may not contain family or private-resource context")
+        if any(marker in authored_text for marker in ("<@", "@", "/Users/", "private/", "http://", "https://")):
+            errors.append("decorative intent contains an identifier, path, or URL")
+        if authored_words & PRIVATE_DECORATIVE_TERMS or authored_words & {"my", "our", "your", "his", "her", "their"}:
+            errors.append("decorative intent contains personal relationship, school, home, health, or address context")
+        if any(character.isdigit() for character in authored_text):
+            errors.append("decorative intent may not contain numbers or identifiers")
+    if kind == "researched_photo":
+        if role != "supportive":
+            errors.append("researched photos may support a reviewed claim but may not be the sole source of instruction")
+        if panels or intent.get("subject"):
+            errors.append("researched photos use a minimized query, not authored panels or a generative subject")
+        if source_refs:
+            errors.append("the source is selected and recorded by the researched-image pipeline")
+        query = str(intent.get("research_query") or "")
+        lowered = query.casefold()
+        if not query.strip():
+            errors.append("researched photos require a public minimized query")
+        if any(marker in lowered for marker in PRIVATE_PROMPT_MARKERS):
+            errors.append("researched-photo query may not contain family or private-resource context")
+        if any(marker in query for marker in ("<@", "@", "/Users/", "private/", "http://", "https://")):
+            errors.append("researched-photo query contains an identifier, path, or URL")
+        if str(intent.get("purpose") or "") not in {"notice", "observe", "compare", "imagine"}:
+            errors.append("a single researched photo must support noticing, observation, comparison, or wonder")
     for source in source_refs:
         if not str(source).startswith(("https://", "http://")):
             errors.append("visual source references must be public HTTP(S) URLs")

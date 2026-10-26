@@ -1,0 +1,5 @@
+[
+  {"id": "no-writing", "input": "Compare three leaves, but the child does not want to write.", "expected_intent": "compare_connect", "expected_strategy": "compare-connect-k2", "required_visible_phrases": ["no writing", "point", "say"]},
+  {"id": "low-fine-motor", "input": "What happens if we test a ramp without cutting or tiny pieces?", "expected_intent": "guided_inquiry", "expected_strategy": "guided-inquiry-k2", "required_visible_phrases": ["no cutting", "whole objects"]},
+  {"id": "read-aloud", "input": "Read a short book together; a grown-up will read the words aloud.", "expected_intent": "dialogic_reading", "expected_strategy": "dialogic-reading-k2", "required_visible_phrases": ["grown-up", "read", "aloud", "point"]}
+]

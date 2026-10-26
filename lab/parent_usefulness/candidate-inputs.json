@@ -1,0 +1,277 @@
+{
+  "PU01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "im making dinner. kid wants a challenge. 5 min, just the big plastic cups already out. give me one thing we can start now"
+    ]
+  },
+  "PU02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We are late for school. Why did the little ice piece melt before the big one? Give me something short I can say out loud."
+    ]
+  },
+  "PU03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Can you give us a silly rhyming game while we wait? No paper and my kid cannot read yet."
+    ]
+  },
+  "PU04": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "I am exhausted. We have three minutes before bath. One tiny movement game, no setup."
+    ]
+  },
+  "PU05": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      },
+      {
+        "label": "child-2",
+        "grade": "2"
+      }
+    ],
+    "parent_turns": [
+      "Both kids want to help with the clean socks. Make it one little game they can do together. The younger one does not read."
+    ]
+  },
+  "PU06": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We are looking for shapes around the living room. Make this more fun, but no worksheet and no writing."
+    ]
+  },
+  "PU07": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "My kid made a strange creature out of blocks. Give me one playful thing to say that helps the story keep going."
+    ]
+  },
+  "PU08": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Just saving this: we spent ages watching ants carry crumbs at the park today."
+    ]
+  },
+  "PU09": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "Why does the Moon look like it is coming with us in the car? One simple explanation please."
+    ]
+  },
+  "PU10": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a one-page picture clue hunt for our walk: leaves, stones, and sticks. My kid does not read yet. We want to point at the page and find things."
+    ]
+  },
+  "PU11": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We have washable paint and are going to mix two colors. Make a visual prediction-and-result page. Leave the result for us to discover."
+    ]
+  },
+  "PU12": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "Give us one playful thing to build with this single sheet of paper. We have no scissors or tape."
+    ]
+  },
+  "PU13": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a one-page picture clue hunt for leaves, stones, and sticks. It is for a child who cannot read yet.",
+      "Keep those same clues, but make the pictures much bigger and remove the writing lines."
+    ]
+  },
+  "PU14": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "Give us one little game about the sounds we can hear in this room.",
+      "Another idea please. Something we do differently, not the same listening game with different sounds."
+    ]
+  },
+  "PU15": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Help me explain why plants need light.",
+      "That is too much to read. Keep the same idea but give me two sentences I can say to my kindergartener. No activity."
+    ]
+  },
+  "PU16": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "My kid keeps asking why when I explain things. Give me one natural thing to say when I do not know the answer."
+    ]
+  },
+  "PU17": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We noticed our shadows outside. One funny thing to try right here, no supplies and no worksheet."
+    ]
+  },
+  "PU18": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      },
+      {
+        "label": "child-2",
+        "grade": "2"
+      }
+    ],
+    "parent_turns": [
+      "The kids are playing restaurant. Help them keep going together with one little twist. Please do not turn it into a math lesson."
+    ]
+  },
+  "PU19": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "We have a large toy magnet and a few objects to try. Make a visual page for guessing what it will attract and showing what happened."
+    ]
+  },
+  "PU20": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a short clapping game we can do now. My kid does not read music. Give us the actual pattern to start with."
+    ]
+  },
+  "PU21": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a picture-card story about a lost mitten finding its way home. We want to put the cards in order and tell it together. Very little reading."
+    ]
+  },
+  "PU22": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We have a toy car and cushions on the floor. Give us a tiny adventure with an actual route to follow. No printing."
+    ]
+  },
+  "PU23": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "Make a visual challenge about sharing seven big blocks between two toy animals. Let us find different ways."
+    ]
+  },
+  "PU24": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "My kid thinks a cloud looks like a rabbit. Help me explain how a cloud can change shape, without spoiling the pretend rabbit story."
+    ]
+  }
+}

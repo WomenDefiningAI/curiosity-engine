@@ -1,19 +1,29 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "depths": {
     "0": "identity/current request only",
-    "1": "direct recent observations + school signals + direct topic",
-    "2": "related concepts/questions/interests + recent experiences",
-    "3": "broader graph neighborhood + edges",
-    "4": "longitudinal evidence + claims/hypotheses"
+    "1": "eligible episode context + active school signals",
+    "2": "related eligible episodes + recent experience metadata",
+    "3": "broader eligible episode window; legacy graph remains quarantined",
+    "4": "longitudinal eligible episodes + code-owned claims/hypotheses"
   },
   "epistemic_states": ["observation", "hypothesis", "established_pattern"],
-  "knowledge_states": ["unseen", "exposed", "emerging", "demonstrated", "unknown"],
+  "learner_projection_status": "disabled_until_versioned_evidence",
+  "target_learner_states": [
+    "not_observed_in_harness",
+    "exposure_recorded",
+    "practicing_with_support",
+    "demonstrated_in_context",
+    "independently_demonstrated",
+    "transfer_observed"
+  ],
   "rules": [
     "exposure is not understanding",
     "one observation is not a durable trait",
     "every durable assertion requires provenance",
     "retain supporting and contradicting evidence",
-    "uncertain attribution remains uncertain"
+    "uncertain attribution remains uncertain",
+    "generated output cannot evidence its own effectiveness",
+    "models cannot author learner or interest state"
   ]
 }

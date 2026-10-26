@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "CV01",
+      "split": "development",
+      "topic_family": "equal_groups",
+      "situation": "complete_parent_conversation",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "Here is a worksheet for context. The child is not writing today.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/groups.png"
+            ]
+          },
+          {
+            "text": "We have five minutes and a few blocks. Give us one idea based on this worksheet."
+          },
+          {
+            "text": "Why would rearranging them not change how many there are?"
+          },
+          {
+            "text": "Turn that into a picture challenge we can use now."
+          },
+          {
+            "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Use the visible worksheet concept, not a generic school theme.",
+          "Answer the open question directly and coherently.",
+          "Deliver a usable picture challenge retaining the concept and the no-writing constraint.",
+          "The revision preserves useful artwork and has a clear pointing action."
+        ],
+        "common_misses": [
+          "Restarting the topic after the open question.",
+          "A decorative picture with no conceptual task.",
+          "Requiring the parent to redraw or invent materials."
+        ],
+        "parent_burden_to_watch": "Repeated explanations, making missing materials, or translating prose into a game.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "CV02",
+      "split": "development",
+      "topic_family": "pattern_unit",
+      "situation": "complete_parent_conversation",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "1"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "Here is a worksheet for context. The child is not writing today.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/patterns.png"
+            ]
+          },
+          {
+            "text": "Give us a movement game that uses the concept on this sheet."
+          },
+          {
+            "text": "What changes if we put two taps where there was one?"
+          },
+          {
+            "text": "Turn that into a picture challenge we can use now."
+          },
+          {
+            "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Use the visible worksheet concept, not a generic school theme.",
+          "Answer the open question directly and coherently.",
+          "Deliver a usable picture challenge retaining the concept and the no-writing constraint.",
+          "The revision preserves useful artwork and has a clear pointing action."
+        ],
+        "common_misses": [
+          "Restarting the topic after the open question.",
+          "A decorative picture with no conceptual task.",
+          "Requiring the parent to redraw or invent materials."
+        ],
+        "parent_burden_to_watch": "Repeated explanations, making missing materials, or translating prose into a game.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "CV03",
+      "split": "development",
+      "topic_family": "relative_length",
+      "situation": "complete_parent_conversation",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "Here is a worksheet for context. The child is not writing today.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/length.png"
+            ]
+          },
+          {
+            "text": "We have pencils of different lengths. Give us one idea based on this worksheet."
+          },
+          {
+            "text": "How can a pencil be both longer and shorter?"
+          },
+          {
+            "text": "Turn that into a picture challenge we can use now."
+          },
+          {
+            "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Use the visible worksheet concept, not a generic school theme.",
+          "Answer the open question directly and coherently.",
+          "Deliver a usable picture challenge retaining the concept and the no-writing constraint.",
+          "The revision preserves useful artwork and has a clear pointing action."
+        ],
+        "common_misses": [
+          "Restarting the topic after the open question.",
+          "A decorative picture with no conceptual task.",
+          "Requiring the parent to redraw or invent materials."
+        ],
+        "parent_burden_to_watch": "Repeated explanations, making missing materials, or translating prose into a game.",
+        "rendered_artifact_required": true
+      }
+    }
+  ]
+}

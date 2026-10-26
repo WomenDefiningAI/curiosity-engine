@@ -1,0 +1,22 @@
+"""Focused parent-memory and governed-adaptation contracts."""
+
+import legacy_phase4_adaptation_control as legacy
+
+test_parent_memory_is_explicit_reversible_and_never_child_evidence = (
+    legacy.test_parent_memory_is_explicit_reversible_and_never_child_evidence
+)
+test_memory_off_is_immediate_and_agent_cannot_save_child_descriptions = (
+    legacy.test_memory_off_is_immediate_and_agent_cannot_save_child_descriptions
+)
+test_parent_authored_memory_outranks_reviewed_agent_proposal = (
+    legacy.test_parent_authored_memory_outranks_reviewed_agent_proposal
+)
+test_active_recipe_and_parent_style_run_through_real_artifact_contract = (
+    legacy.test_active_recipe_and_parent_style_run_through_real_artifact_contract
+)
+test_structured_compaction_keeps_refs_and_recent_raw_turns = (
+    legacy.test_structured_compaction_keeps_refs_and_recent_raw_turns
+)
+test_raw_event_deletion_removes_adaptation_copies_and_scrubs_memory_reason = (
+    legacy.test_raw_event_deletion_removes_adaptation_copies_and_scrubs_memory_reason
+)
