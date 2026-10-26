@@ -619,3 +619,84 @@ def test_decorative_mode_completes_missing_visual_without_rewriting_reviewed_tex
     assert result.output["hook"] == expected_hook
     assert result.output["visual"]["kind"] == "decorative_illustration"
     assert result.output["visual"]["knowledge_role"] == "decorative"
+
+
+def test_activity_aid_and_imagination_visual_are_independent_outputs():
+    question = "How did long-necked dinosaurs reach leaves?"
+    art = {
+        "kind": "decorative_illustration",
+        "purpose": "imagine",
+        "knowledge_role": "decorative",
+        "title": "A leafy dinosaur adventure",
+        "pedagogical_value": "Invites imagination without teaching anatomy.",
+        "caption": "Imagine reaching for a leafy snack.",
+        "alt_text": "A friendly imaginary long-necked dinosaur reaches toward leafy branches.",
+        "subject": "a friendly imaginary long-necked dinosaur reaching toward leafy branches",
+    }
+
+    class ActivityAidCompletionBackend(StubBackend):
+        def __init__(self):
+            self.pull_thread_calls = 0
+
+        def complete(self, *, role, system, payload, response_model):
+            if response_model is PullThreadOutput:
+                self.pull_thread_calls += 1
+                if payload.get("visual_completion"):
+                    assert payload["visual_completion"]["activity_aid_needed"] is True
+                    assert payload["visual_completion"]["imagination_visual_needed"] is False
+                    result = dict(payload["candidate"])
+                    extension = dict(result["physical_extension"])
+                    extension["printable"] = {
+                        "kind": "target_set",
+                        "title": "Sauropod leaf targets",
+                        "child_directions": "Reach each leaf without moving your feet.",
+                        "parent_setup": "Place the leaves low, medium, and high.",
+                        "pedagogical_value": "Makes reach differences visible through movement.",
+                        "pieces": [
+                            {"label": "LOW", "prompt": "Reach low", "shape": "leaf"},
+                            {"label": "MEDIUM", "prompt": "Reach midway", "shape": "leaf"},
+                            {"label": "HIGH", "prompt": "Reach high", "shape": "leaf"},
+                        ],
+                    }
+                    result["physical_extension"] = extension
+                    return result
+                result = super().complete(
+                    role=role,
+                    system=system,
+                    payload=payload,
+                    response_model=response_model,
+                )
+                result["physical_extension"] = {
+                    "title": "Sauropod leaf reach",
+                    "instructions": [
+                        "Draw three leaves on paper and place them low, medium, and high."
+                    ],
+                    "materials": ["paper", "crayons"],
+                    "parent_effort": "low",
+                }
+                result["visual"] = art
+                return result
+            return super().complete(
+                role=role,
+                system=system,
+                payload=payload,
+                response_model=response_model,
+            )
+
+    backend = ActivityAidCompletionBackend()
+    result = ReasoningEngine(backend).run(
+        policy=ReasoningPolicy("pull_thread", 2),
+        context={"child": {"grade": "1st"}},
+        event={
+            "type": "child_question",
+            "text": question,
+            "metadata": {"response_visual_mode": "decorative"},
+        },
+    )
+
+    assert backend.pull_thread_calls == 2
+    assert result.output["visual"]["kind"] == "decorative_illustration"
+    assert result.output["physical_extension"]["printable"]["kind"] == "target_set"
+    assert result.output["physical_extension"]["instructions"] == [
+        "Draw three leaves on paper and place them low, medium, and high."
+    ]

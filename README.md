@@ -41,6 +41,9 @@ The answer stays in a thread. Continue naturally there: “show different wing s
 or “make a printable challenge.” Buttons are shortcuts, not commands the parent must memorize. Unattributed channel
 notes remain in a private inbox until a parent chooses a child or dismisses them.
 
+Review recent Slack answers at `http://127.0.0.1:8766/evals`, rating response shape separately from imagination art
+and functional activity aids. Evals stay outside the child graph. For a remote computer, forward port 8766 over SSH.
+
 ## What makes it a harness
 
 - Durable sessions keep the thread’s prior ideas and parent revisions.
