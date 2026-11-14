@@ -96,16 +96,58 @@ button.secondary { color:var(--ink); background:#e8f5f2; box-shadow:none; }
 .notice,.error { margin:1rem max(4vw,1.2rem); padding:.8rem 1rem; border-radius:12px 9px 13px 10px; background:#e8f5f2; }
 .error { background:#fff0ed; color:#8b3e35; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
+.header-actions { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; justify-content:flex-end; }
+.text-link { color:var(--blue); font-weight:800; text-decoration:none; }
+.text-link:hover { text-decoration:underline; }
+.eval-shell { display:grid; gap:1rem; max-width:1440px; margin:0 auto; padding:1.2rem max(3vw,1.2rem) 4rem; }
+.eval-intro { display:flex; gap:1rem; align-items:center; justify-content:space-between; padding:1rem 1.2rem; border-radius:15px; background:#effafa; color:var(--muted); }
+.eval-intro>div { display:flex; gap:.7rem; align-items:baseline; }
+.eval-intro form { display:grid; justify-items:end; gap:.25rem; flex:0 0 auto; }
+.eval-intro form small { font-size:.68rem; }
+.eval-intro strong { color:var(--ink); }
+.eval-card { overflow:hidden; border:1.5px solid var(--line); border-radius:22px 18px 24px 19px; background:rgba(255,255,255,.96); box-shadow:0 7px 24px rgba(23,50,77,.05); }
+.eval-card-head { display:flex; align-items:start; justify-content:space-between; gap:1rem; padding:1.25rem 1.35rem .7rem; }
+.eval-card-head h2 { max-width:1000px; margin-bottom:.35rem; font-size:1.25rem; line-height:1.25; }
+.badge-warn { border-color:var(--coral); color:#8b3e35; background:#fff0ed; }
+.eval-release { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr); gap:1rem; padding:.5rem 1.35rem 1.2rem; }
+.eval-answer { min-width:0; }
+.eval-answer h3 { font-size:1.1rem; line-height:1.4; }
+.response-grid.compact>div { padding:.7rem; }
+.response-grid.compact p { font-size:.9rem; }
+details { margin-top:.75rem; color:var(--muted); }
+details summary { color:var(--blue); font-weight:750; cursor:pointer; }
+details p { margin:.7rem 0 0; line-height:1.45; }
+.eval-visuals { display:grid; gap:.8rem; align-content:start; }
+.eval-visual { display:grid; align-content:start; overflow:hidden; min-height:280px; border:1px solid var(--line); border-radius:16px 13px 18px 14px; background:#f7fafb; }
+.visual-role { margin:0; padding:.55rem .85rem; border-bottom:1px solid var(--line); color:var(--teal); font-size:.68rem; font-weight:900; letter-spacing:.12em; }
+.eval-visual img { display:block; width:100%; max-height:520px; object-fit:contain; background:#eef4f3; }
+.visual-copy { display:grid; gap:.2rem; padding:.75rem .9rem; }
+.visual-copy span,.visual-copy small { color:var(--muted); }
+.visual-missing { display:grid; place-items:center; align-content:center; gap:.45rem; min-height:280px; padding:2rem; color:var(--muted); text-align:center; }
+.visual-missing>span { display:grid; place-items:center; width:3rem; height:3rem; border:3px dashed var(--orange); border-radius:50%; color:var(--orange); font-size:1.5rem; font-weight:900; }
+.visual-missing strong { color:var(--ink); }
+.visual-neutral>span { border-color:var(--teal); color:var(--teal); }
+.rejected-note { margin:.2rem 1.35rem 1rem; padding:1rem; border-radius:12px; background:#fff0ed; color:#8b3e35; }
+.eval-form { display:grid; grid-template-columns:repeat(4,minmax(150px,1fr)); align-items:end; gap:.7rem; padding:1rem 1.35rem 1.2rem; border-top:1px solid var(--line); background:#fffaf0; }
+.eval-note { grid-column:1/4; }
+.eval-form button { white-space:nowrap; }
+.saved-eval { align-self:center; color:var(--green); font-size:.75rem; font-weight:800; }
 @media (max-width:850px) {
   .grid { grid-template-columns:1fr; }
   .wide,.resources { grid-column:auto; }
   .unit-grid { grid-template-columns:repeat(2,1fr); }
   .response-grid { flex-direction:column; }
   .journey { grid-template-columns:repeat(5,9rem); overflow-x:auto; justify-content:start; padding-bottom:.5rem; }
+  .eval-release { grid-template-columns:1fr; }
+  .eval-form { grid-template-columns:1fr 1fr; }
+  .eval-note { grid-column:1/-1; }
 }
 @media (max-width:520px) {
   header { align-items:start; flex-direction:column; }
   .unit-grid { grid-template-columns:1fr; }
   .row,.setup-strip { align-items:stretch; flex-direction:column; }
   .journey { margin-top:1rem; }
+  .eval-intro,.eval-card-head { align-items:stretch; flex-direction:column; }
+  .eval-form { grid-template-columns:1fr; }
+  .eval-note { grid-column:auto; }
 }

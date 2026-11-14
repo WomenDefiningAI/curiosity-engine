@@ -1881,12 +1881,49 @@ def _make_slack_response_action_receiver(
     return receive
 
 
+def _interaction_progress_copy(resolved: dict[str, Any], *, completed: bool = False) -> str | None:
+    """Return visible progress for semantic choices that can take more than a moment."""
+
+    intent = str(resolved.get("intent") or "")
+    payload = dict(resolved.get("payload") or {})
+    artifact_type = str(payload.get("artifact_type") or "printable").casefold()
+    if intent == "create_artifact":
+        return (
+            f":white_check_mark: {artifact_type.title()} created; sending the PDF…"
+            if completed
+            else f":eyes: Making a child-ready {artifact_type}…"
+        )
+    if intent == "revise_artifact":
+        return (
+            ":white_check_mark: Revision created; sending the PDF…"
+            if completed
+            else ":eyes: Revising the child-ready printable…"
+        )
+    if intent == "retry_response":
+        return (
+            ":white_check_mark: A different response is ready."
+            if completed
+            else ":eyes: Trying a different approach…"
+        )
+    if intent == "approve_tool_call":
+        return (
+            ":white_check_mark: Setup finished."
+            if completed
+            else ":eyes: Setting that up…"
+        )
+    return None
+
+
 def _make_semantic_interaction_receiver(
     transport: SlackTransport,
     db_path: str | Path,
 ) -> Any:
     def receive(ack: Any, body: dict[str, Any], action: dict[str, Any], client: Any) -> None:
         ack()
+        channel_id = ""
+        message_ts = ""
+        original_blocks: list[dict[str, Any]] = []
+        progress_text: str | None = None
         try:
             block_id = str(action.get("block_id") or "")
             match = re.fullmatch(r"curiosity_interaction:(ix_[a-f0-9]{20})", block_id)
@@ -1942,6 +1979,21 @@ def _make_semantic_interaction_receiver(
             )
             if resolved.get("duplicate"):
                 return
+            message_ts = str(source_message.get("ts") or container.get("message_ts") or "")
+            original_blocks = [
+                block for block in source_message.get("blocks") or [] if block.get("block_id") != block_id
+            ]
+            progress_text = _interaction_progress_copy(resolved)
+            if message_ts and progress_text:
+                client.chat_update(
+                    channel=channel_id,
+                    ts=message_ts,
+                    text=str(source_message.get("text") or progress_text),
+                    blocks=[
+                        *original_blocks,
+                        {"type": "context", "elements": [{"type": "mrkdwn", "text": progress_text}]},
+                    ],
+                )
             result = transport.service.handle_interaction_choice(
                 resolved=resolved,
                 binding_id=str(binding["id"]),
@@ -1996,23 +2048,54 @@ def _make_semantic_interaction_receiver(
                     thread_id=thread_id,
                     idempotency_key=f"slack:{external_event_id}:artifact:{result['artifact']['artifact_id']}",
                 )
-            message_ts = str(source_message.get("ts") or container.get("message_ts") or "")
             if message_ts:
-                original_blocks = [
-                    block for block in source_message.get("blocks") or [] if block.get("block_id") != block_id
-                ]
+                completed_text = _interaction_progress_copy(resolved, completed=True)
                 client.chat_update(
                     channel=channel_id,
                     ts=message_ts,
                     text=str(source_message.get("text") or reply),
                     blocks=[
                         *original_blocks,
-                        {"type": "context", "elements": [{"type": "mrkdwn", "text": ":white_check_mark: Choice received."}]},
+                        {
+                            "type": "context",
+                            "elements": [
+                                {
+                                    "type": "mrkdwn",
+                                    "text": completed_text or ":white_check_mark: Choice received.",
+                                }
+                            ],
+                        },
                     ],
                 )
             flush_slack_outbox(client, db_path)
         except Exception:
             logging.getLogger(__name__).exception("Slack semantic interaction failed")
+            if channel_id and message_ts and progress_text:
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=message_ts,
+                        text="I couldn't finish that choice.",
+                        blocks=[
+                            *original_blocks,
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": (
+                                            ":warning: I couldn't finish that. Nothing was sent—tell me naturally "
+                                            "what you want to try next."
+                                        ),
+                                    }
+                                ],
+                            },
+                        ],
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "could not show Slack interaction failure state"
+                    )
 
     return receive
 

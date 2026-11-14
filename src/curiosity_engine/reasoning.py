@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -24,6 +25,19 @@ from .visuals import normalize_response_visual, should_attempt_decorative_visual
 OutputModel = TypeVar("OutputModel", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+
+def _activity_needs_printable(extension: Any) -> bool:
+    """Spot activities that otherwise make a parent manufacture reusable play pieces."""
+
+    if extension is None or extension.printable is not None:
+        return False
+    instructions = " ".join(extension.instructions).casefold()
+    piece = r"(?:cards?|targets?|leaves|labels?|pieces?|tokens?|signs?|shapes?|recording sheets?|grids?|charts?|game boards?)"
+    return bool(
+        re.search(rf"\b(?:draw|make|create|cut(?: out)?|write)\b.{{0,90}}\b{piece}\b", instructions)
+        or re.search(r"\brecord\b.{0,70}\b(?:result|observation|prediction|score)s?\b", instructions)
+    )
 
 
 class ModelBackend(Protocol):
@@ -672,8 +686,9 @@ class ReasoningEngine:
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
         mode = str(metadata.get("response_visual_mode") or "")
         question = str(event.get("text") or "")
-        printable = parsed.physical_extension.printable if parsed.physical_extension else None
-        if printable is not None or parsed.visual is not None or not should_attempt_decorative_visual(question, mode):
+        needs_imagination_visual = parsed.visual is None and should_attempt_decorative_visual(question, mode)
+        needs_activity_aid = _activity_needs_printable(parsed.physical_extension)
+        if not needs_imagination_visual and not needs_activity_aid:
             return parsed
 
         child = context.get("child") if isinstance(context.get("child"), dict) else {}
@@ -682,11 +697,15 @@ class ReasoningEngine:
                 role=policy.generator_role,
                 system=self._generator_system(policy)
                 + (
-                    " VISUAL COMPLETION PASS: Copy the supplied structured answer, but add exactly one "
-                    "decorative_illustration visual. The scene may evoke only the broad public topic; it must "
-                    "not teach facts, labels, counts, scale, sequence, anatomy, or a scientific mechanism. Use "
-                    "lowercase generic nouns in subject and exclude names, relationships, private resources, "
-                    "school, home, health, URLs, brands, and copyrighted characters."
+                    " VISUAL COMPLETION PASS: Copy the supplied structured answer exactly. Treat imagination art "
+                    "and a functional activity aid as independent outputs. When activity_aid_needed is true, add "
+                    "a physical_extension.printable plan that supplies the cards, targets, pieces, or recording "
+                    "surface the activity asks the parent to make; preserve the activity title, instructions, and "
+                    "materials. When imagination_visual_needed is true, add one decorative_illustration visual. "
+                    "The decorative scene may evoke only the broad public topic; it must not teach facts, labels, "
+                    "counts, scale, sequence, anatomy, or a scientific mechanism. Use lowercase generic nouns in "
+                    "subject and exclude names, relationships, private resources, school, home, health, URLs, "
+                    "brands, and copyrighted characters. Both a printable and decorative visual may be present."
                 ),
                 payload={
                     "candidate": parsed.model_dump(mode="json"),
@@ -695,7 +714,9 @@ class ReasoningEngine:
                     "visual_completion": {
                         "mode": mode,
                         "preserve_reviewed_text": True,
-                        "accepted_kind": "decorative_illustration",
+                        "imagination_visual_needed": needs_imagination_visual,
+                        "activity_aid_needed": needs_activity_aid,
+                        "accepted_decorative_kind": "decorative_illustration",
                     },
                 },
                 response_model=PullThreadOutput,
@@ -704,11 +725,25 @@ class ReasoningEngine:
         except Exception as exc:
             logger.warning("optional visual completion failed error_type=%s", exc.__class__.__name__)
             return parsed
-        if not isinstance(completed, PullThreadOutput) or completed.visual is None:
-            logger.warning("optional visual completion returned no safe visual")
+        if not isinstance(completed, PullThreadOutput):
+            logger.warning("optional visual completion returned no usable output")
             return parsed
-        logger.info("completed missing decorative visual")
-        return parsed.model_copy(update={"visual": completed.visual})
+        visual = completed.visual if needs_imagination_visual else parsed.visual
+        extension = parsed.physical_extension
+        if (
+            needs_activity_aid
+            and extension is not None
+            and completed.physical_extension is not None
+            and completed.physical_extension.printable is not None
+        ):
+            extension = extension.model_copy(
+                update={"printable": completed.physical_extension.printable}
+            )
+        if needs_imagination_visual and visual is None:
+            logger.warning("optional visual completion returned no safe imagination visual")
+        if needs_activity_aid and (extension is None or extension.printable is None):
+            logger.warning("optional visual completion returned no usable activity aid")
+        return parsed.model_copy(update={"visual": visual, "physical_extension": extension})
 
     @staticmethod
     def _validate_and_normalize_candidate(
@@ -726,14 +761,6 @@ class ReasoningEngine:
         output = parsed.model_dump(mode="json")
         output["visual"] = candidate.get("visual")
         visual = normalize_response_visual(str(event.get("text") or ""), output)
-        if (
-            parsed.physical_extension
-            and parsed.physical_extension.printable
-            and visual is not None
-            and visual.kind == "decorative_illustration"
-        ):
-            logger.info("suppressed decorative visual because a child-usable printable is available")
-            visual = None
         return parsed.model_copy(update={"visual": visual})
 
     @staticmethod

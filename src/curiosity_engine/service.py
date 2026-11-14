@@ -1066,3 +1066,232 @@ class CuriosityService:
             "inbox": self.inbox(),
             "onboarding": onboarding_status(self.db_path),
         }
+
+    def generate_eval_activity_aid(
+        self,
+        *,
+        event_id: str,
+        evaluator_guidance: str = "",
+    ) -> dict[str, Any]:
+        """Generate one private artifact for eval without Slack delivery or graph evidence."""
+
+        with connect(self.db_path) as conn:
+            row = conn.execute(
+                """SELECT r.status,r.output_json FROM responses r WHERE r.event_id=?""",
+                (event_id,),
+            ).fetchone()
+            existing = conn.execute(
+                """SELECT a.id,a.artifact_type,x.title FROM artifacts a
+                   JOIN experiences x ON x.id=a.experience_id
+                   WHERE x.source_event_id=? ORDER BY a.created_at DESC LIMIT 1""",
+                (event_id,),
+            ).fetchone()
+        if existing:
+            return {"status": "existing", "artifact_id": existing["id"], "title": existing["title"]}
+        if not row or row["status"] != "completed":
+            raise ValueError("completed response not found")
+        output = jload(row["output_json"])
+        if not output.get("physical_extension"):
+            raise ValueError("response has no Try it activity to support")
+        backend = configured_backend(self.config) or StubBackend()
+        artifact = LearningArtifactService(
+            self.db_path,
+            self.output_dir,
+            backend=backend,
+        ).create_activity_aid_from_event(
+            event_id=event_id,
+            evaluator_guidance=evaluator_guidance,
+        )
+        return {"status": "generated", **artifact}
+
+    def generate_evaluation_activity_aids(self, *, limit: int = 10) -> dict[str, Any]:
+        """Generate missing activity aids for the current private evaluation set."""
+
+        results: list[dict[str, Any]] = []
+        for item in self.evaluation_queue(limit=limit):
+            output = item.get("output") or {}
+            if item.get("status") != "completed" or not output.get("physical_extension"):
+                continue
+            guidance = str((item.get("evaluation") or {}).get("note") or "")
+            try:
+                result = self.generate_eval_activity_aid(
+                    event_id=str(item["event_id"]),
+                    evaluator_guidance=guidance,
+                )
+            except Exception as exc:
+                result = {"status": "failed", "error_type": exc.__class__.__name__}
+            results.append({"event_id": item["event_id"], **result})
+        return {
+            "generated": sum(item["status"] == "generated" for item in results),
+            "existing": sum(item["status"] == "existing" for item in results),
+            "failed": sum(item["status"] == "failed" for item in results),
+            "results": results,
+        }
+
+    def evaluation_queue(self, *, limit: int = 8) -> list[dict[str, Any]]:
+        """Return recent delivered Slack releases and their private visual assets."""
+
+        if not 1 <= limit <= 20:
+            raise ValueError("evaluation queue limit must be 1..20")
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                """SELECT e.id AS event_id,e.text AS question,e.source,e.created_at,e.child_id,
+                          c.name AS child_name,r.status,r.workflow,r.output_json,
+                          va.id AS visual_asset_id,va.title AS visual_title,va.caption AS visual_caption,
+                          va.alt_text AS visual_alt_text,va.method AS visual_method,
+                          a.id AS artifact_id,x.title AS artifact_title,
+                          q.response_rating,q.visual_rating,q.preferred_response_shape,
+                          q.preferred_visual_mix,q.note AS evaluation_note,
+                          q.created_at AS evaluated_at
+                   FROM events e
+                   JOIN responses r ON r.event_id=e.id
+                   LEFT JOIN children c ON c.id=e.child_id
+                   LEFT JOIN visual_assets va ON va.id=(
+                     SELECT va2.id FROM visual_assets va2
+                     WHERE va2.event_id=e.id ORDER BY va2.created_at DESC LIMIT 1
+                   )
+                   LEFT JOIN artifacts a ON a.id=(
+                     SELECT a2.id FROM artifacts a2
+                     JOIN experiences x2 ON x2.id=a2.experience_id
+                     WHERE x2.source_event_id=e.id ORDER BY a2.created_at DESC LIMIT 1
+                   )
+                   LEFT JOIN experiences x ON x.id=a.experience_id
+                   LEFT JOIN output_evaluations q ON q.id=(
+                     SELECT q2.id FROM output_evaluations q2
+                     WHERE q2.event_id=e.id ORDER BY q2.created_at DESC,q2.id DESC LIMIT 1
+                   )
+                   WHERE e.type='child_question'
+                     AND (
+                       e.source LIKE 'slack_%'
+                       OR EXISTS(
+                         SELECT 1 FROM transport_receipts t
+                         WHERE t.event_id=e.id AND t.transport='slack' AND t.status='completed'
+                       )
+                     )
+                   ORDER BY e.created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            raw = dict(row)
+            output = jload(raw.pop("output_json"))
+            visual_asset_id = raw.pop("visual_asset_id")
+            visual = None
+            if visual_asset_id:
+                visual = {
+                    "id": visual_asset_id,
+                    "title": raw.pop("visual_title"),
+                    "caption": raw.pop("visual_caption"),
+                    "alt_text": raw.pop("visual_alt_text"),
+                    "method": raw.pop("visual_method"),
+                }
+            else:
+                for key in ("visual_title", "visual_caption", "visual_alt_text", "visual_method"):
+                    raw.pop(key)
+            artifact_id = raw.pop("artifact_id")
+            artifact_title = raw.pop("artifact_title")
+            evaluation = None
+            if raw.get("response_rating"):
+                evaluation = {
+                    "response_rating": raw.pop("response_rating"),
+                    "visual_rating": raw.pop("visual_rating"),
+                    "preferred_response_shape": raw.pop("preferred_response_shape"),
+                    "preferred_visual_mix": raw.pop("preferred_visual_mix"),
+                    "note": raw.pop("evaluation_note"),
+                    "created_at": raw.pop("evaluated_at"),
+                }
+            else:
+                for key in (
+                    "response_rating",
+                    "visual_rating",
+                    "preferred_response_shape",
+                    "preferred_visual_mix",
+                    "evaluation_note",
+                    "evaluated_at",
+                ):
+                    raw.pop(key)
+            items.append(
+                {
+                    **raw,
+                    "output": output,
+                    "visual": visual,
+                    "artifact": (
+                        {"id": artifact_id, "title": artifact_title}
+                        if artifact_id
+                        else None
+                    ),
+                    "evaluation": evaluation,
+                }
+            )
+        return items
+
+    def record_output_evaluation(
+        self,
+        *,
+        event_id: str,
+        response_rating: str,
+        visual_rating: str,
+        preferred_response_shape: str,
+        preferred_visual_mix: str,
+        note: str | None = None,
+        visual_asset_id: str | None = None,
+        artifact_id: str | None = None,
+        source: str = "local_eval_dashboard",
+    ) -> int:
+        """Append evaluator judgment without creating child evidence or graph mutations."""
+
+        if response_rating not in {"useful", "needs_work", "not_useful"}:
+            raise ValueError("unsupported response evaluation")
+        if visual_rating not in {
+            "useful",
+            "pretty_not_useful",
+            "missing_needed",
+            "misleading",
+            "not_needed",
+        }:
+            raise ValueError("unsupported visual evaluation")
+        if preferred_response_shape not in {"parent_chat", "quick_answer", "learning_thread"}:
+            raise ValueError("unsupported preferred response shape")
+        if preferred_visual_mix not in {"none", "imagination", "activity_aid", "both"}:
+            raise ValueError("unsupported preferred visual mix")
+        clean_note = note.strip()[:2_000] if note and note.strip() else None
+        with connect(self.db_path) as conn:
+            event = conn.execute(
+                "SELECT 1 FROM responses WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if not event:
+                raise ValueError("response not found")
+            if visual_asset_id:
+                visual = conn.execute(
+                    "SELECT 1 FROM visual_assets WHERE id=? AND event_id=?",
+                    (visual_asset_id, event_id),
+                ).fetchone()
+                if not visual:
+                    raise ValueError("visual does not belong to response")
+            if artifact_id:
+                artifact = conn.execute(
+                    """SELECT 1 FROM artifacts a JOIN experiences x ON x.id=a.experience_id
+                       WHERE a.id=? AND x.source_event_id=?""",
+                    (artifact_id, event_id),
+                ).fetchone()
+                if not artifact:
+                    raise ValueError("artifact does not belong to response")
+            cursor = conn.execute(
+                """INSERT INTO output_evaluations(
+                     event_id,visual_asset_id,artifact_id,response_rating,visual_rating,
+                     preferred_response_shape,preferred_visual_mix,note,source,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    event_id,
+                    visual_asset_id,
+                    artifact_id,
+                    response_rating,
+                    visual_rating,
+                    preferred_response_shape,
+                    preferred_visual_mix,
+                    clean_note,
+                    source,
+                    utcnow(),
+                ),
+            )
+        return int(cursor.lastrowid)

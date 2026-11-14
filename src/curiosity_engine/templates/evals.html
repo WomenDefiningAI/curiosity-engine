@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visual Eval Lab · Curiosity Engine</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">PRIVATE LOCAL REVIEW</p>
+      <h1>Visual Eval Lab</h1>
+      <p class="subtitle">Review recent real Slack releases without sending a message or changing a child’s context graph.</p>
+    </div>
+    <div class="header-actions">
+      <span class="privacy">0 child-graph writes</span>
+      <a class="text-link" href="/">Setup dashboard</a>
+    </div>
+  </header>
+
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <main class="eval-shell">
+    <section class="eval-intro">
+      <div>
+        <strong>What belongs here?</strong>
+        <span>Judge the released answer—not the child. Say whether it should have been chat, a quick answer, or a learning thread, then choose no visual, imagination art, an activity aid, or both.</span>
+      </div>
+      <form method="post" action="/evals/generate-activity-aids">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Generate missing activity aids</button>
+        <small>Private eval output only · no Slack message · no child-graph write</small>
+      </form>
+    </section>
+
+    {% for item in items %}
+    <article class="eval-card" id="{{ item.event_id }}">
+      <div class="eval-card-head">
+        <div>
+          <p class="eyebrow">{{ item.child_name or 'Unassigned' }} · {{ item.created_at[:16]|replace('T', ' ') }}</p>
+          <h2>{{ item.question }}</h2>
+        </div>
+        <span class="badge {% if item.status != 'completed' %}badge-warn{% endif %}">{{ item.status }}</span>
+      </div>
+
+      {% if item.status == 'completed' %}
+      <div class="eval-release">
+        <section class="eval-answer">
+          <h3>{{ item.output.hook }}</h3>
+          <div class="response-grid compact">
+            <div><span>SHOW</span><p>{{ item.output.show }}</p></div>
+            <div><span>ASK</span><p>{{ item.output.ask }}</p></div>
+          </div>
+          <details>
+            <summary>See explanation and activity</summary>
+            <p><strong>Tiny explanation:</strong> {{ item.output.nugget }}</p>
+            {% if item.output.physical_extension %}
+            <p class="extension"><strong>Try it:</strong> {{ item.output.physical_extension.title }} — {{ item.output.physical_extension.instructions|join(' ') }}</p>
+            {% endif %}
+          </details>
+          <p class="meta">{{ item.workflow }} · {{ item.output._reasoning.model or item.output._reasoning.backend or 'reviewed output' }}</p>
+        </section>
+
+        <section class="eval-visuals">
+          <div class="eval-visual">
+            <p class="visual-role">IMAGINATION VISUAL</p>
+            {% if item.visual and item.visual.method == 'generative' %}
+              <img src="/evals/visual/{{ item.visual.id }}" alt="{{ item.visual.alt_text }}">
+              <div class="visual-copy">
+                <strong>{{ item.visual.title }}</strong>
+                <span>{{ item.visual.caption }}</span>
+                <small>Decorative art · captures imagination</small>
+              </div>
+            {% else %}
+              <div class="visual-missing visual-neutral"><span>✦</span><strong>No imagination art</strong><small>That can be the right choice for ordinary parent chat.</small></div>
+            {% endif %}
+          </div>
+
+          <div class="eval-visual">
+            <p class="visual-role">ACTIVITY AID</p>
+            {% if item.artifact %}
+              <img src="/artifacts/{{ item.artifact.id }}/preview" alt="Preview of {{ item.artifact.title }}">
+              <div class="visual-copy"><strong>{{ item.artifact.title }}</strong><span>Printable tool for doing the activity</span></div>
+            {% elif item.visual and item.visual.method != 'generative' %}
+              <img src="/evals/visual/{{ item.visual.id }}" alt="{{ item.visual.alt_text }}">
+              <div class="visual-copy"><strong>{{ item.visual.title }}</strong><span>{{ item.visual.caption }}</span><small>Learning diagram or activity card</small></div>
+            {% elif item.output.physical_extension %}
+              <div class="visual-missing"><span>?</span><strong>Activity proposed; no aid released</strong><small>Would cards, targets, a diagram, or a recording page help the child do it?</small></div>
+            {% else %}
+              <div class="visual-missing visual-neutral"><span>—</span><strong>No activity proposed</strong><small>An activity aid may not be needed for this response.</small></div>
+            {% endif %}
+          </div>
+        </section>
+      </div>
+      {% else %}
+      <div class="rejected-note">This draft did not pass the release checks, so its unsafe or malformed candidate is not displayed.</div>
+      {% endif %}
+
+      <form class="eval-form" method="post" action="/evals/{{ item.event_id }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% if item.visual %}<input type="hidden" name="visual_asset_id" value="{{ item.visual.id }}">{% endif %}
+        {% if item.artifact %}<input type="hidden" name="artifact_id" value="{{ item.artifact.id }}">{% endif %}
+        <label>Answer quality
+          <select name="response_rating" required>
+            {% if not item.evaluation %}<option value="" selected disabled>Choose…</option>{% endif %}
+            <option value="useful" {% if item.evaluation and item.evaluation.response_rating == 'useful' %}selected{% endif %}>Useful</option>
+            <option value="needs_work" {% if item.evaluation and item.evaluation.response_rating == 'needs_work' %}selected{% endif %}>Needs work</option>
+            <option value="not_useful" {% if item.evaluation and item.evaluation.response_rating == 'not_useful' %}selected{% endif %}>Not useful</option>
+          </select>
+        </label>
+
+        <label>Best response shape
+          <select name="preferred_response_shape" required>
+            {% if not item.evaluation or not item.evaluation.preferred_response_shape %}<option value="" selected disabled>Choose…</option>{% endif %}
+            <option value="parent_chat" {% if item.evaluation and item.evaluation.preferred_response_shape == 'parent_chat' %}selected{% endif %}>Just parent chat</option>
+            <option value="quick_answer" {% if item.evaluation and item.evaluation.preferred_response_shape == 'quick_answer' %}selected{% endif %}>Quick child answer</option>
+            <option value="learning_thread" {% if item.evaluation and item.evaluation.preferred_response_shape == 'learning_thread' %}selected{% endif %}>Full learning thread</option>
+          </select>
+        </label>
+
+        <label>Best visual mix
+          <select name="preferred_visual_mix" required>
+            {% if not item.evaluation or not item.evaluation.preferred_visual_mix %}<option value="" selected disabled>Choose…</option>{% endif %}
+            <option value="none" {% if item.evaluation and item.evaluation.preferred_visual_mix == 'none' %}selected{% endif %}>No visual</option>
+            <option value="imagination" {% if item.evaluation and item.evaluation.preferred_visual_mix == 'imagination' %}selected{% endif %}>Imagination art</option>
+            <option value="activity_aid" {% if item.evaluation and item.evaluation.preferred_visual_mix == 'activity_aid' %}selected{% endif %}>Activity aid</option>
+            <option value="both" {% if item.evaluation and item.evaluation.preferred_visual_mix == 'both' %}selected{% endif %}>Both</option>
+          </select>
+        </label>
+
+        <label>Current visual quality
+          <select name="visual_rating" required>
+            {% if not item.evaluation %}<option value="" selected disabled>Choose…</option>{% endif %}
+            <option value="useful" {% if item.evaluation and item.evaluation.visual_rating == 'useful' %}selected{% endif %}>Useful for the child</option>
+            <option value="pretty_not_useful" {% if item.evaluation and item.evaluation.visual_rating == 'pretty_not_useful' %}selected{% endif %}>Pretty, not useful</option>
+            <option value="missing_needed" {% if item.evaluation and item.evaluation.visual_rating == 'missing_needed' %}selected{% endif %}>Missing, needed</option>
+            <option value="misleading" {% if item.evaluation and item.evaluation.visual_rating == 'misleading' %}selected{% endif %}>Misleading or incorrect</option>
+            <option value="not_needed" {% if item.evaluation and item.evaluation.visual_rating == 'not_needed' %}selected{% endif %}>No visual needed</option>
+          </select>
+        </label>
+        <label class="eval-note">What should change?
+          <input name="note" maxlength="2000" value="{{ item.evaluation.note if item.evaluation and item.evaluation.note else '' }}" placeholder="Example: Turn the three leaves into printable targets.">
+        </label>
+        <button type="submit">Save eval only</button>
+        {% if item.evaluation %}<span class="saved-eval">Saved {{ item.evaluation.created_at[:16]|replace('T', ' ') }}</span>{% endif %}
+      </form>
+    </article>
+    {% else %}
+    <section class="panel"><p class="empty">No delivered Slack learning threads are available to review yet.</p></section>
+    {% endfor %}
+  </main>
+</body>
+</html>

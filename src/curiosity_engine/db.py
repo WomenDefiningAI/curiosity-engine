@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -300,6 +300,27 @@ CREATE TABLE IF NOT EXISTS feedback (
   FOREIGN KEY(child_id) REFERENCES children(id) ON DELETE CASCADE,
   FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL,
   FOREIGN KEY(experience_id) REFERENCES experiences(id) ON DELETE SET NULL,
+  FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS output_evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  visual_asset_id TEXT,
+  artifact_id TEXT,
+  response_rating TEXT NOT NULL
+    CHECK(response_rating IN ('useful','needs_work','not_useful')),
+  visual_rating TEXT NOT NULL
+    CHECK(visual_rating IN ('useful','pretty_not_useful','missing_needed','misleading','not_needed')),
+  preferred_response_shape TEXT
+    CHECK(preferred_response_shape IN ('parent_chat','quick_answer','learning_thread')),
+  preferred_visual_mix TEXT
+    CHECK(preferred_visual_mix IN ('none','imagination','activity_aid','both')),
+  note TEXT,
+  source TEXT NOT NULL DEFAULT 'local_eval_dashboard',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+  FOREIGN KEY(visual_asset_id) REFERENCES visual_assets(id) ON DELETE SET NULL,
   FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL
 );
 
@@ -901,6 +922,14 @@ LEGACY_COLUMNS: dict[str, dict[str, str]] = {
         "response_hash": "TEXT NOT NULL DEFAULT 'legacy'",
         "workflow": "TEXT NOT NULL DEFAULT 'legacy'",
     },
+    "output_evaluations": {
+        "preferred_response_shape": (
+            "TEXT CHECK(preferred_response_shape IN ('parent_chat','quick_answer','learning_thread'))"
+        ),
+        "preferred_visual_mix": (
+            "TEXT CHECK(preferred_visual_mix IN ('none','imagination','activity_aid','both'))"
+        ),
+    },
 }
 
 
@@ -1020,6 +1049,9 @@ def init_db(db_path: str | Path) -> Path | None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_onboarding_reviews_event ON onboarding_reviews(event_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id,created_at)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_output_evaluations_event ON output_evaluations(event_id,created_at DESC)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_sessions_thread ON agent_sessions(binding_id,conversation_ref,thread_ref,updated_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id,ordinal)")
         conn.execute(
