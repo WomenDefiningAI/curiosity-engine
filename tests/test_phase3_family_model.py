@@ -1,0 +1,40 @@
+"""Focused trusted-parent family-model contracts."""
+
+import legacy_phase3_family_model as legacy
+
+test_agent_lineage_rejects_cross_child_links_at_api_and_database_boundaries = (
+    legacy.test_agent_lineage_rejects_cross_child_links_at_api_and_database_boundaries
+)
+test_parent_inspector_explains_inferences_evidence_and_provenance_without_cross_child_leakage = (
+    legacy.test_parent_inspector_explains_inferences_evidence_and_provenance_without_cross_child_leakage
+)
+test_parent_correction_recomputes_and_is_audited_and_child_scoped = (
+    legacy.test_parent_correction_recomputes_and_is_audited_and_child_scoped
+)
+test_collection_pause_blocks_new_evidence_but_allows_idempotent_replay_and_resume = (
+    legacy.test_collection_pause_blocks_new_evidence_but_allows_idempotent_replay_and_resume
+)
+test_paused_child_still_gets_answer_without_new_profile_or_audit_records = (
+    legacy.test_paused_child_still_gets_answer_without_new_profile_or_audit_records
+)
+test_delete_all_leaves_collection_hard_floor_and_preserves_explicit_support_preferences = (
+    legacy.test_delete_all_leaves_collection_hard_floor_and_preserves_explicit_support_preferences
+)
+test_parent_retention_deadline_hides_then_physically_expires_source = (
+    legacy.test_parent_retention_deadline_hides_then_physically_expires_source
+)
+test_source_event_and_full_model_deletion_are_confirmed_scoped_and_replay_safe = (
+    legacy.test_source_event_and_full_model_deletion_are_confirmed_scoped_and_replay_safe
+)
+test_private_file_erasure_recovers_after_process_kill = (
+    legacy.test_private_file_erasure_recovers_after_process_kill
+)
+test_private_file_erasure_retries_after_unlink_failure = (
+    legacy.test_private_file_erasure_retries_after_unlink_failure
+)
+test_export_is_owner_only_child_scoped_and_refuses_unrequested_overwrite = (
+    legacy.test_export_is_owner_only_child_scoped_and_refuses_unrequested_overwrite
+)
+test_child_reflection_is_gentle_optional_and_never_becomes_evidence = (
+    legacy.test_child_reflection_is_gentle_optional_and_never_becomes_evidence
+)

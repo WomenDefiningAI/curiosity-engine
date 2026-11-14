@@ -7,6 +7,7 @@ from typing import Any
 from .contracts import ToolSpec
 
 ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
+LineageResolver = Callable[[dict[str, Any]], str | None]
 
 
 DEFAULT_TOOL_SPECS = (
@@ -54,8 +55,12 @@ DEFAULT_TOOL_SPECS = (
     ),
     ToolSpec(
         name="continue_learning_thread",
-        version="1",
-        description="Answer or deepen the current child learning thread using bounded context and prior thread releases.",
+        version="2",
+        description=(
+            "Answer or deepen the current child learning thread using bounded context and prior thread releases. "
+            "Arguments: message and mode (auto, quick, or explore). Quick is a concise reviewed answer; explore is "
+            "a richer investigation and must not be chosen merely because a child's wording is vague."
+        ),
         risk="low",
         side_effect="local_write",
         data_classes=["child_context", "thread_history"],
@@ -129,11 +134,35 @@ class ToolRegistry:
     def __init__(self):
         self._specs = {spec.name: spec for spec in DEFAULT_TOOL_SPECS}
         self._handlers: dict[str, ToolHandler] = {}
+        self._execution_context_handlers: set[str] = set()
+        self._lineage_resolvers: dict[str, LineageResolver] = {}
 
-    def register(self, name: str, handler: ToolHandler) -> None:
+    def register(
+        self,
+        name: str,
+        handler: ToolHandler,
+        *,
+        receives_execution_context: bool = False,
+        lineage_resolver: LineageResolver | None = None,
+    ) -> None:
         if name not in self._specs:
             raise KeyError(f"unreviewed tool: {name}")
         self._handlers[name] = handler
+        if receives_execution_context:
+            self._execution_context_handlers.add(name)
+        else:
+            self._execution_context_handlers.discard(name)
+        if lineage_resolver is None:
+            self._lineage_resolvers.pop(name, None)
+        else:
+            self._lineage_resolvers[name] = lineage_resolver
+
+    def lineage_event_id(self, name: str, arguments: dict[str, Any]) -> str | None:
+        resolver = self._lineage_resolvers.get(name)
+        if resolver is None:
+            return None
+        resolved = str(resolver(dict(arguments)) or "").strip()
+        return resolved or None
 
     def specs(self, allowed: set[str] | None = None) -> list[dict[str, Any]]:
         specs = self._specs.values()
@@ -154,6 +183,7 @@ class ToolRegistry:
         *,
         origin: str,
         approved: bool = False,
+        execution_context: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         spec = self.spec(name)
         decision = ToolPolicy.decide(spec, origin=origin, approved=approved)
@@ -166,4 +196,10 @@ class ToolRegistry:
             handler = self._handlers[name]
         except KeyError as exc:
             raise RuntimeError(f"tool handler is not configured: {name}") from exc
-        return handler(arguments)
+        bound_arguments = dict(arguments)
+        if execution_context and name in self._execution_context_handlers:
+            # This namespace is overwritten by code after policy validation; it
+            # is never accepted as model-authored authority or exposed to a
+            # handler that did not explicitly opt into the internal contract.
+            bound_arguments["_agent_execution_context"] = dict(execution_context)
+        return handler(bound_arguments)

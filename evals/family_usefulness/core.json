@@ -1,0 +1,124 @@
+[
+  {
+    "id": "two-part-science-and-practical-answer",
+    "workflow": "quick_answer",
+    "input": "Why does bubble solution make bubbles last longer than plain water, and where can a family usually find bubble solution?",
+    "must": [
+      "answer both the mechanism and practical sourcing question",
+      "give a concrete child-ready explanation",
+      "qualify local availability"
+    ],
+    "must_not": [
+      "answer only one part",
+      "invent store inventory",
+      "start an unrequested activity or visual"
+    ],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "field_contracts": {
+        "answer": {
+          "required_any": [
+            ["soap molecules", "soap"],
+            ["stretchy film", "thin film"],
+            ["toy", "grocery", "party"],
+            ["availability changes", "check or call"]
+          ]
+        }
+      },
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1200
+    }
+  },
+  {
+    "id": "plain-causal-answer-first",
+    "workflow": "quick_answer",
+    "input": "Why does ice float?",
+    "must": ["answer why before offering anything else", "name the density relationship in child-ready language"],
+    "must_not": ["turn the answer into a lesson", "start an unrequested visual"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_any": [["less dense"], ["roomier structure", "roomier pattern"], ["floats"]],
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 900
+    }
+  },
+  {
+    "id": "observable-explanation-without-busywork",
+    "workflow": "quick_answer",
+    "input": "Why can the Moon seem to follow our car?",
+    "must": ["answer with the near-versus-far relationship", "give one concrete comparison"],
+    "must_not": ["require an activity", "add decorative art"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_any": [["far away", "distant"], ["nearby"], ["seem to follow", "change position so little"]],
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1100
+    }
+  },
+  {
+    "id": "useful-uncertainty-not-evasion",
+    "workflow": "quick_answer",
+    "input": "Do scientists know what color every dinosaur was?",
+    "must": ["say what evidence can support", "plainly distinguish known from unknown"],
+    "must_not": ["pretend certainty", "use uncertainty to avoid answering"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_any": [["fossil", "pigment"], ["few", "not every", "not known"]],
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1000
+    }
+  },
+  {
+    "id": "clarify-an-ambiguous-superlative",
+    "workflow": "quick_answer",
+    "input": "What are the biggest robots in the world?",
+    "must": ["clarify that biggest can mean different measurements", "give concrete scale context"],
+    "must_not": ["give a generic robot definition", "use unexplained systems jargon"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_all": ["tallest", "heaviest", "strongest"],
+      "required_any": [["house", "building"], ["height", "weight", "lifting power"]],
+      "forbid_activity": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1200
+    }
+  },
+  {
+    "id": "complete-mechanism-without-forced-activity",
+    "workflow": "quick_answer",
+    "input": "Why can airplanes fly even though they are heavy?",
+    "must": ["explain the upward force and the role of forward motion", "answer directly in child-ready language"],
+    "must_not": ["replace the answer with an experiment", "start an unrequested visual"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_any": [["redirect air", "pushes air"], ["upward", "lift"], ["engine", "moving"]],
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1000
+    }
+  },
+  {
+    "id": "evidence-is-the-answer-not-a-detour",
+    "workflow": "quick_answer",
+    "input": "How can scientists learn about dinosaurs if nobody saw them alive?",
+    "must": ["name concrete evidence", "connect different clues to claims about ancient life"],
+    "must_not": ["avoid the question", "require a family activity"],
+    "quality_contract": {
+      "required_fields": ["answer"],
+      "required_any": [["fossil", "evidence"], ["bones", "teeth", "footprints"], ["ancient lives", "what a dinosaur ate"]],
+      "forbid_activity": true,
+      "forbid_visual": true,
+      "forbid_generic_filler": true,
+      "max_visible_characters": 1100
+    }
+  }
+]

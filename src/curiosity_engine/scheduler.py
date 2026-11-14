@@ -32,14 +32,123 @@ def _parse_weekday(text: str) -> str:
 
 
 def _parse_time(text: str) -> str:
-    match = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b", text, re.IGNORECASE)
-    if match:
+    matches = list(re.finditer(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b", text, re.IGNORECASE))
+    if matches:
+        match = matches[-1]
         hour = int(match.group(1)) % 12
         if match.group(3).casefold() == "pm":
             hour += 12
         return f"{hour:02d}:{int(match.group(2) or 0):02d}"
-    match = re.search(r"\b((?:[01]\d|2[0-3])):([0-5]\d)\b", text)
-    return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}" if match else "18:00"
+    matches = list(re.finditer(r"\b((?:[01]\d|2[0-3])):([0-5]\d)\b", text))
+    if matches:
+        match = matches[-1]
+        return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+    matches = list(
+        re.finditer(
+            r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s+(?:in\s+the\s+)?(morning|afternoon|evening)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    if not matches:
+        return "18:00"
+    match = matches[-1]
+    hour = int(match.group(1)) % 12
+    if match.group(3).casefold() in {"afternoon", "evening"}:
+        hour += 12
+    return f"{hour:02d}:{int(match.group(2) or 0):02d}"
+
+
+def checkin_message_from_request(text: str, child_name: str = "your child") -> str:
+    """Build one bounded visible check-in message from the parent's wording."""
+
+    compact = " ".join(text.split()).strip()
+    quoted = re.findall(r"[“\"]([^”\"]{8,500}[?.!])[”\"]", compact)
+    if quoted:
+        candidate = quoted[-1].strip()
+        if not re.search(r"nothing recurring|not scheduled|draft", candidate, re.IGNORECASE):
+            return candidate
+    lowered = compact.casefold()
+    if re.search(r"\b(?:one|an?)\s+(?:easy|simple|quick)?\s*drawing idea\b", lowered):
+        return (
+            f"Drawing idea for {child_name}: draw one interesting thing you noticed this week from a surprising "
+            "point of view. What will you choose?"
+        )
+    ask_match = re.search(r"\bask me (?:whether|if)\s+(.+?)(?:[.!?]|$)", compact, re.IGNORECASE)
+    if ask_match:
+        requested = ask_match.group(1).strip(" ,.;:")
+        if re.match(r"^i want\b", requested, re.IGNORECASE):
+            question = re.sub(r"^i want\b", "Do you want", requested, flags=re.IGNORECASE)
+        elif re.match(r"^i would like\b", requested, re.IGNORECASE):
+            question = re.sub(r"^i would like\b", "Would you like", requested, flags=re.IGNORECASE)
+        else:
+            question = re.sub(r"^i\s+", "Do you ", requested, flags=re.IGNORECASE)
+            question = question[0].upper() + question[1:]
+        return question + ("" if question.endswith("?") else "?")
+    ask_for_match = re.search(
+        r"\b(?:where\s+you\s+)?ask me for\s+(.+?)(?:[.!?]|$)",
+        compact,
+        re.IGNORECASE,
+    )
+    if ask_for_match:
+        requested = ask_for_match.group(1).strip(" ,.;:")
+        requested = re.sub(r"^(?:one|a)\s+(?:small|quick|simple)\s+", "one ", requested, flags=re.IGNORECASE)
+        return f"What is {requested} from this week?"
+    asking_match = re.search(
+        r"\basking\s+(.+?)(?:\s+every\s+week|\s+that\s+week|[.!?]|$)",
+        compact,
+        re.IGNORECASE,
+    )
+    if asking_match:
+        requested = asking_match.group(1).strip(" ,.;:")
+        if requested.casefold().startswith("what "):
+            return requested[0].upper() + requested[1:] + ("" if requested.endswith("?") else "?")
+    child_topic_match = re.search(
+        r"\bcheck[- ]?in\s+with\s+[A-Z][A-Za-z'’-]{1,40}\s+about\s+(.+?)(?:[.!?]|$)",
+        compact,
+        re.IGNORECASE,
+    )
+    if child_topic_match:
+        topic = child_topic_match.group(1).strip(" ,.;:")
+        if re.search(r"\bwhat\s+(?:she|he|they)\s+wants?\s+help\s+with\s+at\s+school\b", topic, re.IGNORECASE):
+            return "What would you like help with at school this week?"
+        topic = re.sub(r"\b(?:she|he|they)\b", "you", topic, flags=re.IGNORECASE)
+        return f"What would you like to share about {topic}?"
+    topic_match = re.search(
+        r"\babout\s+(.+?)(?:,?\s+with\s+(?:just\s+)?one\s+question|[.!?]|$)",
+        compact,
+        re.IGNORECASE,
+    )
+    if topic_match:
+        topic = topic_match.group(1).strip(" ,.;:")
+        if re.match(r"noticing\s+", topic, re.IGNORECASE):
+            subject = re.sub(r"^noticing\s+", "", topic, flags=re.IGNORECASE)
+            return f"What {subject} can you notice today?"
+        return f"What did {child_name} notice about {topic} this week?"
+    return f"What did {child_name} notice or wonder about this week?"
+
+
+def weekly_checkin_preview(text: str, child_name: str = "your child") -> str:
+    """Render the exact pending cadence and message in parent-friendly form."""
+
+    weekday = _parse_weekday(text).title()
+    local_time = _parse_time(text)
+    hour, minute = (int(value) for value in local_time.split(":"))
+    suffix = "a.m." if hour < 12 else "p.m."
+    display_hour = hour % 12 or 12
+    display_time = f"{display_hour}:{minute:02d} {suffix}"
+    message = checkin_message_from_request(text, child_name)
+    boundary_notes: list[str] = []
+    lowered = text.casefold()
+    if re.search(r"\b(?:to me only|parent[- ]facing|reminder to me|not (?:a message )?to (?:her|him|them))\b", lowered):
+        boundary_notes.append("This reminder is for the parent, not the child.")
+    if re.search(r"\b(?:not|don't|do not)\b.{0,35}\b(?:report card|assessment|grade|mastery)\b", lowered):
+        boundary_notes.append("Anything shared stays family context, not a report card or mastery claim.")
+    boundary = (" " + " ".join(boundary_notes)) if boundary_notes else ""
+    return (
+        f"Draft: {weekday} at {display_time}: “{message}” "
+        f"Nothing recurring will be scheduled until you explicitly approve it.{boundary}"
+    )
 
 
 def _next_occurrence(weekday: str, local_time: str, timezone: str, *, after: datetime | None = None) -> datetime:
@@ -69,7 +178,13 @@ class SchedulerService:
     ) -> ScheduleProposal:
         with connect(self.db_path) as conn:
             row = conn.execute("SELECT timezone FROM household_settings WHERE id='default'").fetchone()
+            child_row = (
+                conn.execute("SELECT name FROM children WHERE id=?", (child_id,)).fetchone()
+                if child_id
+                else None
+            )
         timezone = str(row["timezone"] if row else "UTC")
+        child_name = str(child_row["name"] if child_row else "your child").split()[0]
         return ScheduleProposal(
             child_id=child_id,
             weekday=_parse_weekday(request),
@@ -77,6 +192,7 @@ class SchedulerService:
             timezone=timezone,
             channel_id=channel_id,
             binding_id=binding_id,
+            checkin_message=checkin_message_from_request(request, child_name),
         )
 
     def create_weekly_checkin(self, proposal: ScheduleProposal | dict[str, Any]) -> dict[str, Any]:
@@ -206,7 +322,7 @@ class SchedulerService:
             session_id=str(session["id"]),
             plan=plan,
         )
-        text = "Weekly curiosity check-in: what clicked, what got stuck, or what should we follow next?"
+        text = proposal.checkin_message
         delivery_id = enqueue_delivery(
             self.db_path,
             proposal.binding_id,

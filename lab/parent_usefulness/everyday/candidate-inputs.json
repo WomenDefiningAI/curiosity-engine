@@ -1,0 +1,149 @@
+{
+  "EU01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "Pre-K"
+      }
+    ],
+    "parent_turns": [
+      "My three-year-old is restless while I fold laundry. Give us one little pretend game we can start right here. No props, no counting, and I cannot read a long explanation."
+    ]
+  },
+  "EU02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "Pre-K"
+      },
+      {
+        "label": "child-2",
+        "grade": "2"
+      }
+    ],
+    "parent_turns": [
+      "My three-year-old and seven-year-old both want to play with our six big blocks. Give them one cooperative building game where both have a real job. No winner, no extra materials, and no writing."
+    ]
+  },
+  "EU03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We have two minutes before leaving and no materials handy. Give me one silly game to say aloud and play with my five-year-old. Two short sentences, please."
+    ]
+  },
+  "EU04": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "Pre-K"
+      }
+    ],
+    "parent_turns": [
+      "Make two big picture choices for my three-year-old: stretch tall like a giraffe or curl small like a hedgehog. We only have my phone, no printer. Show the body positions clearly so we can copy one. No worksheet boxes."
+    ]
+  },
+  "EU05": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Show my five-year-old how to make a little paper tunnel from one sheet with one fold. We have no scissors or tape. Use big before-and-after pictures showing which way the paper stands, with very short instructions."
+    ]
+  },
+  "EU06": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "parent_turns": [
+      "Give us one playful thing to build with one sheet of paper. We have no scissors or tape.",
+      "That is too tricky for us. Give us a much simpler build that works with the same sheet, and tell me exactly how to start."
+    ]
+  },
+  "EU07": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We only have two large plastic cups. Give my five-year-old one tiny building challenge and one thing to change after trying it. No extra supplies or scorekeeping."
+    ]
+  },
+  "EU08": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a big picture-choice page with a snail, a butterfly and a ladybug. My five-year-old will point to the one with a shell, the one with big wings, and the one with spots. No writing.",
+      "Keep these exact pictures, remove any answer boxes, and make the pictures bigger.",
+      "Keep that layout. Replace only the snail with a turtle, still showing a shell. Keep the butterfly and ladybug pictures exactly the same."
+    ]
+  },
+  "EU09": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We have been looking at triangles and squares. Just keeping you in the loop.",
+      "Could you give us a few different ways to explore those together?",
+      "Why is that still a square when we turn it onto a corner? And can we try something without drawing?"
+    ]
+  },
+  "EU10": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "My five-year-old is curious about shadows. What changes if we move a toy closer to our flashlight, and why?",
+      "Can you show that with pictures so she can compare the two positions?",
+      "What if we move the light instead and leave the toy still?"
+    ]
+  },
+  "EU11": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "We noticed some fallen leaves float in a bowl and some sink. Just saving that observation.",
+      "What might make them behave differently, and what are a couple of ways we could check?",
+      "Could we do the second idea without tearing the leaves?"
+    ]
+  },
+  "EU12": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Why does a magnet stick to our fridge?",
+      "Now something different: give us one tiny pretend game about space with no props.",
+      "How could we play that sitting down, and what can my three-year-old do while the older one leads?"
+    ]
+  }
+}

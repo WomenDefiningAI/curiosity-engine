@@ -10,7 +10,7 @@
     "materials": [],
     "parent_effort": "very_low"
   },
-  "graph_updates": [{"kind":"upsert_node","node_kind":"concept","label":"apparent motion","confidence":0.4,"state":{}}],
+  "observation_candidates": [{"kind":"concept_mention","label":"apparent motion"}],
   "actions": [],
   "resource_refs": []
 }

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
+import time
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -13,6 +15,8 @@ from .config import repository_root
 OutputModel = TypeVar("OutputModel", bound=BaseModel)
 
 MODEL_SETTING_KEYS = ("CURIOSITY_BACKEND", "OPENAI_API_KEY", "CURIOSITY_MODEL")
+SLOW_MODEL_CALL_SECONDS = 5.0
+logger = logging.getLogger(__name__)
 
 
 def load_model_settings() -> dict[str, str]:
@@ -130,7 +134,37 @@ class OpenAIBackend:
             request["tool_choice"] = "auto"
             request["max_tool_calls"] = 2
             request["include"] = ["web_search_call.action.sources"]
-        response = self.client.responses.create(**request)
+        started = time.monotonic()
+        try:
+            from .model_usage import metered_call
+
+            response = metered_call(request, lambda budgeted: (
+                self.client.with_options(max_retries=0) if budgeted else self.client
+            ).responses.create(**request), role=role)
+        except Exception as exc:
+            logger.warning(
+                "model call failed role=%s model=%s duration_seconds=%.3f error_type=%s",
+                role,
+                selected_model,
+                time.monotonic() - started,
+                exc.__class__.__name__,
+            )
+            raise
+        elapsed = time.monotonic() - started
+        if elapsed >= SLOW_MODEL_CALL_SECONDS:
+            logger.warning(
+                "slow model call role=%s model=%s duration_seconds=%.3f",
+                role,
+                selected_model,
+                elapsed,
+            )
+        else:
+            logger.info(
+                "model call completed role=%s model=%s duration_seconds=%.3f",
+                role,
+                selected_model,
+                elapsed,
+            )
         text = getattr(response, "output_text", None)
         if not text:
             raise RuntimeError("OpenAI response did not contain structured output text")

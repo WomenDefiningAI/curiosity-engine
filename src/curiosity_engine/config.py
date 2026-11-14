@@ -104,6 +104,23 @@ class AppConfig:
     def validate(self) -> list[str]:
         errors = validate_reasoning_policy(self.reasoning)
         errors.extend(validate_model_config(self.production))
+        configured_roles = set((self.production.get("models") or {}).keys())
+        for workflow_name, workflow in (self.reasoning.get("workflows") or {}).items():
+            required_roles = [str(workflow.get("generator_role") or "")]
+            required_roles.extend(f"critic_{critic}" for critic in workflow.get("critics") or [])
+            for role in required_roles:
+                if role and role not in configured_roles:
+                    errors.append(
+                        f"reasoning.workflows.{workflow_name} requires missing production model role: {role}"
+                    )
+        for component_name, component in (self.production.get("components") or {}).items():
+            if not isinstance(component, dict):
+                continue
+            required_roles = [str(component.get("model_role") or "")]
+            required_roles.extend(str(role) for role in component.get("critics") or [])
+            for role in required_roles:
+                if role and role not in configured_roles:
+                    errors.append(f"production.components.{component_name} requires missing model role: {role}")
         runtime = self.production.get("runtime") or {}
         for key in ("reasoning_policy", "context_policy", "autonomy_policy"):
             configured = runtime.get(key)

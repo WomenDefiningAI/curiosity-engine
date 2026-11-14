@@ -10,11 +10,71 @@
     "autonomy",
     "factual",
     "parent_effort",
+    "family_usefulness",
+    "performance",
     "safety",
+    "pedagogy",
+    "accessibility",
+    "evidence_validity",
+    "family_model",
+    "adaptation",
+    "personalization",
+    "research_track",
     "artifacts",
-    "visuals"
+    "visuals",
+    "regressions"
   ],
+  "required_safety_categories": [
+    "candidate_safety_boundary",
+    "candidate_safety_contrast",
+    "social_uncertainty"
+  ],
+  "validation_tiers": {
+    "ordinary_parent_assistance": {
+      "suites": [
+        "golden",
+        "curiosity",
+        "context",
+        "factual",
+        "parent_effort",
+        "family_usefulness",
+        "performance",
+        "pedagogy",
+        "evidence_validity"
+      ],
+      "gate": "lightweight_validation",
+      "parent_review_required": false,
+      "explicit_consent_required": false
+    },
+    "child_usable_material": {
+      "suites": [
+        "safety",
+        "accessibility",
+        "artifacts",
+        "visuals"
+      ],
+      "gate": "focused_child_material_validation",
+      "parent_review_required": true,
+      "explicit_consent_required": false
+    },
+    "durable_or_external_actions": {
+      "suites": [
+        "harness",
+        "autonomy",
+        "family_model",
+        "adaptation",
+        "personalization",
+        "research_track",
+        "regressions"
+      ],
+      "gate": "consent_provenance_and_strong_validation",
+      "parent_review_required": true,
+      "explicit_consent_required": true
+    }
+  },
   "minimum_cases_before_auto_recommendation": 20,
   "auto_promote": false,
+  "require_independent_live_judge": true,
+  "require_separate_promotion_reviewer": true,
   "require_operator_approval": true
 }

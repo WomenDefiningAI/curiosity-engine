@@ -1,0 +1,30 @@
+[
+  {
+    "id": "research-prior",
+    "kind": "posterior",
+    "history": {
+      "independent_successes": 0,
+      "independent_failures": 0,
+      "partial_results": 0,
+      "supported_successes": 0,
+      "supported_failures": 0
+    },
+    "expected_mean": 0.5
+  },
+  {
+    "id": "research-independent-success",
+    "kind": "posterior",
+    "history": {
+      "independent_successes": 4,
+      "independent_failures": 0,
+      "partial_results": 0,
+      "supported_successes": 0,
+      "supported_failures": 0
+    },
+    "expected_mean": 0.8333333333333334
+  },
+  {
+    "id": "research-synthetic-cannot-promote",
+    "kind": "synthetic_gate"
+  }
+]

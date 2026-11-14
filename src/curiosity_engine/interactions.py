@@ -18,6 +18,25 @@ def _token_hash(value: str) -> str:
     return sha256(value.encode()).hexdigest()
 
 
+def _interaction_event_ids(plan: InteractionPlan) -> set[str]:
+    """Extract only explicit event-id fields from a validated code-owned plan."""
+
+    found: set[str] = set()
+
+    def visit(value: Any, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                visit(nested_value, str(nested_key))
+        elif isinstance(value, list):
+            for nested_value in value:
+                visit(nested_value, key)
+        elif key and key.endswith("event_id") and isinstance(value, str) and value.strip():
+            found.add(value.strip())
+
+    visit(plan.model_dump(mode="json"))
+    return found
+
+
 def create_interaction(
     db_path: str | Path,
     *,
@@ -47,6 +66,7 @@ def create_interaction(
         )
     now = utcnow()
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """INSERT INTO interaction_instances(
                    id,session_id,binding_id,plan_json,options_json,status,expires_at,created_at,updated_at
@@ -62,6 +82,19 @@ def create_interaction(
                 now,
             ),
         )
+        for event_id in sorted(_interaction_event_ids(parsed)):
+            owned = conn.execute(
+                """SELECT 1 FROM events e JOIN agent_sessions s ON s.id=?
+                   WHERE e.id=? AND e.child_id=s.child_id""",
+                (session_id, event_id),
+            ).fetchone()
+            if not owned:
+                raise ValueError("interaction event does not belong to its parent-agent session")
+            conn.execute(
+                """INSERT INTO interaction_instance_event_lineage(interaction_id,event_id)
+                   VALUES(?,?)""",
+                (interaction_id, event_id),
+            )
     return {
         "interaction_id": interaction_id,
         "plan": parsed.model_dump(mode="json"),
@@ -97,6 +130,18 @@ def resolve_interaction(
         if duplicate:
             return {"intent": duplicate["intent"], "payload": jload(duplicate["payload_json"]), "duplicate": True}
         if row["status"] != "active":
+            raise ValueError("interaction is no longer active")
+        deleting = conn.execute(
+            """SELECT 1 FROM interaction_instance_event_lineage l
+               JOIN family_event_deletion_locks d ON d.event_id=l.event_id
+               WHERE l.interaction_id=? LIMIT 1""",
+            (parsed.interaction_id,),
+        ).fetchone()
+        if deleting:
+            conn.execute(
+                "UPDATE interaction_instances SET status='cancelled',updated_at=? WHERE id=?",
+                (now.isoformat(), parsed.interaction_id),
+            )
             raise ValueError("interaction is no longer active")
         if datetime.fromisoformat(row["expires_at"]) <= now:
             conn.execute(

@@ -1,0 +1,196 @@
+[
+  {
+    "id": "hard-needs-familiar",
+    "source_kind": "public_fixture",
+    "features": {
+      "question_intent": "guided_inquiry",
+      "baseline_strategy_id": "guided-inquiry-k2",
+      "domain_overlay_id": "early-science-k2",
+      "prior_feedback_band": "multiple",
+      "recent_challenge_signal": "too_hard",
+      "knowledge_band": "practicing_with_support",
+      "interest_band": "not_observed",
+      "response_mode": "spoken"
+    },
+    "expected_candidate": {
+      "strategy_id": "model-practice-fade-k2",
+      "challenge_assumption": "familiar",
+      "interest_support": "neutral"
+    },
+    "baseline_utility": 0.50,
+    "candidate_utility": 0.74,
+    "baseline_calibration_error": 0.32,
+    "candidate_calibration_error": 0.12,
+    "safety_regression": false
+  },
+  {
+    "id": "easy-invites-teach-back",
+    "source_kind": "public_fixture",
+    "features": {
+      "question_intent": "practice_with_scaffolds",
+      "baseline_strategy_id": "model-practice-fade-k2",
+      "domain_overlay_id": "early-math-k2",
+      "prior_feedback_band": "multiple",
+      "recent_challenge_signal": "too_easy",
+      "knowledge_band": "demonstrated_in_context",
+      "interest_band": "maintained_situational",
+      "response_mode": "multiple"
+    },
+    "expected_candidate": {
+      "strategy_id": "teach-back-k2",
+      "challenge_assumption": "independent_transfer",
+      "interest_support": "maintenance"
+    },
+    "baseline_utility": 0.52,
+    "candidate_utility": 0.78,
+    "baseline_calibration_error": 0.28,
+    "candidate_calibration_error": 0.10,
+    "safety_regression": false
+  },
+  {
+    "id": "recurrent-interest-revisit",
+    "source_kind": "synthetic",
+    "features": {
+      "question_intent": "answer_and_wonder",
+      "baseline_strategy_id": "answer-and-wonder-k2",
+      "domain_overlay_id": "early-science-k2",
+      "prior_feedback_band": "one",
+      "recent_challenge_signal": "none",
+      "knowledge_band": "demonstrated_in_context",
+      "interest_band": "emerging_recurrent",
+      "response_mode": "none"
+    },
+    "expected_candidate": {
+      "strategy_id": "retrieval-revisit-k2",
+      "challenge_assumption": "stretch_with_help",
+      "interest_support": "maintenance"
+    },
+    "baseline_utility": 0.55,
+    "candidate_utility": 0.76,
+    "baseline_calibration_error": 0.24,
+    "candidate_calibration_error": 0.11,
+    "safety_regression": false
+  },
+  {
+    "id": "confirmed-interest-depth",
+    "source_kind": "synthetic",
+    "features": {
+      "question_intent": "compare_connect",
+      "baseline_strategy_id": "compare-connect-k2",
+      "domain_overlay_id": "source-sense-k2",
+      "prior_feedback_band": "multiple",
+      "recent_challenge_signal": "none",
+      "knowledge_band": "independently_demonstrated",
+      "interest_band": "sustained_parent_confirmed",
+      "response_mode": "multiple"
+    },
+    "expected_candidate": {
+      "strategy_id": "retrieval-revisit-k2",
+      "challenge_assumption": "independent_transfer",
+      "interest_support": "recurring_depth"
+    },
+    "baseline_utility": 0.58,
+    "candidate_utility": 0.80,
+    "baseline_calibration_error": 0.22,
+    "candidate_calibration_error": 0.09,
+    "safety_regression": false
+  },
+  {
+    "id": "positive-signal-stretch",
+    "source_kind": "public_fixture",
+    "features": {
+      "question_intent": "make_design_iterate",
+      "baseline_strategy_id": "make-design-iterate-k2",
+      "domain_overlay_id": "early-writing-k2",
+      "prior_feedback_band": "one",
+      "recent_challenge_signal": "positive",
+      "knowledge_band": "exposure_recorded",
+      "interest_band": "triggered_situational",
+      "response_mode": "drawn"
+    },
+    "expected_candidate": {
+      "strategy_id": "make-design-iterate-k2",
+      "challenge_assumption": "stretch_with_help",
+      "interest_support": "situational_trigger"
+    },
+    "baseline_utility": 0.61,
+    "candidate_utility": 0.73,
+    "baseline_calibration_error": 0.20,
+    "candidate_calibration_error": 0.13,
+    "safety_regression": false
+  },
+  {
+    "id": "sparse-stays-baseline",
+    "source_kind": "public_fixture",
+    "features": {
+      "question_intent": "direct_answer",
+      "baseline_strategy_id": "answer-and-wonder-k2",
+      "domain_overlay_id": "general-learning-k2",
+      "prior_feedback_band": "none",
+      "recent_challenge_signal": "none",
+      "knowledge_band": "not_observed",
+      "interest_band": "not_observed",
+      "response_mode": "none"
+    },
+    "expected_candidate": {
+      "strategy_id": "answer-and-wonder-k2",
+      "challenge_assumption": "grade_baseline_uncalibrated",
+      "interest_support": "neutral"
+    },
+    "baseline_utility": 0.72,
+    "candidate_utility": 0.72,
+    "baseline_calibration_error": 0.10,
+    "candidate_calibration_error": 0.10,
+    "safety_regression": false
+  },
+  {
+    "id": "equivalent-spoken",
+    "source_kind": "synthetic",
+    "equivalence_key": "equivalent-response-modes",
+    "features": {
+      "question_intent": "guided_inquiry",
+      "baseline_strategy_id": "guided-inquiry-k2",
+      "domain_overlay_id": "early-science-k2",
+      "prior_feedback_band": "multiple",
+      "recent_challenge_signal": "positive",
+      "knowledge_band": "practicing_with_support",
+      "interest_band": "maintained_situational",
+      "response_mode": "spoken"
+    },
+    "expected_candidate": {
+      "strategy_id": "guided-inquiry-k2",
+      "challenge_assumption": "stretch_with_help",
+      "interest_support": "maintenance"
+    },
+    "baseline_utility": 0.60,
+    "candidate_utility": 0.72,
+    "baseline_calibration_error": 0.23,
+    "candidate_calibration_error": 0.13,
+    "safety_regression": false
+  },
+  {
+    "id": "equivalent-drawn",
+    "source_kind": "synthetic",
+    "equivalence_key": "equivalent-response-modes",
+    "features": {
+      "question_intent": "guided_inquiry",
+      "baseline_strategy_id": "guided-inquiry-k2",
+      "domain_overlay_id": "early-science-k2",
+      "prior_feedback_band": "multiple",
+      "recent_challenge_signal": "positive",
+      "knowledge_band": "practicing_with_support",
+      "interest_band": "maintained_situational",
+      "response_mode": "drawn"
+    },
+    "expected_candidate": {
+      "strategy_id": "guided-inquiry-k2",
+      "challenge_assumption": "stretch_with_help",
+      "interest_support": "maintenance"
+    },
+    "baseline_utility": 0.60,
+    "candidate_utility": 0.72,
+    "baseline_calibration_error": 0.23,
+    "candidate_calibration_error": 0.13,
+    "safety_regression": false
+  }
+]

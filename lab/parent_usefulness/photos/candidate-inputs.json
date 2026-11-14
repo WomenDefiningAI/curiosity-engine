@@ -1,0 +1,78 @@
+{
+  "PH01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "Schoolwork for context.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/length.png",
+          "lab/parent_usefulness/photos/fixtures/position.png",
+          "lab/parent_usefulness/photos/fixtures/capacity.png",
+          "lab/parent_usefulness/photos/fixtures/patterns.png",
+          "lab/parent_usefulness/photos/fixtures/groups.png"
+        ]
+      },
+      {
+        "button": "Give us an idea"
+      },
+      {
+        "button": "Make a challenge"
+      },
+      {
+        "text": "Why does the fourth page repeat the same order? What if we swap just one of the pictures?"
+      }
+    ]
+  },
+  "PH02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "Here is the page from school.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/sounds.png"
+        ]
+      },
+      {
+        "text": "Give us one quick spoken game using the concept on this page. No writing."
+      },
+      {
+        "text": "Make that into a little picture challenge."
+      },
+      {
+        "text": "What about jam? It has that sound too. Why would it not go with the others?"
+      }
+    ]
+  },
+  "PH03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "This is what came home.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/halves.png"
+        ]
+      },
+      {
+        "button": "Make a challenge"
+      },
+      {
+        "text": "Why are the slanted pieces still halves? How could I help her check without telling her the answer?"
+      }
+    ]
+  }
+}

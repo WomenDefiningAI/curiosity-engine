@@ -6,6 +6,12 @@
     "must_not": ["dump entire longitudinal graph"]
   },
   {
+    "id": "quick-answer-context-depth",
+    "workflow": "quick_answer",
+    "must": ["context_depth=2", "run factual, pedagogy, and context critics"],
+    "must_not": ["force a lesson, activity, or visual on ordinary questions"]
+  },
+  {
     "id": "weekly-context-depth",
     "workflow": "weekly_reflection",
     "must": ["context_depth=4", "include evidence-backed claims when available"],

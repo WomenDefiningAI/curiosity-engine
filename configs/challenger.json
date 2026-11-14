@@ -1,6 +1,17 @@
 {
   "release_id": "experimental-local",
   "channel": "experimental",
-  "base_release": "0.1.0-slack-mvp",
-  "changes": []
+  "base_release": "0.6.0-research-track-candidate",
+  "changes": [
+    {
+      "component": "evaluated_personalization",
+      "mode": "shadow_candidate",
+      "description": "Evaluate exactly bound, bounded personalization against the fixed baseline without automatic promotion or private replay data; require a full-Lab independent review before separate operator approval."
+    },
+    {
+      "component": "research_track",
+      "mode": "candidate_only",
+      "description": "Evaluate release-bound uncertainty traces and inspectable proactivity candidates without authorizing learner state, generation, scheduling, or delivery."
+    }
+  ]
 }

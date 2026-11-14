@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "PH01",
+      "split": "development",
+      "topic_family": "five_photo_concepts",
+      "situation": "photo_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "Schoolwork for context.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/length.png",
+              "lab/parent_usefulness/photos/fixtures/position.png",
+              "lab/parent_usefulness/photos/fixtures/capacity.png",
+              "lab/parent_usefulness/photos/fixtures/patterns.png",
+              "lab/parent_usefulness/photos/fixtures/groups.png"
+            ]
+          },
+          {
+            "button": "Give us an idea"
+          },
+          {
+            "button": "Make a challenge"
+          },
+          {
+            "text": "Why does the fourth page repeat the same order? What if we swap just one of the pictures?"
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Acknowledge all five source photos and give a playable idea grounded in an actual visible task or concept.",
+          "The challenge button delivers a usable illustrated challenge continuing the idea.",
+          "Answer the open question about the fourth photo using its repeating units; do not restart or demand a menu."
+        ],
+        "common_misses": [
+          "Using a generic school-day caption instead of the worksheet concepts.",
+          "Missing later photos, dropping context between buttons, or refusing an open follow-up."
+        ],
+        "parent_burden_to_watch": "Resend photos, restate concepts, repair a failed button or invent missing visual content.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PH02",
+      "split": "development",
+      "topic_family": "beginning_vs_ending_sound",
+      "situation": "photo_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "Here is the page from school.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/sounds.png"
+            ]
+          },
+          {
+            "text": "Give us one quick spoken game using the concept on this page. No writing."
+          },
+          {
+            "text": "Make that into a little picture challenge."
+          },
+          {
+            "text": "What about jam? It has that sound too. Why would it not go with the others?"
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Ground the oral game in beginning /m/ sounds, with accurate examples.",
+          "Deliver an actual visual challenge that preserves the sound concept and no-writing constraint.",
+          "Explain beginning versus ending sound for jam directly, in language the parent can use with a young child."
+        ],
+        "common_misses": [
+          "Using a generic school-day caption instead of the worksheet concepts.",
+          "Missing later photos, dropping context between buttons, or refusing an open follow-up."
+        ],
+        "parent_burden_to_watch": "Resend photos, restate concepts, repair a failed button or invent missing visual content.",
+        "rendered_artifact_required": true
+      }
+    },
+    {
+      "id": "PH03",
+      "split": "development",
+      "topic_family": "equal_parts",
+      "situation": "photo_followup",
+      "input": {
+        "children": [
+          {
+            "label": "child-1",
+            "grade": "K"
+          }
+        ],
+        "transport_steps": [
+          {
+            "text": "This is what came home.",
+            "photos": [
+              "lab/parent_usefulness/photos/fixtures/halves.png"
+            ]
+          },
+          {
+            "button": "Make a challenge"
+          },
+          {
+            "text": "Why are the slanted pieces still halves? How could I help her check without telling her the answer?"
+          }
+        ]
+      },
+      "review": {
+        "desired_experience": [
+          "Make a usable challenge from the visible equal-parts concept directly from the context button.",
+          "Explain that equal shares can have a diagonal boundary; suggest a concrete comparison a young child can try.",
+          "Treat the final open question as an explanation request, retaining the original worksheet context."
+        ],
+        "common_misses": [
+          "Using a generic school-day caption instead of the worksheet concepts.",
+          "Missing later photos, dropping context between buttons, or refusing an open follow-up."
+        ],
+        "parent_burden_to_watch": "Resend photos, restate concepts, repair a failed button or invent missing visual content.",
+        "rendered_artifact_required": true
+      }
+    }
+  ]
+}

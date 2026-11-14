@@ -1,0 +1,16 @@
+{
+  "examples": [
+    {
+      "id": "CAL_NO_WRITING",
+      "input": "A picture activity for a nonreader, no writing needed.",
+      "delivered_text": "An illustrated page has a title and one adult-read instruction: Point to the animal with long ears. It supplies large rabbit, hedgehog and snail pictures, with no child writing task.",
+      "rendered_pages": [],
+      "expected": {
+        "use_as_is": "use_as_is",
+        "reason": "Adult-facing print does not require the child to write or read. This calibration concerns the wording constraint; real visual cases still require inspecting their page.",
+        "remaining_parent_work": "Read the short clue aloud.",
+        "failure_reasons": []
+      }
+    }
+  ]
+}

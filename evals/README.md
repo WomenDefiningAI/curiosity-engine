@@ -14,5 +14,6 @@ Suites:
 - `artifacts/`: printout correctness and trust rules.
 - `parent_effort/`: busy-parent constraints.
 - `safety/`: uncertainty, social inference, child-appropriate boundaries.
+- `visual-system/`: five 25-case public review rounds for routing, researched images, worksheet variety, threaded repair, and novel holdouts. Run each with `curiosity-visual-eval`; reports stay under ignored `private/evals/`.
 
 A bug is not fixed until a regression case exists. `curiosity-lab` executes every case; it does not treat fixture presence as a pass. Offline invariants and optional live semantic judging are reported separately.

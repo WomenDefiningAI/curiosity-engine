@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -63,6 +64,18 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
             },
         )
 
+    def render_evals(request: Request, *, notice: str | None = None, error: str | None = None):
+        return templates.TemplateResponse(
+            request,
+            "evals.html",
+            {
+                "csrf": app.state.csrf,
+                "items": service.evaluation_queue(limit=10),
+                "notice": notice,
+                "error": error,
+            },
+        )
+
     def redirect_home(child_id: str | None = None, *, anchor: str | None = None) -> RedirectResponse:
         """Redirect only to a fixed local path with a database-owned child identifier."""
 
@@ -77,6 +90,67 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request, child: str | None = None):
         return render_home(request, child=child)
+
+    @app.get("/evals", response_class=HTMLResponse)
+    def evals(request: Request):
+        return render_evals(request)
+
+    @app.get("/evals/visual/{visual_asset_id}")
+    def eval_visual(visual_asset_id: str):
+        with connect(service.db_path) as conn:
+            row = conn.execute(
+                "SELECT path,mime_type,filename FROM visual_assets WHERE id=?",
+                (visual_asset_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(404)
+        path = Path(row["path"]).resolve()
+        try:
+            path.relative_to(service.output_dir)
+        except ValueError as exc:
+            raise HTTPException(403) from exc
+        if not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, media_type=row["mime_type"], filename=row["filename"])
+
+    @app.post("/evals/generate-activity-aids", response_class=HTMLResponse)
+    def generate_eval_activity_aids(request: Request, csrf: Annotated[str, Form()] = ""):
+        check_csrf(csrf)
+        result = service.generate_evaluation_activity_aids(limit=10)
+        notice = (
+            f"Generated {result['generated']} activity aid(s); "
+            f"{result['existing']} already existed; {result['failed']} failed review."
+        )
+        return render_evals(request, notice=notice)
+
+    @app.post("/evals/{event_id}")
+    def save_eval(
+        request: Request,
+        event_id: str,
+        response_rating: Annotated[str, Form()],
+        visual_rating: Annotated[str, Form()],
+        preferred_response_shape: Annotated[str, Form()],
+        preferred_visual_mix: Annotated[str, Form()],
+        csrf: Annotated[str, Form()] = "",
+        note: Annotated[str | None, Form(max_length=2_000)] = None,
+        visual_asset_id: Annotated[str | None, Form()] = None,
+        artifact_id: Annotated[str | None, Form()] = None,
+    ):
+        check_csrf(csrf)
+        try:
+            service.record_output_evaluation(
+                event_id=event_id,
+                response_rating=response_rating,
+                visual_rating=visual_rating,
+                preferred_response_shape=preferred_response_shape,
+                preferred_visual_mix=preferred_visual_mix,
+                note=note,
+                visual_asset_id=visual_asset_id or None,
+                artifact_id=artifact_id or None,
+            )
+        except Exception as exc:
+            return render_evals(request, error=str(exc))
+        return RedirectResponse("/evals", status_code=303)
 
     @app.get("/api/health")
     def health():
@@ -161,6 +235,202 @@ def create_app(db_path: str | Path | None = None, output_dir: str | Path | None 
         except Exception as exc:
             return render_home(request, child=child_id, error=str(exc))
         return redirect_home(child_id, anchor="opportunities")
+
+    @app.post("/family-model/collection")
+    def family_model_collection(
+        request: Request,
+        child_id: Annotated[str, Form()],
+        enabled: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        try:
+            service.set_family_model_collection(child_id, enabled=enabled == "yes", reason=reason)
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/personalization")
+    def family_model_personalization(
+        request: Request,
+        child_id: Annotated[str, Form()],
+        enabled: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        try:
+            service.set_family_model_personalization(
+                child_id,
+                enabled=enabled == "yes",
+                reason=reason,
+            )
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/evidence/{evidence_id}/correct")
+    def family_model_evidence_correction(
+        request: Request,
+        evidence_id: str,
+        child_id: Annotated[str, Form()],
+        action: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+        result: Annotated[str | None, Form()] = None,
+        assistance_level: Annotated[str | None, Form()] = None,
+    ):
+        check_csrf(csrf)
+        replacement = {
+            key: value for key, value in {"result": result, "assistance_level": assistance_level}.items() if value
+        }
+        try:
+            service.correct_family_model_evidence(
+                child_id,
+                evidence_id,
+                action=action,
+                reason=reason,
+                replacement=replacement or None,
+            )
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/sources/{opportunity_id}/retention")
+    def family_model_retention(
+        request: Request,
+        opportunity_id: str,
+        child_id: Annotated[str, Form()],
+        days: Annotated[int, Form(ge=1, le=3650)],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        try:
+            deadline = datetime.now(UTC) + timedelta(days=days)
+            service.set_family_model_retention(
+                child_id,
+                opportunity_id,
+                retain_until=deadline.isoformat(),
+                reason=reason,
+            )
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/sources/{opportunity_id}/delete")
+    def family_model_source_delete(
+        request: Request,
+        opportunity_id: str,
+        child_id: Annotated[str, Form()],
+        confirmation: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        if confirmation != "delete":
+            return render_home(request, child=child_id, error="Type delete to remove this learning source.")
+        try:
+            service.delete_family_model_source(child_id, opportunity_id, reason=reason)
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/events/{event_id}/delete")
+    def family_model_event_delete(
+        request: Request,
+        event_id: str,
+        child_id: Annotated[str, Form()],
+        confirmation: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        try:
+            service.delete_family_model_event(
+                child_id,
+                event_id,
+                confirmation=confirmation,
+                reason=reason,
+            )
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/delete")
+    def family_model_delete(
+        request: Request,
+        child_id: Annotated[str, Form()],
+        confirmation: Annotated[str, Form()],
+        reason: Annotated[str, Form(min_length=1, max_length=500)],
+        csrf: Annotated[str, Form()] = "",
+    ):
+        check_csrf(csrf)
+        try:
+            service.delete_family_model(child_id, confirmation=confirmation, reason=reason)
+        except Exception as exc:
+            return render_home(request, child=child_id, error=str(exc))
+        return redirect_home(child_id, anchor="family-model")
+
+    @app.post("/family-model/export")
+    def family_model_export(child_id: Annotated[str, Form()], csrf: Annotated[str, Form()] = "") -> Response:
+        check_csrf(csrf)
+        try:
+            payload = service.export_family_model(child_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return JSONResponse(
+            content=payload,
+            headers={"Content-Disposition": 'attachment; filename="curiosity-family-model.json"'},
+        )
+
+    @app.get("/family-model/child-reflection", response_class=HTMLResponse)
+    def family_model_child_reflection(request: Request, child: str):
+        try:
+            card = service.child_reflection_card(child)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return templates.TemplateResponse(
+            request,
+            "child_reflection.html",
+            {"csrf": app.state.csrf, "card": card, "child_id": child},
+        )
+
+    @app.post("/family-model/child-reflection")
+    def save_family_model_child_reflection(
+        request: Request,
+        child_id: Annotated[str, Form()],
+        concept_id: Annotated[str, Form()],
+        concept_version: Annotated[int, Form(ge=1)],
+        response: Annotated[str, Form()],
+        csrf: Annotated[str, Form()] = "",
+        note: Annotated[str | None, Form(max_length=500)] = None,
+    ):
+        check_csrf(csrf)
+        try:
+            service.record_child_reflection(
+                child_id,
+                concept_id,
+                concept_version,
+                response=response,
+                note=note or None,
+            )
+        except Exception as exc:
+            return templates.TemplateResponse(
+                request,
+                "child_reflection.html",
+                {
+                    "csrf": app.state.csrf,
+                    "card": service.child_reflection_card(child_id),
+                    "child_id": child_id,
+                    "error": str(exc),
+                },
+            )
+        return RedirectResponse(
+            "/family-model/child-reflection?" + urlencode({"child": child_id}),
+            status_code=303,
+        )
 
     @app.post("/opportunities/{opportunity_id}")
     def opportunity_decision(

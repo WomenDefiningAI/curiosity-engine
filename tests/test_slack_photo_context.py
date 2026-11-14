@@ -73,8 +73,9 @@ class _SlackClient:
         return {"ts": f"100.{len(self.messages)}"}
 
 
-def test_slack_photo_survives_inbox_assignment_and_stays_private(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_slack_photo_uses_the_only_child_without_an_assignment_menu_and_stays_private(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     db = tmp_path / "private" / "data" / "curiosity.db"
     output = tmp_path / "private" / "output"
@@ -110,39 +111,187 @@ def test_slack_photo_survives_inbox_assignment_and_stays_private(
             "event_ts": "200.1",
             "files": [
                 {
-                    "id": "F_PRIVATE",
+                    "id": f"F_PRIVATE_{index}",
                     "mimetype": "image/png",
                     "size": len(_png_bytes()),
                     "url_private_download": "https://files.slack.com/files-pri/private.png",
-                }
+                } for index in range(5)
             ],
         },
         client,
     )
     with connect(db) as conn:
         asset = conn.execute("SELECT * FROM inbound_assets").fetchone()
-        inbox = conn.execute("SELECT id FROM capture_inbox WHERE status='unassigned'").fetchone()["id"]
-    assert asset["status"] == "ready" and asset["inbox_id"] == inbox
+        assert conn.execute("SELECT COUNT(*) FROM capture_inbox").fetchone()[0] == 0
+    assert asset["status"] == "ready" and asset["inbox_id"] is None
     path = Path(asset["path"])
     assert path.is_relative_to(output / "inbound")
     assert path.stat().st_mode & 0o077 == 0
 
-    assigned = transport.handle(
-        InboundMessage(
-            external_event_id="assign-photo",
-            team_id="T_FAMILY",
-            user_id="U_PARENT",
-            channel_id="C_FAMILY",
-            text=f"assign {inbox} kid-a",
-            thread_id="200.1",
-        )
-    )
-    assert assigned.status == "completed"
-    assert "*Show*" not in assigned.message and "*Tiny explanation*" not in assigned.message
     assert len(service.chat_calls) == 1
+    assert service.chat_calls[0]["child_id"] == "kid-a"
+    assert len(service.chat_calls[0]["attachments"]) == 5
     assert service.chat_calls[0]["attachments"][0]["sha256"] == asset["sha256"]
     with connect(db) as conn:
         assert conn.execute("SELECT session_id FROM inbound_assets").fetchone()[0]
+
+
+def test_photo_concepts_survive_idea_button_challenge_button_and_open_followup(tmp_path, monkeypatch):
+    from legacy_natural_routing_v2 import _offline_service
+
+    from curiosity_engine.contracts import QuickAnswerOutput
+    from curiosity_engine.interaction import delivered_slack_response
+    from curiosity_engine.interactions import create_interaction
+    from curiosity_engine.learning_artifacts import LearningArtifactService
+    from curiosity_engine.reasoning import StubBackend
+    from curiosity_engine.transports.slack import _make_semantic_interaction_receiver
+
+    service, db, binding = _offline_service(tmp_path, monkeypatch)
+    photos = [{"status": "ready", "summary": f"Practice page {index}: {concept}.",
+               "learning_concepts": [concept], "visible_details": [f"Task {index}: compare examples."]}
+              for index, concept in enumerate(("longer and shorter", "above and below", "empty and full",
+                                               "repeating patterns", "equal groups"), 1)]
+    context = service.chat(binding_id=binding, team_id="T1", channel_id="C1", thread_id="photo-thread",
+                           child_id="kid-a", text="Here is today's schoolwork.", attachments=[
+                               {"observation": photo} for photo in photos])
+    assert all(photo["learning_concepts"][0] in context["message"] for photo in photos)
+
+    captured = []
+
+    class AnswerBackend(StubBackend):
+        def complete(self, **kwargs):
+            if kwargs["response_model"] is QuickAnswerOutput:
+                observed = kwargs["payload"]["event"]["metadata"]["parent_shared_image_context"]
+                captured.append(observed)
+                assert not any("people agreed" in rule for rule in kwargs["payload"].get("release_gate_requirements", []))
+                return {"answer": "Make a repeating movement pattern: clap, tap, clap, tap. "
+                        "Pause and let the child choose which movement comes next. "
+                        "No writing is needed; say the next sound or clap.", "visual": None}
+            return super().complete(**kwargs)
+
+    monkeypatch.setattr("curiosity_engine.runtime.configured_backend", lambda *_a, **_k: AnswerBackend())
+    presented = create_interaction(db, binding_id=binding, session_id=context["session_id"],
+                                   plan=context["interaction"])
+
+    class Client(_SlackClient):
+        def chat_update(self, **kwargs):
+            return {"ts": kwargs["ts"]}
+
+    client = Client()
+    transport = SlackTransport(db, tmp_path / "output", service=service)
+    receive = _make_semantic_interaction_receiver(transport, db)
+    body = {"trigger_id": "synthetic-photo-idea", "team": {"id": "T1"}, "user": {"id": "U1"},
+            "channel": {"id": "C1"}, "message": {"ts": "photo-thread", "blocks": []}}
+    option = next(item for item in presented["options"] if item["label"] == "Give us an idea")
+    action = {"block_id": f"curiosity_interaction:{presented['interaction_id']}",
+              "value": option["token"], "action_ts": "1"}
+    receive(lambda: None, body, action, client)
+    receive(lambda: None, body, action, client)
+    assert captured == [photos]
+    assert len(client.messages) == 1
+    with connect(db) as conn:
+        idea_id = conn.execute("SELECT event_id FROM agent_messages WHERE kind='interaction_result'").fetchone()[0]
+    assert delivered_slack_response(db, event_id=idea_id, binding_id=binding)
+    briefs = []
+    original = LearningArtifactService._design
+
+    def design(self, *args, **kwargs):
+        from curiosity_engine.attachments import source_photo_context
+        briefs.append(source_photo_context(self.db_path, kwargs["source_event_id"]))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(LearningArtifactService, "_design", design)
+    result = transport.handle(InboundMessage(external_event_id="synthetic-challenge", team_id="T1", user_id="U1",
+                                            channel_id="C1", thread_id="photo-thread",
+                                            text=f"challenge_response {idea_id}"))
+    assert result.status == "completed", result.message
+    assert briefs == [photos]
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 1
+    result = service.chat(binding_id=binding, team_id="T1", channel_id="C1", thread_id="photo-thread",
+                          text="Why does the fourth page repeat the same order?")
+    assert result["status"] == "completed"
+    assert captured[-1] == photos
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) FROM evidence_records").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM evidence WHERE "
+                            "json_extract(metadata_json,'$.learning_scope')!='diagnostic'").fetchone()[0] == 0
+    partial = service.chat(binding_id=binding, team_id="T1", channel_id="C1", thread_id="partial-photos",
+                           child_id="kid-a", text="More schoolwork.",
+                           attachments=[{"observation": photo} for photo in photos[:4]] + [{"status": "unavailable"}])
+    assert partial["interaction"] and "couldn't inspect 1" in partial["message"]
+    followup = service.ask(child_id="kid-a", text="Give us one idea we can play aloud. No writing.", answer_mode="quick",
+                           context_metadata={"related_event_id": context["event_id"],
+                                             "parent_shared_image_context": photos, "learning_scope": "diagnostic"})
+    assert followup["status"] == "completed"
+
+    class BriefCaptured(Exception):
+        pass
+
+    def inspect_brief(self, *args, **kwargs):
+        assert "No writing." in kwargs["question"]
+        assert "one idea we can play aloud" in kwargs["question"]
+        raise BriefCaptured
+
+    monkeypatch.setattr(LearningArtifactService, "_design", inspect_brief)
+    with pytest.raises(BriefCaptured):
+        LearningArtifactService(db, service.output_dir, backend=AnswerBackend()).create_from_event(
+            event_id=followup["event_id"], artifact_type="challenge")
+
+
+def test_recovered_photo_batch_is_available_without_rewriting_parent_event(tmp_path, monkeypatch):
+    from legacy_natural_routing_v2 import _offline_service
+
+    from curiosity_engine.attachments import (
+        persist_inbound_attachments,
+        save_attachment_observation,
+        source_photo_context,
+    )
+    from curiosity_engine.interaction import begin_receipt, finish_receipt
+    from curiosity_engine.repository import Repository
+    from curiosity_engine.transports.slack import _receive_slack_images
+
+    service, db, binding = _offline_service(tmp_path, monkeypatch)
+    transport = SlackTransport(db, service.output_dir, service=service)
+    files = [{"id": f"F_{index}", "mimetype": "image/png", "size": len(_png_bytes()),
+              "url_private_download": "https://files.slack.com/synthetic"} for index in range(5)]
+    attachments = _receive_slack_images(transport, {"files": files}, _SlackClient(),
+                                        downloader=lambda *_: _png_bytes())
+    message = InboundMessage(external_event_id="recover-photos", team_id="T1", user_id="U1", channel_id="C1",
+                             thread_id="photo-recovery", text="Schoolwork for context.", attachments=attachments[:3])
+    assets = persist_inbound_attachments(db, service.output_dir, binding_id=binding, message=message)
+    photos = [{"status": "ready", "summary": f"Worksheet {i}", "learning_concepts": [f"Concept {i}"]}
+              for i in range(5)]
+    for asset, photo in zip(assets, photos, strict=False):
+        save_attachment_observation(db, asset["id"], photo)
+        asset["observation"] = photo
+    context = service.chat(binding_id=binding, team_id="T1", channel_id="C1", thread_id=message.thread_id,
+                           child_id="kid-a", text=message.text, attachments=assets)
+    assert begin_receipt(db, message, binding)
+    finish_receipt(db, message, status="completed", event_id=context["event_id"])
+    original = Repository(db).event(context["event_id"])
+    assert source_photo_context(db, context["event_id"]) == photos[:3]
+    recovered = persist_inbound_attachments(db, service.output_dir, binding_id=binding,
+                                            message=message.model_copy(update={"attachments": attachments}))
+    class VisionBackend:
+        calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {"summary": ""}  # One malformed read should recover.
+            return {"summary": f"Worksheet {self.calls + 1}. " * 100,
+                    "learning_concepts": [f"Concept {self.calls + 1}"],
+                    "visible_details": [f"Visible detail {i}" for i in range(12)]}
+
+    service.visual_backend = VisionBackend()
+    observed = service._attachment_context(recovered)
+    assert service.visual_backend.calls == 3  # Cached pages were not reread.
+    assert len(observed) == 5 and all(photo["status"] == "ready" for photo in observed)
+    assert [photo["learning_concepts"] for photo in observed] == [photo["learning_concepts"] for photo in photos]
+    assert len(observed[-1]["summary"]) == 700 and len(observed[-1]["visible_details"]) == 10
+    assert source_photo_context(db, context["event_id"]) == observed
+    assert Repository(db).event(context["event_id"]) == original
 
 
 def test_non_slack_attachment_host_is_rejected_before_network_access():
@@ -183,8 +332,7 @@ def test_plain_photo_context_cannot_be_normalized_into_an_unsolicited_lesson(tmp
     calls: list[dict[str, Any]] = []
     tools.register(
         "record_thread_context",
-        lambda arguments: calls.append(arguments)
-        or {"status": "completed", "message": "Saved as context only."},
+        lambda arguments: calls.append(arguments) or {"status": "completed", "message": "Saved as context only."},
     )
     tools.register("continue_learning_thread", lambda _arguments: pytest.fail("lesson tool ran"))
     tools.register("revise_learning_thread", lambda _arguments: {"status": "completed"})
@@ -203,6 +351,42 @@ def test_plain_photo_context_cannot_be_normalized_into_an_unsolicited_lesson(tmp
     assert calls == [{"note": "new play at home"}]
 
 
+def test_school_email_context_cannot_be_normalized_into_an_unsolicited_lesson(tmp_path: Path):
+    db = tmp_path / "private" / "data" / "curiosity.db"
+    setup_household(db, owner_name="Parent", timezone="Etc/UTC")
+    add_child(db, "kid-a", "Kid A", grade="1")
+    session = SessionStore(db).get_or_create(
+        origin="slack",
+        transport="slack",
+        binding_id=None,
+        conversation_ref="conversation",
+        thread_ref="teacher-email",
+        child_id="kid-a",
+    )
+    tools = ToolRegistry()
+    calls: list[dict[str, Any]] = []
+    tools.register(
+        "record_thread_context",
+        lambda arguments: calls.append(arguments) or {"status": "completed", "message": "Saved as context only."},
+    )
+    tools.register("continue_learning_thread", lambda _arguments: pytest.fail("lesson tool ran"))
+    tools.register("revise_learning_thread", lambda _arguments: {"status": "completed"})
+    tools.register("create_learning_artifact", lambda _arguments: {"status": "completed"})
+    tools.register("propose_weekly_checkin", lambda _arguments: {"status": "proposal"})
+    tools.register("record_response_feedback", lambda _arguments: {"status": "completed"})
+    email = "Sharing Kid A's teacher email: We practiced vowel teams today. Can your child find the long-a words?"
+
+    result = ParentAgentRuntime(db, backend=_WrongLessonBackend(), tools=tools).run(
+        session_id=str(session["id"]),
+        user_message=email,
+        child={"id": "kid-a", "grade": "1"},
+        latest_event_id=None,
+    )
+
+    assert result["message"] == "Saved as context only."
+    assert calls == [{"note": email}]
+
+
 def test_followup_renderer_does_not_force_full_lesson_headings():
     result = {
         "output": {
@@ -213,10 +397,7 @@ def test_followup_renderer_does_not_force_full_lesson_headings():
         }
     }
     message = _proportionate_thread_message(result, "Why does the wing bend?")
-    assert message == (
-        "The wing bends because air pushes on it. "
-        "A bend changes how the wing redirects the moving air."
-    )
+    assert message == ("The wing bends because air pushes on it. A bend changes how the wing redirects the moving air.")
     assert "Show" not in message and "Tiny explanation" not in message
 
 
@@ -283,7 +464,7 @@ def test_visual_only_revision_queues_diagram_without_regenerating_lesson(tmp_pat
         "next_possible_concepts": [],
         "physical_extension": None,
         "visual": None,
-        "graph_updates": [],
+        "observation_candidates": [],
         "actions": [],
         "resource_refs": [],
     }
@@ -309,7 +490,5 @@ def test_visual_only_revision_queues_diagram_without_regenerating_lesson(tmp_pat
     assert result is not None and result["status"] == "completed"
     assert result["visual_job_id"]
     with connect(db) as conn:
-        stored = conn.execute(
-            "SELECT status,workflow FROM responses WHERE event_id='evt_visual_revision'"
-        ).fetchone()
+        stored = conn.execute("SELECT status,workflow FROM responses WHERE event_id='evt_visual_revision'").fetchone()
     assert dict(stored) == {"status": "completed", "workflow": "visual_revision"}

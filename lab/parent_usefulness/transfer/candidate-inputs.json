@@ -1,0 +1,46 @@
+{
+  "TV01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a beautiful picture clue page for my nonreading five-year-old with a bicycle, a bus and a train. We will point to the one with pedals, the one that carries people on a road and the one that runs on rails. Big pictures, no writing."
+    ]
+  },
+  "TV02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a large illustrated flower diagram for my five-year-old, showing roots, stem, leaf and flower, with readable labels pointing at the actual parts. Just one short thing to say and room for us to draw our own flower beside it."
+    ]
+  },
+  "TV03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make a visual ice shape challenge for my five-year-old. We have a wide plastic cup, a narrow plastic cup and water. Show what to set up and leave two big blank spaces to draw what we think will happen. We can put them in the freezer tonight with a grown-up. Do not give away the result."
+    ]
+  },
+  "TV04": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "parent_turns": [
+      "Make an illustrated sharing mat with exactly eight large seashell pictures and space for our two toy crabs. My five-year-old will point to different shares. No scissors, no writing and do not show a solved answer."
+    ]
+  }
+}

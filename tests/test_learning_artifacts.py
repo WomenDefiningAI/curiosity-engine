@@ -1,0 +1,49 @@
+"""Representative ready-to-use family learning artifacts."""
+
+import legacy_learning_artifacts as legacy
+
+test_known_helium_challenge_delivers_without_model_generation_or_final_critic = (
+    legacy.test_known_helium_challenge_delivers_without_model_generation_or_final_critic
+)
+test_giant_ice_context_becomes_a_fast_visual_shape_quest = (
+    legacy.test_giant_ice_context_becomes_a_fast_visual_shape_quest
+)
+test_challenge_art_is_private_cached_and_never_receives_family_text = (
+    legacy.test_challenge_art_is_private_cached_and_never_receives_family_text
+)
+test_rendered_page_review_can_remove_bad_generated_art_without_losing_challenge = (
+    legacy.test_rendered_page_review_can_remove_bad_generated_art_without_losing_challenge
+)
+test_paper_airplane_wing_tip_prompt_gets_a_real_fair_test_and_diagram = (
+    legacy.test_paper_airplane_wing_tip_prompt_gets_a_real_fair_test_and_diagram
+)
+test_model_cannot_select_the_code_owned_helium_diagram_for_an_unrelated_challenge = (
+    legacy.test_model_cannot_select_the_code_owned_helium_diagram_for_an_unrelated_challenge
+)
+test_helium_cup_fallback_does_not_replace_non_containment_questions = (
+    legacy.test_helium_cup_fallback_does_not_replace_non_containment_questions
+)
+test_code_owned_artifact_instruction_keeps_the_visible_subject_as_the_brief = (
+    legacy.test_code_owned_artifact_instruction_keeps_the_visible_subject_as_the_brief
+)
+test_context_idea_without_question_back_does_not_invent_comparison_intent = (
+    legacy.test_context_idea_without_question_back_does_not_invent_comparison_intent
+)
+test_design_plan_challenge_supplies_child_work_areas = (
+    legacy.test_design_plan_challenge_supplies_child_work_areas
+)
+test_air_takes_space_fallback_is_a_complete_two_trial_activity_card = (
+    legacy.test_air_takes_space_fallback_is_a_complete_two_trial_activity_card
+)
+test_handwashing_fallback_is_a_low_reading_five_step_card = (
+    legacy.test_handwashing_fallback_is_a_low_reading_five_step_card
+)
+test_reference_page_is_a_compact_visual_not_a_worksheet = (
+    legacy.test_reference_page_is_a_compact_visual_not_a_worksheet
+)
+test_comparison_printable_fallback_supplies_one_space_per_named_sample = (
+    legacy.test_comparison_printable_fallback_supplies_one_space_per_named_sample
+)
+test_context_derived_artifact_recovers_source_topic_from_generic_followup = (
+    legacy.test_context_derived_artifact_recovers_source_topic_from_generic_followup
+)

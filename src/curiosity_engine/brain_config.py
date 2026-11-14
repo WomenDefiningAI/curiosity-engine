@@ -22,6 +22,7 @@ SECRET_KEYS = {
 
 CORE_TEXT_ROLES = (
     "reasoning",
+    "critic_family_usefulness",
     "critic_factual",
     "critic_pedagogy",
     "critic_context",
@@ -129,11 +130,16 @@ def configure_api_brain(
     image_model: str | None = None,
     web_search: bool = False,
     reasoning_effort: str | None = None,
+    judge_provider: ProviderName | None = None,
+    judge_model: str | None = None,
+    judge_reasoning_effort: str | None = None,
     recommendation_status: Literal["family_evaluating", "family_recommended", "custom"] = "custom",
     root: str | Path | None = None,
 ) -> BrainConfig:
     if image_model and (image_provider or provider) == "anthropic":
         raise ValueError("the maintained Anthropic route does not provide image generation; choose openai or openrouter")
+    if judge_provider and not judge_model:
+        raise ValueError("--judge-provider requires --judge-model")
     capabilities = ["structured_output"]
     if web_search:
         capabilities.append("web_search")
@@ -144,6 +150,13 @@ def configure_api_brain(
         capabilities=capabilities,
     )
     routes = {role: route.model_copy(deep=True) for role in CORE_TEXT_ROLES}
+    if judge_model:
+        routes["judge"] = BrainRoute(
+            provider=judge_provider or provider,
+            model=judge_model.strip(),
+            reasoning_effort=judge_reasoning_effort,
+            capabilities=["structured_output"],
+        )
     routes["structured_extraction"] = BrainRoute(
         provider=provider,
         model=(vision_model or model).strip(),

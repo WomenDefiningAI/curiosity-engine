@@ -22,7 +22,7 @@ class ImageBackend(Protocol):
 
 
 class OpenAIImageBackend:
-    """One-shot Image API adapter for opt-in, Tier-A decorative illustrations."""
+    """Image API adapter for configured artwork generation and page composition."""
 
     name = "openai"
 
@@ -33,6 +33,7 @@ class OpenAIImageBackend:
         api_key: str | None = None,
         client: Any | None = None,
         quality: str = "medium",
+        size: str = "1024x1024",
     ):
         if client is None:
             try:
@@ -44,17 +45,21 @@ class OpenAIImageBackend:
             client = OpenAI(api_key=api_key)
         if quality not in {"low", "medium", "high", "auto"}:
             raise ValueError("image quality must be low, medium, high, or auto")
+        if size not in {"1024x1024", "1536x1024", "1024x1536", "auto"}:
+            raise ValueError("image size must be a supported OpenAI Image API size")
         self.client = client
         self.model = model
         self.quality = quality
+        self.size = size
 
     def generate(self, prompt: str) -> GeneratedImage:
-        result = self.client.images.generate(
-            model=self.model,
-            prompt=prompt,
-            size="1024x1024",
-            quality=self.quality,
-        )
+        from .model_usage import metered_call
+
+        request = dict(model=self.model, prompt=prompt, size=self.size, quality=self.quality,
+                       output_format="png", background="opaque")
+        result = metered_call(request, lambda budgeted: (
+            self.client.with_options(max_retries=0) if budgeted else self.client
+        ).images.generate(**request), role="image_generation", image=True)
         entries = getattr(result, "data", None) or []
         encoded = getattr(entries[0], "b64_json", None) if entries else None
         if not encoded:
@@ -70,7 +75,11 @@ class OpenAIImageBackend:
         )
 
 
-def configured_image_backend() -> ImageBackend | None:
+def configured_image_backend(
+    *,
+    quality: str = "medium",
+    size: str = "1024x1024",
+) -> ImageBackend | None:
     """Resolve only the explicit image route; never fall back to the reasoning model."""
 
     config = load_brain_config()
@@ -87,4 +96,4 @@ def configured_image_backend() -> ImageBackend | None:
     key = settings[SECRET_KEYS[route.provider]]
     if not secret_is_configured(route.provider, key):
         raise RuntimeError("the configured image provider credential is unavailable")
-    return OpenAIImageBackend(route.model, api_key=key)
+    return OpenAIImageBackend(route.model, api_key=key, quality=quality, size=size)

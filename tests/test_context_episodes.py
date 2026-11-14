@@ -282,7 +282,9 @@ def test_parent_exclusion_leaves_audit_history_but_removes_active_context(tmp_pa
         for episode in model_context["episodes"]
         for turn in episode["turns"]
     )
-    assert next(item for item in model_context["claims"] if item["id"] == claim_id)["status"] == "hypothesis"
+    assert model_context["claims"] == []
+    with connect(db) as conn:
+        assert conn.execute("SELECT status FROM claims WHERE id=?", (claim_id,)).fetchone()[0] == "hypothesis"
 
 
 def test_context_driven_scheduler_cannot_call_model_before_policy_enablement(tmp_path: Path):

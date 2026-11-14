@@ -1,0 +1,86 @@
+{
+  "CV01": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "Here is a worksheet for context. The child is not writing today.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/groups.png"
+        ]
+      },
+      {
+        "text": "We have five minutes and a few blocks. Give us one idea based on this worksheet."
+      },
+      {
+        "text": "Why would rearranging them not change how many there are?"
+      },
+      {
+        "text": "Turn that into a picture challenge we can use now."
+      },
+      {
+        "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+      }
+    ]
+  },
+  "CV02": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "1"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "Here is a worksheet for context. The child is not writing today.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/patterns.png"
+        ]
+      },
+      {
+        "text": "Give us a movement game that uses the concept on this sheet."
+      },
+      {
+        "text": "What changes if we put two taps where there was one?"
+      },
+      {
+        "text": "Turn that into a picture challenge we can use now."
+      },
+      {
+        "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+      }
+    ]
+  },
+  "CV03": {
+    "children": [
+      {
+        "label": "child-1",
+        "grade": "K"
+      }
+    ],
+    "transport_steps": [
+      {
+        "text": "Here is a worksheet for context. The child is not writing today.",
+        "photos": [
+          "lab/parent_usefulness/photos/fixtures/length.png"
+        ]
+      },
+      {
+        "text": "We have pencils of different lengths. Give us one idea based on this worksheet."
+      },
+      {
+        "text": "How can a pencil be both longer and shorter?"
+      },
+      {
+        "text": "Turn that into a picture challenge we can use now."
+      },
+      {
+        "text": "Keep the same idea, but make it work by pointing only. No drawing or writing."
+      }
+    ]
+  }
+}

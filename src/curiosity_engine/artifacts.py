@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import html
 import json
-import re
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from PIL import Image, ImageChops
 from reportlab.lib.colors import HexColor, white
@@ -14,9 +12,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 
-from .artifact_validation import validate_artifact_spec, validate_rendered_file
+from .artifact_validation import validate_artifact_spec
 from .contracts import ArtifactSpec, VisualQAResult
-from .db import connect, init_db, jdump, utcnow
 from .openai_backend import OpenAIBackend, data_url_for_image
 
 
@@ -256,91 +253,3 @@ def model_visual_qa(preview_path: str | Path, spec: ArtifactSpec, backend: OpenA
         response_model=VisualQAResult,
     )
     return VisualQAResult.model_validate(result)
-
-
-class ArtifactService:
-    def __init__(self, db_path: str | Path, output_dir: str | Path):
-        self.db_path = str(db_path)
-        self.output_dir = Path(output_dir).resolve()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        init_db(self.db_path)
-
-    def create(
-        self,
-        *,
-        child_id: str,
-        spec: dict[str, Any] | ArtifactSpec,
-        visual_backend: OpenAIBackend | None = None,
-    ) -> dict[str, Any]:
-        parsed = _validated(spec)
-        artifact_id = f"art_{uuid4().hex[:16]}"
-        experience_id = f"exp_{uuid4().hex[:16]}"
-        slug = re.sub(r"[^a-z0-9]+", "-", parsed.title.casefold()).strip("-")[:60] or "artifact"
-        pdf_path = self.output_dir / f"{artifact_id}-{slug}.pdf"
-        preview_path = self.output_dir / f"{artifact_id}-{slug}.png"
-        render_pdf(parsed, pdf_path)
-        pdf_path.chmod(0o600)
-        errors = validate_rendered_file(pdf_path)
-        if errors:
-            raise RuntimeError("rendered PDF failed validation: " + "; ".join(errors))
-        from .artifact_validation import render_pdf_preview
-
-        render_pdf_preview(pdf_path, preview_path)
-        preview_path.chmod(0o600)
-        deterministic = deterministic_visual_qa(preview_path)
-        model_result = model_visual_qa(preview_path, parsed, visual_backend) if visual_backend else None
-        if deterministic.verdict != "pass" or (model_result and model_result.verdict != "pass"):
-            reasons = deterministic.reasons + (model_result.reasons if model_result else [])
-            raise RuntimeError("visual QA failed: " + "; ".join(reasons))
-        digest = file_sha256(pdf_path)
-        validation = {
-            "structural": "pass",
-            "deterministic_visual_qa": deterministic.model_dump(mode="json"),
-            "model_visual_qa": model_result.model_dump(mode="json") if model_result else {"status": "not_run"},
-            "page_limit": 1,
-        }
-        now = utcnow()
-        with connect(self.db_path) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            child = conn.execute("SELECT id FROM children WHERE id=?", (child_id,)).fetchone()
-            if not child:
-                raise ValueError(f"Unknown child: {child_id}")
-            conn.execute(
-                """INSERT INTO experiences(id,child_id,experience_type,title,spec_json,status,created_at,source_event_id)
-                   VALUES(?,?,?,?,?,'generated',?,?)""",
-                (
-                    experience_id,
-                    child_id,
-                    parsed.artifact_type,
-                    parsed.title,
-                    jdump(parsed.model_dump(mode="json")),
-                    now,
-                    parsed.source_event_id,
-                ),
-            )
-            conn.execute(
-                """INSERT INTO artifacts(id,experience_id,child_id,artifact_type,path,spec_json,created_at,validated_at,
-                   sha256,validation_json,approval_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    artifact_id,
-                    experience_id,
-                    child_id,
-                    parsed.artifact_type,
-                    str(pdf_path),
-                    jdump(parsed.model_dump(mode="json")),
-                    now,
-                    now,
-                    digest,
-                    jdump(validation),
-                    "unreviewed",
-                ),
-            )
-        return {
-            "artifact_id": artifact_id,
-            "experience_id": experience_id,
-            "pdf_path": str(pdf_path),
-            "preview_path": str(preview_path),
-            "sha256": digest,
-            "validation": validation,
-            "approval_status": "unreviewed",
-        }

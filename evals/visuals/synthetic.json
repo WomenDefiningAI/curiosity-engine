@@ -14,7 +14,7 @@
     "id": "sauropod-leaf-reach-needs-play-pieces",
     "input": "Ethan has been listening to dinosaur stories about long-neck sauropods.",
     "expected_kind": "none",
-    "expected_printable_kind": "target_set"
+    "expected_printable_kind": "reach_comparison"
   },
   {
     "id": "social-inference-control-stays-text-only",

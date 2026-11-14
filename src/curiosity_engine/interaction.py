@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .brain_config import brain_config_fingerprint
 from .config import AppConfig
-from .db import connect, init_db, jdump, jload, utcnow
+from .db import connect, init_db, jdump, jload, transport_event_hash, utcnow
+from .deletion_ledger import redact_parent_memory_deliveries
 from .transports.contracts import InboundMessage, OutboundMessage
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -30,6 +32,9 @@ def answer_stack_fingerprint(db_path: str | Path) -> str:
     app = AppConfig.load()
     digest = sha256()
     digest.update(brain_config_fingerprint().encode())
+    from .text_review import MODEL, POLICY
+
+    digest.update(f"text-review:{os.environ.get('CURIOSITY_TEXT_REVIEW', 'configured')}:{MODEL}:{POLICY}".encode())
     for relative in (
         "configs/production.json",
         "configs/reasoning-policy.json",
@@ -38,6 +43,7 @@ def answer_stack_fingerprint(db_path: str | Path) -> str:
         "prompts/critic-v1.md",
         "src/curiosity_engine/visuals.py",
         "src/curiosity_engine/trust.py",
+        "src/curiosity_engine/text_review.py",
     ):
         path = app.root / relative
         if path.is_file():
@@ -583,10 +589,72 @@ def list_bindings(db_path: str | Path) -> list[dict[str, Any]]:
 def revoke_binding(db_path: str | Path, binding_id: str) -> dict[str, Any]:
     now = utcnow()
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT parent_id,status FROM transport_bindings WHERE id=?", (binding_id,)).fetchone()
         if not row:
             raise KeyError(binding_id)
         conn.execute("UPDATE transport_bindings SET status='revoked',updated_at=? WHERE id=?", (now, binding_id))
+        delivery_ids = {
+            str(item[0])
+            for item in conn.execute(
+                """SELECT id FROM delivery_outbox
+                   WHERE binding_id=? AND status IN ('queued','failed','sending')""",
+                (binding_id,),
+            ).fetchall()
+        }
+        conn.execute(
+            """UPDATE delivery_outbox
+               SET status=CASE WHEN status='sending' THEN 'unknown' ELSE 'expired' END,
+                   last_error='Slack binding revoked before delivery',updated_at=?
+               WHERE binding_id=? AND status IN ('queued','failed','sending')""",
+            (now, binding_id),
+        )
+        if delivery_ids:
+            redact_parent_memory_deliveries(conn, delivery_ids=delivery_ids)
+        conn.execute(
+            """UPDATE slack_file_outbox
+               SET status=CASE
+                     WHEN status IN ('waiting_asset','queued','failed') THEN 'expired'
+                     ELSE 'unknown'
+                   END,
+                   active_attempt_id=NULL,lease_token_hash=NULL,
+                   last_error='Slack binding revoked before file delivery',updated_at=?
+               WHERE binding_id=? AND status IN (
+                 'waiting_asset','queued','failed','ticket_acquiring','ticket_acquired',
+                 'uploading','bytes_uploaded','completing'
+               )""",
+            (now, binding_id),
+        )
+        conn.execute(
+            """UPDATE artifact_file_outbox
+               SET status=CASE
+                     WHEN status IN ('queued','failed') THEN 'expired'
+                     ELSE 'unknown'
+                   END,
+                   active_attempt_id=NULL,lease_token_hash=NULL,
+                   last_error='Slack binding revoked before artifact delivery',updated_at=?
+               WHERE binding_id=? AND status IN (
+                 'queued','failed','ticket_acquiring','ticket_acquired',
+                 'uploading','bytes_uploaded','completing'
+               )""",
+            (now, binding_id),
+        )
+        conn.execute(
+            """UPDATE background_delivery_attempts
+               SET status='unknown',error_code='binding_revoked',completed_at=?
+               WHERE status='sending' AND delivery_id IN (
+                 SELECT delivery_id FROM background_delivery_outbox WHERE binding_id=?
+               )""",
+            (now, binding_id),
+        )
+        conn.execute(
+            """UPDATE background_delivery_outbox
+               SET status=CASE WHEN status='sending' THEN 'unknown' ELSE 'cancelled' END,
+                   active_attempt_id=NULL,lease_owner=NULL,leased_at=NULL,lease_token_hash=NULL,
+                   updated_at=?
+               WHERE binding_id=? AND status IN ('awaiting_confirmation','queued','sending')""",
+            (now, binding_id),
+        )
         conn.execute(
             "INSERT INTO interaction_audit(actor_parent_id,action,subject_type,subject_id,created_at) VALUES(?,?,'transport_binding',?,?)",
             (row["parent_id"], "slack_revoked", binding_id, now),
@@ -594,15 +662,43 @@ def revoke_binding(db_path: str | Path, binding_id: str) -> dict[str, Any]:
     return {"binding_id": binding_id, "status": "revoked"}
 
 
-def begin_receipt(db_path: str | Path, message: InboundMessage, binding_id: str | None) -> bool:
+def begin_receipt(
+    db_path: str | Path,
+    message: InboundMessage,
+    binding_id: str | None,
+    *,
+    retry_failed: bool = False,
+) -> bool:
     now = utcnow()
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        deleted = conn.execute(
+            """SELECT 1 FROM deleted_transport_event_tombstones
+               WHERE transport_event_hash=?""",
+            (transport_event_hash(message.transport, message.external_event_id),),
+        ).fetchone()
+        if deleted:
+            raise TransportConflict("transport event was deleted and cannot be replayed")
         existing = conn.execute(
-            "SELECT payload_hash FROM transport_receipts WHERE transport=? AND external_event_id=?",
+            "SELECT payload_hash,status FROM transport_receipts WHERE transport=? AND external_event_id=?",
             (message.transport, message.external_event_id),
         ).fetchone()
         if existing:
+            if retry_failed and existing["status"] in {"failed", "rejected"}:
+                conn.execute(
+                    """UPDATE transport_receipts
+                       SET payload_hash=?,binding_id=?,status='received',event_id=NULL,
+                           received_at=?,processed_at=NULL,error=NULL
+                       WHERE transport=? AND external_event_id=?""",
+                    (
+                        message.payload_hash,
+                        binding_id,
+                        now,
+                        message.transport,
+                        message.external_event_id,
+                    ),
+                )
+                return True
             if existing["payload_hash"] != message.payload_hash:
                 raise TransportConflict("transport event ID was reused with a different payload")
             return False
@@ -688,6 +784,67 @@ def resolve_inbox(db_path: str | Path, inbox_id: str, *, child_id: str | None, d
     return {**dict(row), "status": "assigned", "child_id": child_id, "resolved_at": now}
 
 
+def _invalid_parent_memory_delivery_ids(
+    conn: Any,
+    delivery_ids: set[str],
+    *,
+    now: str,
+) -> set[str]:
+    """Find typed deliveries whose referenced memory is no longer usable."""
+
+    if not delivery_ids:
+        return set()
+    placeholders = ",".join("?" for _ in delivery_ids)
+    tombstones = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT memory_record_hash FROM parent_memory_tombstones"
+        ).fetchall()
+    }
+    invalid: set[str] = set()
+    for row in conn.execute(
+        f"""SELECT m.delivery_id,m.memory_key,m.memory_version,m.content_hash,
+                   p.status AS memory_status,p.content_hash AS current_content_hash,
+                   p.expires_at,p.scope_type,p.scope_id,
+                   COALESCE(h.enabled,1) AS household_enabled,
+                   COALESCE(s.enabled,1) AS scope_enabled
+            FROM delivery_outbox_parent_memories m
+            LEFT JOIN parent_memories p
+              ON p.memory_key=m.memory_key AND p.version=m.memory_version
+            LEFT JOIN parent_memory_settings h
+              ON h.scope_type='household' AND h.scope_id='default'
+            LEFT JOIN parent_memory_settings s
+              ON s.scope_type=p.scope_type AND s.scope_id=p.scope_id
+            WHERE m.delivery_id IN ({placeholders})""",
+        tuple(sorted(delivery_ids)),
+    ).fetchall():
+        record_hash = sha256(f"{row['memory_key']}\0{row['memory_version']}".encode()).hexdigest()
+        if (
+            row["memory_status"] != "active"
+            or row["current_content_hash"] != row["content_hash"]
+            or (row["expires_at"] is not None and str(row["expires_at"]) <= now)
+            or not bool(row["household_enabled"])
+            or not bool(row["scope_enabled"])
+            or record_hash in tombstones
+        ):
+            invalid.add(str(row["delivery_id"]))
+    return invalid
+
+
+def binding_can_deliver(conn: Any, binding_id: str, *, channel_id: str | None = None) -> bool:
+    channel_clause = "" if channel_id is None else " AND b.channel_id=?"
+    params: tuple[str, ...] = (binding_id,) if channel_id is None else (binding_id, channel_id)
+    return bool(
+        conn.execute(
+            f"""SELECT 1 FROM transport_bindings b
+               JOIN parent_principals p ON p.id=b.parent_id
+               WHERE b.id=? AND b.transport='slack'
+                 AND b.status='active' AND p.status='active'{channel_clause}""",
+            params,
+        ).fetchone()
+    )
+
+
 def enqueue_delivery(
     db_path: str | Path,
     binding_id: str,
@@ -695,15 +852,66 @@ def enqueue_delivery(
     *,
     idempotency_key: str,
     expires_in_hours: int = 24,
+    parent_memory_refs: list[dict[str, Any]] | None = None,
 ) -> str:
+    normalized_refs: list[tuple[str, int]] = []
+    seen_refs: set[tuple[str, int]] = set()
+    if parent_memory_refs is not None:
+        if not isinstance(parent_memory_refs, list) or len(parent_memory_refs) > 24:
+            raise ValueError("parent memory delivery references must be a bounded list")
+        for ref in parent_memory_refs:
+            if not isinstance(ref, dict) or set(ref) != {"memory_key", "version"}:
+                raise ValueError("parent memory delivery references must be exact typed records")
+            memory_key = ref.get("memory_key")
+            version = ref.get("version")
+            if (
+                not isinstance(memory_key, str)
+                or not 2 <= len(memory_key) <= 160
+                or type(version) is not int
+                or version < 1
+            ):
+                raise ValueError("parent memory delivery reference is invalid")
+            normalized = (memory_key, version)
+            if normalized in seen_refs:
+                raise ValueError("parent memory delivery references must be unique")
+            seen_refs.add(normalized)
+            normalized_refs.append(normalized)
     now = datetime.now(UTC)
     delivery_id = f"delivery_{uuid4().hex[:16]}"
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not binding_can_deliver(conn, binding_id, channel_id=message.channel_id):
+            raise ValueError("Slack delivery binding is unavailable")
         existing = conn.execute(
             "SELECT id FROM delivery_outbox WHERE idempotency_key=?", (idempotency_key,)
         ).fetchone()
         if existing:
-            return existing["id"]
+            existing_refs = {
+                (str(row[0]), int(row[1]))
+                for row in conn.execute(
+                    """SELECT memory_key,memory_version
+                       FROM delivery_outbox_parent_memories WHERE delivery_id=?""",
+                    (existing["id"],),
+                ).fetchall()
+            }
+            if existing_refs != seen_refs:
+                raise ValueError("delivery idempotency key was reused with different memory lineage")
+            return str(existing["id"])
+        resolved_refs: list[tuple[str, int, str]] = []
+        for memory_key, version in normalized_refs:
+            memory = conn.execute(
+                """SELECT content_hash FROM parent_memories
+                   WHERE memory_key=? AND version=? AND status='active'""",
+                (memory_key, version),
+            ).fetchone()
+            tombstone = conn.execute(
+                """SELECT 1 FROM parent_memory_tombstones
+                   WHERE memory_record_hash=?""",
+                (sha256(f"{memory_key}\0{version}".encode()).hexdigest(),),
+            ).fetchone()
+            if not memory or tombstone:
+                raise ValueError("parent memory delivery reference is unavailable")
+            resolved_refs.append((memory_key, version, str(memory["content_hash"])))
         conn.execute(
             """INSERT INTO delivery_outbox(id,transport,binding_id,payload_json,idempotency_key,status,attempts,
                                              available_at,expires_at,created_at,updated_at)
@@ -719,6 +927,17 @@ def enqueue_delivery(
                 now.isoformat(),
             ),
         )
+        conn.executemany(
+            """INSERT INTO delivery_outbox_parent_memories(
+                   delivery_id,memory_key,memory_version,content_hash,created_at
+               ) VALUES(?,?,?,?,?)""",
+            [
+                (delivery_id, memory_key, version, content_hash, now.isoformat())
+                for memory_key, version, content_hash in resolved_refs
+            ],
+        )
+        if _invalid_parent_memory_delivery_ids(conn, {delivery_id}, now=now.isoformat()):
+            raise ValueError("parent memory delivery reference is unavailable")
     return delivery_id
 
 
@@ -727,16 +946,85 @@ def ready_deliveries(db_path: str | Path, *, limit: int = 20) -> list[dict[str, 
     now = current.isoformat()
     stale = (current - timedelta(minutes=10)).isoformat()
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        stale_ids = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT id FROM delivery_outbox WHERE status='sending' AND updated_at<?",
+                (stale,),
+            ).fetchall()
+        }
         conn.execute(
             """UPDATE delivery_outbox SET status='unknown',last_error='connector stopped during send',updated_at=?
                WHERE status='sending' AND updated_at<?""",
             (now, stale),
         )
+        terminal_ids = {
+            str(row[0])
+            for row in conn.execute(
+                """SELECT id FROM delivery_outbox
+                   WHERE status IN ('queued','failed')
+                     AND ((expires_at IS NOT NULL AND expires_at<=?) OR attempts>=5)""",
+                (now,),
+            ).fetchall()
+        }
+        if terminal_ids:
+            placeholders = ",".join("?" for _ in terminal_ids)
+            conn.execute(
+                f"""UPDATE delivery_outbox
+                    SET status='expired',last_error=COALESCE(last_error,'delivery expired'),updated_at=?
+                    WHERE id IN ({placeholders})""",
+                (now, *sorted(terminal_ids)),
+            )
+        if stale_ids or terminal_ids:
+            redact_parent_memory_deliveries(
+                conn,
+                delivery_ids=stale_ids | terminal_ids,
+            )
+        unauthorized_ids = {
+            str(row[0])
+            for row in conn.execute(
+                """SELECT o.id FROM delivery_outbox o
+                   JOIN transport_bindings b ON b.id=o.binding_id
+                   LEFT JOIN parent_principals p ON p.id=b.parent_id
+                   WHERE o.transport='slack' AND o.status IN ('queued','failed')
+                     AND (b.status!='active' OR p.id IS NULL OR p.status!='active'
+                          OR COALESCE(json_extract(o.payload_json,'$.channel_id'),'')!=b.channel_id)"""
+            ).fetchall()
+        }
+        if unauthorized_ids:
+            placeholders = ",".join("?" for _ in unauthorized_ids)
+            conn.execute(
+                f"""UPDATE delivery_outbox
+                    SET status='expired',last_error='Slack delivery authority revoked',updated_at=?
+                    WHERE id IN ({placeholders})""",
+                (now, *sorted(unauthorized_ids)),
+            )
+            redact_parent_memory_deliveries(conn, delivery_ids=unauthorized_ids)
+        ready_ids = {
+            str(row[0])
+            for row in conn.execute(
+                """SELECT o.id FROM delivery_outbox o
+                   JOIN transport_bindings b ON b.id=o.binding_id
+                   JOIN parent_principals p ON p.id=b.parent_id
+                   WHERE o.transport='slack' AND o.status IN ('queued','failed')
+                     AND o.available_at<=? AND (o.expires_at IS NULL OR o.expires_at>?)
+                     AND o.attempts<5 AND b.status='active' AND p.status='active'
+                     AND COALESCE(json_extract(o.payload_json,'$.channel_id'),'')=b.channel_id""",
+                (now, now),
+            ).fetchall()
+        }
+        invalid_ready_ids = _invalid_parent_memory_delivery_ids(conn, ready_ids, now=now)
+        if invalid_ready_ids:
+            redact_parent_memory_deliveries(conn, delivery_ids=invalid_ready_ids)
         rows = conn.execute(
             """SELECT o.*,b.team_id,b.user_id,b.channel_id FROM delivery_outbox o
                JOIN transport_bindings b ON b.id=o.binding_id
+               JOIN parent_principals p ON p.id=b.parent_id
                WHERE o.transport='slack' AND o.status IN ('queued','failed') AND o.available_at<=?
-                 AND (o.expires_at IS NULL OR o.expires_at>?) AND o.attempts<5 AND b.status='active'
+                 AND (o.expires_at IS NULL OR o.expires_at>?) AND o.attempts<5
+                 AND b.status='active' AND p.status='active'
+                 AND COALESCE(json_extract(o.payload_json,'$.channel_id'),'')=b.channel_id
                ORDER BY o.created_at LIMIT ?""",
             (now, now, limit),
         ).fetchall()
@@ -749,6 +1037,35 @@ def claim_delivery(db_path: str | Path, delivery_id: str) -> bool:
     now = datetime.now(UTC)
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        delivery = conn.execute(
+            "SELECT binding_id,status,payload_json FROM delivery_outbox WHERE id=?",
+            (delivery_id,),
+        ).fetchone()
+        if not delivery:
+            return False
+        payload = jload(delivery["payload_json"])
+        channel_id = payload.get("channel_id") if isinstance(payload, dict) else None
+        if not isinstance(channel_id, str) or not binding_can_deliver(
+            conn,
+            str(delivery["binding_id"]),
+            channel_id=channel_id,
+        ):
+            if delivery["status"] in {"queued", "failed"}:
+                conn.execute(
+                    """UPDATE delivery_outbox
+                       SET status='expired',last_error='Slack delivery authority revoked',updated_at=?
+                       WHERE id=?""",
+                    (now.isoformat(), delivery_id),
+                )
+            redact_parent_memory_deliveries(conn, delivery_ids={delivery_id})
+            return False
+        if _invalid_parent_memory_delivery_ids(
+            conn,
+            {delivery_id},
+            now=now.isoformat(),
+        ):
+            redact_parent_memory_deliveries(conn, delivery_ids={delivery_id})
+            return False
         updated = conn.execute(
             """UPDATE delivery_outbox SET status='sending',attempts=attempts+1,updated_at=?
                WHERE id=? AND status IN ('queued','failed') AND available_at<=?
@@ -765,19 +1082,57 @@ def mark_delivery(
     status: str,
     external_message_id: str | None = None,
     error: str | None = None,
-) -> None:
+) -> bool:
     if status not in {"sending", "sent", "failed", "unknown", "expired"}:
         raise ValueError("invalid delivery status")
     now = datetime.now(UTC)
     with connect(db_path) as conn:
-        row = conn.execute("SELECT attempts FROM delivery_outbox WHERE id=?", (delivery_id,)).fetchone()
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT attempts,binding_id,status,payload_json FROM delivery_outbox WHERE id=?",
+            (delivery_id,),
+        ).fetchone()
         if not row:
             raise KeyError(delivery_id)
-        attempts = int(row["attempts"]) + (1 if status == "sending" else 0)
+        current_status = str(row["status"])
+        payload = jload(row["payload_json"])
+        channel_id = payload.get("channel_id") if isinstance(payload, dict) else None
+        authority_active = isinstance(channel_id, str) and binding_can_deliver(
+            conn,
+            str(row["binding_id"]),
+            channel_id=channel_id,
+        )
+        if current_status == "sending" and not authority_active:
+            conn.execute(
+                """UPDATE delivery_outbox
+                   SET status='unknown',last_error='Slack delivery authority revoked',updated_at=?
+                   WHERE id=? AND status='sending'""",
+                (now.isoformat(), delivery_id),
+            )
+            redact_parent_memory_deliveries(conn, delivery_ids={delivery_id})
+            return False
+        if status == "sending":
+            if current_status != "sending" or not authority_active:
+                return False
+            updated = conn.execute(
+                "UPDATE delivery_outbox SET updated_at=? WHERE id=? AND status='sending'",
+                (now.isoformat(), delivery_id),
+            )
+            return updated.rowcount == 1
+        expected_statuses = (
+            {"sending"}
+            if status in {"sent", "failed", "unknown"}
+            else {"queued", "failed", "sending"}
+        )
+        if current_status not in expected_statuses:
+            return False
+        if status in {"sent", "failed"} and not authority_active:
+            return False
+        attempts = int(row["attempts"])
         available = now + timedelta(seconds=min(300, 2 ** max(attempts, 1)))
-        conn.execute(
+        updated = conn.execute(
             """UPDATE delivery_outbox SET status=?,attempts=?,available_at=?,external_message_id=?,
-                   last_error=?,updated_at=? WHERE id=?""",
+                   last_error=?,updated_at=? WHERE id=? AND status=?""",
             (
                 status,
                 attempts,
@@ -786,8 +1141,15 @@ def mark_delivery(
                 error[:2_000] if error else None,
                 now.isoformat(),
                 delivery_id,
+                current_status,
             ),
         )
+        changed = updated.rowcount == 1
+        if changed and (
+            status in {"sent", "unknown", "expired"} or (status == "failed" and attempts >= 5)
+        ):
+            redact_parent_memory_deliveries(conn, delivery_ids={delivery_id})
+        return changed
 
 
 def enqueue_visual_delivery(
@@ -809,11 +1171,19 @@ def enqueue_visual_delivery(
     visual_delivery_id = f"visual_delivery_{uuid4().hex[:16]}"
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if not binding_can_deliver(conn, binding_id, channel_id=channel_id):
+            raise ValueError("Slack visual delivery binding is unavailable")
         existing = conn.execute(
             "SELECT id FROM slack_file_outbox WHERE idempotency_key=?", (idempotency_key,)
         ).fetchone()
         if existing:
             return str(existing["id"])
+        dependency = conn.execute(
+            "SELECT 1 FROM delivery_outbox WHERE id=? AND binding_id=?",
+            (depends_on_delivery_id, binding_id),
+        ).fetchone()
+        if not dependency:
+            raise ValueError("visual delivery dependency is unavailable for this binding")
         job = conn.execute("SELECT status FROM visual_jobs WHERE id=?", (visual_job_id,)).fetchone()
         if not job:
             raise ValueError("visual job not found")
@@ -849,16 +1219,44 @@ def ready_visual_deliveries(db_path: str | Path, *, limit: int = 10) -> list[dic
     now = current.isoformat()
     stale = (current - timedelta(minutes=10)).isoformat()
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
-            """UPDATE slack_file_outbox SET status='unknown',last_error='connector stopped during completion',updated_at=?
+            """UPDATE slack_file_outbox SET status='unknown',active_attempt_id=NULL,lease_token_hash=NULL,
+                 last_error='connector stopped during completion',updated_at=?
                WHERE status='completing' AND updated_at<?""",
             (now, stale),
         )
         conn.execute(
             """UPDATE slack_file_outbox SET status='failed',last_error='connector stopped before completion',
-                 available_at=?,updated_at=?
-               WHERE status IN ('ticket_acquiring','ticket_acquired','uploading','bytes_uploaded') AND updated_at<?""",
+                 active_attempt_id=NULL,lease_token_hash=NULL,available_at=?,updated_at=?
+               WHERE status='ticket_acquiring' AND updated_at<?""",
             (now, now, stale),
+        )
+        conn.execute(
+            """UPDATE slack_file_outbox SET status='unknown',
+                 active_attempt_id=NULL,lease_token_hash=NULL,
+                 last_error='connector stopped after Slack ticket acquisition',updated_at=?
+               WHERE status IN ('ticket_acquired','uploading','bytes_uploaded','completing') AND updated_at<?""",
+            (now, stale),
+        )
+        conn.execute(
+            """UPDATE slack_file_outbox
+               SET status='expired',active_attempt_id=NULL,lease_token_hash=NULL,
+                   last_error=COALESCE(last_error,'visual delivery expired'),updated_at=?
+               WHERE status IN ('queued','failed')
+                 AND ((expires_at IS NOT NULL AND expires_at<=?) OR attempts>=3)""",
+            (now, now),
+        )
+        conn.execute(
+            """UPDATE slack_file_outbox AS f
+               SET status='expired',last_error='Slack visual delivery authority revoked',updated_at=?
+               WHERE f.status IN ('queued','failed') AND NOT EXISTS(
+                 SELECT 1 FROM transport_bindings b
+                 JOIN parent_principals p ON p.id=b.parent_id
+                 WHERE b.id=f.binding_id AND b.transport='slack'
+                   AND b.status='active' AND p.status='active' AND b.channel_id=f.channel_id
+               )""",
+            (now,),
         )
         rows = conn.execute(
             """SELECT f.*,a.path,a.filename,a.mime_type,a.byte_count,a.sha256,a.title,a.caption,a.alt_text,
@@ -867,29 +1265,67 @@ def ready_visual_deliveries(db_path: str | Path, *, limit: int = 10) -> list[dic
                JOIN visual_assets a ON a.id=f.visual_asset_id
                JOIN delivery_outbox d ON d.id=f.depends_on_delivery_id
                JOIN transport_bindings b ON b.id=f.binding_id
+               JOIN parent_principals p ON p.id=b.parent_id
                WHERE f.status IN ('queued','failed') AND f.available_at<=?
                  AND (f.expires_at IS NULL OR f.expires_at>?) AND f.attempts<3
-                 AND d.status='sent' AND b.status='active'
+                 AND d.status='sent' AND d.binding_id=f.binding_id
+                 AND b.transport='slack' AND b.status='active' AND p.status='active'
+                 AND b.channel_id=f.channel_id
                ORDER BY f.created_at LIMIT ?""",
             (now, now, limit),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def claim_visual_delivery(db_path: str | Path, delivery_id: str) -> bool:
+def claim_visual_delivery(db_path: str | Path, delivery_id: str) -> dict[str, str] | None:
     now = datetime.now(UTC).isoformat()
+    attempt_id = f"visual_attempt_{uuid4().hex[:20]}"
+    lease_token = uuid4().hex + uuid4().hex
+    lease_token_hash = sha256(lease_token.encode()).hexdigest()
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        delivery = conn.execute(
+            "SELECT binding_id,channel_id,status FROM slack_file_outbox WHERE id=?",
+            (delivery_id,),
+        ).fetchone()
+        if not delivery:
+            return None
+        if not binding_can_deliver(
+            conn,
+            str(delivery["binding_id"]),
+            channel_id=str(delivery["channel_id"]),
+        ):
+            if delivery["status"] in {"queued", "failed"}:
+                conn.execute(
+                    """UPDATE slack_file_outbox
+                       SET status='expired',last_error='Slack visual delivery authority revoked',updated_at=?
+                       WHERE id=?""",
+                    (now, delivery_id),
+                )
+            return None
         updated = conn.execute(
-            """UPDATE slack_file_outbox SET status='ticket_acquiring',attempts=attempts+1,updated_at=?
+            """UPDATE slack_file_outbox SET status='ticket_acquiring',attempts=attempts+1,
+                   active_attempt_id=?,lease_token_hash=?,updated_at=?
                WHERE id=? AND status IN ('queued','failed') AND available_at<=? AND attempts<3
+                 AND (expires_at IS NULL OR expires_at>?)
+                 AND active_attempt_id IS NULL AND lease_token_hash IS NULL
                  AND EXISTS(
                    SELECT 1 FROM delivery_outbox d
-                   WHERE d.id=slack_file_outbox.depends_on_delivery_id AND d.status='sent'
+                   WHERE d.id=slack_file_outbox.depends_on_delivery_id
+                     AND d.binding_id=slack_file_outbox.binding_id AND d.status='sent'
+                 )
+                 AND EXISTS(
+                   SELECT 1 FROM transport_bindings b
+                   JOIN parent_principals p ON p.id=b.parent_id
+                   WHERE b.id=slack_file_outbox.binding_id AND b.transport='slack'
+                     AND b.status='active' AND p.status='active'
+                     AND b.channel_id=slack_file_outbox.channel_id
                  )""",
-            (now, delivery_id, now),
+            (attempt_id, lease_token_hash, now, delivery_id, now, now),
         )
-    return updated.rowcount == 1
+    if updated.rowcount != 1:
+        return None
+    return {"attempt_id": attempt_id, "lease_token": lease_token}
 
 
 def mark_visual_delivery(
@@ -897,10 +1333,12 @@ def mark_visual_delivery(
     delivery_id: str,
     *,
     status: str,
+    attempt_id: str,
+    lease_token: str,
     slack_file_id: str | None = None,
     external_message_id: str | None = None,
     error: str | None = None,
-) -> None:
+) -> bool:
     allowed = {
         "ticket_acquiring",
         "ticket_acquired",
@@ -916,22 +1354,84 @@ def mark_visual_delivery(
         raise ValueError("invalid visual delivery status")
     now = datetime.now(UTC)
     with connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT slack_file_id,attempts FROM slack_file_outbox WHERE id=?", (delivery_id,)
+            """SELECT slack_file_id,attempts,binding_id,channel_id,status,
+                      active_attempt_id,lease_token_hash
+               FROM slack_file_outbox WHERE id=?""",
+            (delivery_id,),
         ).fetchone()
         if not row:
             raise KeyError(delivery_id)
+        if (
+            str(row["active_attempt_id"] or "") != attempt_id
+            or not row["lease_token_hash"]
+            or not secrets.compare_digest(
+                str(row["lease_token_hash"]),
+                sha256(lease_token.encode()).hexdigest(),
+            )
+        ):
+            return False
+        in_flight = {
+            "ticket_acquiring",
+            "ticket_acquired",
+            "uploading",
+            "bytes_uploaded",
+            "completing",
+        }
+        current_status = str(row["status"])
+        authority_active = binding_can_deliver(
+            conn,
+            str(row["binding_id"]),
+            channel_id=str(row["channel_id"]),
+        )
+        if current_status in in_flight and not authority_active:
+            conn.execute(
+                """UPDATE slack_file_outbox
+                   SET status='unknown',active_attempt_id=NULL,lease_token_hash=NULL,
+                       last_error='Slack visual delivery authority revoked',updated_at=?
+                   WHERE id=? AND status=? AND active_attempt_id=? AND lease_token_hash=?""",
+                (
+                    now.isoformat(),
+                    delivery_id,
+                    current_status,
+                    attempt_id,
+                    str(row["lease_token_hash"]),
+                ),
+            )
+            return False
+        expected = {
+            "ticket_acquiring": {"ticket_acquiring"},
+            "ticket_acquired": {"ticket_acquiring"},
+            "uploading": {"ticket_acquired"},
+            "bytes_uploaded": {"uploading"},
+            "completing": {"bytes_uploaded"},
+            "sent": {"completing"},
+            "failed": {"ticket_acquiring"},
+            "unknown": in_flight,
+            "expired": in_flight,
+        }[status]
+        if current_status not in expected:
+            return False
         available = now + timedelta(seconds=min(300, 2 ** max(int(row["attempts"]), 1)))
-        conn.execute(
+        terminal = status in {"sent", "failed", "unknown", "expired"}
+        updated = conn.execute(
             """UPDATE slack_file_outbox SET status=?,available_at=?,slack_file_id=?,external_message_id=?,
-                 last_error=?,updated_at=? WHERE id=?""",
+                 last_error=?,active_attempt_id=?,lease_token_hash=?,updated_at=?
+               WHERE id=? AND status=? AND active_attempt_id=? AND lease_token_hash=?""",
             (
                 status,
                 available.isoformat(),
                 slack_file_id if slack_file_id is not None else row["slack_file_id"],
                 external_message_id,
                 error[:2_000] if error else None,
+                None if terminal else attempt_id,
+                None if terminal else str(row["lease_token_hash"]),
                 now.isoformat(),
                 delivery_id,
+                current_status,
+                attempt_id,
+                str(row["lease_token_hash"]),
             ),
         )
+        return updated.rowcount == 1

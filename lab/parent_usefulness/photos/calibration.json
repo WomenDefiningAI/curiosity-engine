@@ -1,0 +1,16 @@
+{
+  "examples": [
+    {
+      "input": "Five worksheet photos, then idea and challenge buttons.",
+      "output": "A generic dinner conversation followed by a failed challenge button.",
+      "use_as_is": "would_not_use",
+      "reason": "The idea ignores the visible learning task and the requested challenge never arrives."
+    },
+    {
+      "input": "A halves worksheet followed by a question about diagonal cuts.",
+      "output": "A playable equal-parts challenge, then a short explanation with a fold-and-compare demonstration.",
+      "use_as_is": "use_as_is",
+      "reason": "Both the material and follow-up use the actual concept and save parent work."
+    }
+  ]
+}

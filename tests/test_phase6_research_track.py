@@ -1,0 +1,9 @@
+"""Minimal closed-by-default contracts for the non-deliverable research track."""
+
+import legacy_phase6_research_track as legacy
+
+test_v26_defaults_to_a_closed_research_candidate = legacy.test_v26_defaults_to_a_closed_research_candidate
+test_synthetic_data_cannot_unlock_promotion = legacy.test_synthetic_data_cannot_unlock_promotion
+test_research_track_cli_is_explicit_and_non_delivery_shaped = (
+    legacy.test_research_track_cli_is_explicit_and_non_delivery_shaped
+)
